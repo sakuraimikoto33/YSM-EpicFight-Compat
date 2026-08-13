@@ -1,0 +1,30 @@
+{
+  "schemaVersion": 1,
+  "symbols": [
+    {
+      "key": "ysm.client.model_manager.model_lookup.method",
+      "kind": "METHOD",
+      "required": true
+    },
+    {
+      "key": "ysm.client.model_container.data_getter.method",
+      "kind": "METHOD",
+      "required": true
+    },
+    {
+      "key": "ysm.client.model_data.textures_getter.method",
+      "kind": "METHOD",
+      "required": true
+    },
+    {
+      "key": "ysm.client.texture_cache.acquire.method",
+      "kind": "METHOD",
+      "required": true
+    },
+    {
+      "key": "ysm.client.texture_cache.location_getter.method",
+      "kind": "METHOD",
+      "required": true
+    }
+  ]
+}

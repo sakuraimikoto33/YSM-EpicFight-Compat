@@ -1,0 +1,110 @@
+package net.okitsu.ysmepicfightcompat.mesh;
+
+import com.mojang.blaze3d.vertex.PoseStack;
+import net.minecraft.client.renderer.MultiBufferSource;
+import net.minecraft.client.renderer.RenderType;
+import net.minecraft.resources.ResourceLocation;
+import net.okitsu.ysmepicfightcompat.CompatMod;
+import net.okitsu.ysmepicfightcompat.animation.DefaultPoseProgram;
+import net.okitsu.ysmepicfightcompat.render.RenderFrameContext;
+import yesman.epicfight.api.client.model.Mesh;
+import yesman.epicfight.api.client.model.MeshPart;
+import yesman.epicfight.api.client.model.MeshPartDefinition;
+import yesman.epicfight.api.client.model.SkinnedMesh;
+import yesman.epicfight.api.client.model.VertexBuilder;
+import yesman.epicfight.api.model.Armature;
+import yesman.epicfight.api.utils.math.OpenMatrix4f;
+import yesman.epicfight.client.mesh.HumanoidMesh;
+import yesman.epicfight.client.renderer.EpicFightRenderTypes;
+import yesman.epicfight.client.renderer.shader.compute.ComputeShaderSetup;
+
+import javax.annotation.Nullable;
+import java.lang.reflect.Field;
+import java.util.Arrays;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.concurrent.atomic.AtomicBoolean;
+
+/** Shared in-memory Epic Fight mesh for one official YSM model. */
+public final class CompatHumanoidMesh extends HumanoidMesh {
+    private static final Field COMPUTE_SETUP = locateComputeSetup();
+    private static final AtomicBoolean CPU_FALLBACK_LOGGED = new AtomicBoolean();
+
+    private final String modelId;
+    private final DefaultPoseProgram poseProgram;
+    private ResourceLocation texture;
+
+    public CompatHumanoidMesh(String modelId, DefaultPoseProgram poseProgram,
+                              Map<String, Number[]> arrays,
+                              Map<MeshPartDefinition, List<VertexBuilder>> parts,
+                              @Nullable SkinnedMesh parent, RenderProperties properties) {
+        super(arrays, parts, parent, properties);
+        this.modelId = modelId;
+        this.poseProgram = poseProgram;
+    }
+
+    public String modelId() {
+        return modelId;
+    }
+
+    public void texture(ResourceLocation value) {
+        texture = value;
+    }
+
+    @SuppressWarnings("unchecked")
+    public Set<Map.Entry<String, MeshPart>> partsView() {
+        return (Set<Map.Entry<String, MeshPart>>) (Set<?>) getPartEntry();
+    }
+
+    @Override
+    public void draw(PoseStack matrices, MultiBufferSource buffers, RenderType requestedType,
+                     Mesh.DrawingFunction drawingFunction, int light,
+                     float red, float green, float blue, float alpha, int overlay,
+                     @Nullable Armature armature, OpenMatrix4f[] poses) {
+        RenderFrameContext.Frame frame = RenderFrameContext.current();
+        poseProgram.apply(this, frame == null ? Map.of() : frame.visibleParts(),
+                frame == null || frame.showUnlistedParts(), frame != null && frame.firstPerson());
+        if (armature != null && poses != null && poses.length > armature.getJointNumber()) {
+            poses = Arrays.copyOf(poses, armature.getJointNumber());
+        }
+        ResourceLocation selectedTexture = texture != null ? texture
+                : getRenderProperties() == null ? null : getRenderProperties().customTexturePath();
+        RenderType actualType = selectedTexture == null ? requestedType
+                : EpicFightRenderTypes.replaceTexture(selectedTexture, requestedType);
+        ComputeShaderSetup compute = computeSetup();
+        if (compute != null) {
+            compute.drawWithShader(this, matrices, buffers, actualType, light,
+                    red, green, blue, alpha, overlay, armature, poses);
+        } else {
+            if (CPU_FALLBACK_LOGGED.compareAndSet(false, true)) {
+                CompatMod.LOG.warn(
+                        "YSM-EF Compat: compute skinning is unavailable; using Epic Fight's CPU path");
+            }
+            drawPosed(matrices, buffers.getBuffer(EpicFightRenderTypes.getTriangulated(actualType)),
+                    drawingFunction, light, red, green, blue, alpha, overlay, armature, poses);
+        }
+    }
+
+    @Nullable
+    private ComputeShaderSetup computeSetup() {
+        if (COMPUTE_SETUP == null) {
+            return null;
+        }
+        try {
+            return (ComputeShaderSetup) COMPUTE_SETUP.get(this);
+        } catch (IllegalAccessException ignored) {
+            return null;
+        }
+    }
+
+    private static Field locateComputeSetup() {
+        try {
+            Field field = SkinnedMesh.class.getDeclaredField("computerShaderSetup");
+            field.setAccessible(true);
+            return field;
+        } catch (ReflectiveOperationException exception) {
+            return null;
+        }
+    }
+}

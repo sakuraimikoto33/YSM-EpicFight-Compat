@@ -1,0 +1,159 @@
+plugins {
+    id 'java-library'
+    id 'net.minecraftforge.gradle' version '[6.0,6.2)'
+}
+
+version = mod_version
+group = mod_group_id
+
+base {
+    archivesName = 'ysm-epicfight-compat'
+}
+
+java.toolchain.languageVersion = JavaLanguageVersion.of(17)
+
+minecraft {
+    mappings channel: 'official', version: minecraft_version
+    copyIdeResources = true
+
+    runs {
+        client {
+            workingDirectory project.file('run')
+            property 'forge.logging.markers', 'REGISTRIES'
+            property 'forge.logging.console.level', 'debug'
+            mods {
+                "${mod_id}" {
+                    source sourceSets.main
+                }
+            }
+        }
+        server {
+            workingDirectory project.file('run-server')
+            args '--nogui'
+            mods {
+                "${mod_id}" {
+                    source sourceSets.main
+                }
+            }
+        }
+    }
+}
+
+repositories {
+    maven { url = 'https://maven.minecraftforge.net' }
+    exclusiveContent {
+        forRepository { maven { name = 'Modrinth'; url = 'https://api.modrinth.com/maven' } }
+        forRepositories(fg.repository)
+        filter { includeGroup 'maven.modrinth' }
+    }
+}
+
+dependencies {
+    minecraft "net.minecraftforge:forge:${minecraft_version}-${forge_version}"
+    implementation fg.deobf("maven.modrinth:epic-fight:${epicfight_version}")
+    compileOnly 'net.okitsu.ysmmapping:api:0.1.0'
+    compileOnly 'org.spongepowered:mixin:0.8.5'
+    annotationProcessor 'org.spongepowered:mixin:0.8.5:processor'
+
+    implementation 'com.github.luben:zstd-jni:1.5.6-3'
+    jarJar 'com.github.luben:zstd-jni:[1.5.6-3,1.5.6-3]'
+
+    testImplementation platform('org.junit:junit-bom:5.10.2')
+    testImplementation 'org.junit.jupiter:junit-jupiter'
+    testRuntimeOnly 'net.okitsu.ysmmapping:api:0.1.0'
+}
+
+tasks.named('processResources', ProcessResources).configure {
+    def replaceProperties = [
+            minecraft_version_range: minecraft_version_range,
+            forge_version_range: forge_version_range,
+            loader_version_range: loader_version_range,
+            ysm_version_range: ysm_version_range,
+            epicfight_version_range: epicfight_version_range,
+            mod_id: mod_id,
+            mod_name: mod_name,
+            mod_license: mod_license,
+            mod_version: mod_version,
+            mod_authors: mod_authors,
+            mod_description: mod_description
+    ]
+    inputs.properties replaceProperties
+    filesMatching(['META-INF/mods.toml', 'pack.mcmeta']) {
+        expand replaceProperties
+    }
+}
+
+tasks.withType(JavaCompile).configureEach {
+    options.encoding = 'UTF-8'
+}
+
+tasks.withType(Test).configureEach {
+    useJUnitPlatform()
+}
+
+tasks.withType(Jar).configureEach {
+    archiveVersion = "mc${minecraft_version}-${mod_version}"
+    manifest {
+        attributes['MixinConfigs'] = 'ysm_epicfight_compat.mixins.json'
+    }
+}
+
+jar.finalizedBy('reobfJar')
+jarJar.enable()
+tasks.named('jarJar').configure {
+    finalizedBy 'reobfJarJar'
+}
+
+tasks.register('verifyDistributions') {
+    dependsOn 'reobfJarJar'
+    doLast {
+        def archive = tasks.named('jarJar', Jar).get().archiveFile.get().asFile
+        new java.util.zip.ZipFile(archive).withCloseable { zip ->
+            ['META-INF/mods.toml', 'META-INF/ysm-mapping-api/requests-v1.json',
+             'ysm_epicfight_compat.mixins.json',
+             'net/okitsu/ysmepicfightcompat/CompatMod.class'].each { entry ->
+                if (zip.getEntry(entry) == null) {
+                    throw new GradleException("Distribution is missing ${entry}")
+                }
+            }
+            if (zip.entries().toList().any { it.name.startsWith('net/okitsu/ysmmapping/') }) {
+                throw new GradleException('Distribution embeds YSM Mapping API classes')
+            }
+            if (zip.entries().toList().any { it.name.startsWith('com/elfmcys/') }) {
+                throw new GradleException('Distribution embeds or directly targets YSM implementation classes')
+            }
+            ['net/okitsu/ysmepicfightcompat/ysm/',
+             'net/okitsu/ysmepicfightcompat/model/',
+             'net/okitsu/ysmepicfightcompat/renderer/'].each { removedPackage ->
+                if (zip.entries().toList().any { it.name.startsWith(removedPackage) }) {
+                    throw new GradleException("Distribution contains removed legacy package ${removedPackage}")
+                }
+            }
+            def forbiddenText = ['com/ysmef', 'YSMEpicFightCompat']
+            zip.entries().toList().findAll {
+                it.name.startsWith('net/okitsu/ysmepicfightcompat/') && it.name.endsWith('.class')
+            }.each { classEntry ->
+                def classText = new String(zip.getInputStream(classEntry).bytes,
+                        java.nio.charset.StandardCharsets.ISO_8859_1)
+                forbiddenText.each { marker ->
+                    if (classText.contains(marker)) {
+                        throw new GradleException(
+                                "Distribution class ${classEntry.name} contains removed marker ${marker}")
+                    }
+                }
+            }
+            def mixinJson = new groovy.json.JsonSlurper().parse(
+                    zip.getInputStream(zip.getEntry('ysm_epicfight_compat.mixins.json')))
+            mixinJson.client.each { mixin ->
+                def classPath = mixinJson.package.replace('.', '/') + '/' + mixin + '.class'
+                if (zip.getEntry(classPath) == null) {
+                    throw new GradleException("Mixin config references missing ${classPath}")
+                }
+            }
+        }
+    }
+}
+
+tasks.named('check').configure {
+    dependsOn tasks.named('verifyDistributions')
+}

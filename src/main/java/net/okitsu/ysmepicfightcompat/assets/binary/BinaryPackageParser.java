@@ -1,0 +1,680 @@
+package net.okitsu.ysmepicfightcompat.assets.binary;
+
+import net.okitsu.ysmepicfightcompat.animation.AnimationClip;
+import net.okitsu.ysmepicfightcompat.animation.BedrockAnimationParser;
+import net.okitsu.ysmepicfightcompat.assets.ModelBundle;
+import net.okitsu.ysmepicfightcompat.geometry.GeometryDocument;
+import org.joml.Vector3f;
+
+import java.nio.charset.StandardCharsets;
+
+/** Boundary-checked decoder for decrypted YSM binary model payloads. */
+public final class BinaryPackageParser {
+    private static final int MAX_ITEMS = 1_000_000;
+    private static final int MAX_TEXT_BYTES = 4 * 1024 * 1024;
+    private static final int MAX_BLOB_BYTES = 128 * 1024 * 1024;
+
+    private BinaryPackageParser() {
+    }
+
+    public static ModelBundle parse(String modelId, byte[] payload) {
+        Cursor input = new Cursor(payload);
+        int format = input.littleEndianInt();
+        ModelBundle result = new ModelBundle(modelId);
+        if (format < 4) {
+            readEarlyLegacy(input, format, result);
+        } else if (format <= 15) {
+            readLateLegacy(input, format, result);
+        } else {
+            readModern(input, format, result);
+        }
+        if (result.geometry() == null) {
+            throw new IllegalStateException("YSM package has no player geometry");
+        }
+        return result;
+    }
+
+    private static void readEarlyLegacy(Cursor input, int format, ModelBundle result) {
+        input.skip(input.varUInt("legacy header bytes"));
+        repeat(input.count("legacy model"), ignored -> {
+            int type = input.varUInt("legacy model id");
+            require(input.varUInt("legacy model marker") == 1, "Invalid legacy model marker");
+            GeometryDocument geometry = readGeometry(input, type == 1);
+            if (geometry != null) {
+                result.geometry(geometry);
+            }
+        });
+        repeat(input.count("legacy animation block"), ignored -> {
+            input.varUInt("legacy animation id");
+            require(input.varUInt("legacy animation marker") == 1, "Invalid legacy animation marker");
+            readAnimations(input, format, result);
+        });
+        repeat(input.count("legacy texture"), ignored -> {
+            String name = input.text();
+            require(input.varUInt("legacy texture marker") == 1, "Invalid legacy texture marker");
+            byte[] bytes = input.blob();
+            int width = input.varUInt("texture width");
+            int height = input.varUInt("texture height");
+            storeTexture(result, name, bytes, width, height, -1);
+        });
+        repeat(input.count("legacy model lookup"), ignored -> {
+            input.varUInt("legacy model lookup id");
+            input.text();
+        });
+        repeat(input.count("legacy animation lookup"), ignored -> {
+            input.varUInt("legacy animation lookup id");
+            input.text();
+        });
+        repeat(input.count("legacy texture lookup"), ignored -> {
+            input.text();
+            input.text();
+        });
+        input.text();
+    }
+
+    private static void readLateLegacy(Cursor input, int format, ModelBundle result) {
+        input.skip(input.varUInt("legacy header bytes"));
+        repeat(input.count("legacy model"), ignored -> {
+            int type = input.varUInt("legacy model id");
+            require(input.varUInt("legacy model marker") == 1, "Invalid legacy model marker");
+            GeometryDocument geometry = readGeometry(input, type == 1);
+            if (geometry != null) {
+                result.geometry(geometry);
+            }
+        });
+        repeat(input.count("legacy animation block"), ignored -> {
+            input.varUInt("legacy animation id");
+            require(input.varUInt("legacy animation marker") == 1, "Invalid legacy animation marker");
+            readAnimations(input, format, result);
+        });
+        if (format > 9) {
+            skipControllers(input, format);
+            repeat(input.count("controller lookup"), ignored -> {
+                input.text();
+                input.text();
+            });
+        }
+        repeat(input.count("legacy texture"), ignored -> {
+            String name = input.text();
+            byte[] bytes = input.blob();
+            int width = input.varUInt("texture width");
+            int height = input.varUInt("texture height");
+            repeat(input.count("legacy sub-texture"), child -> {
+                input.varUInt("sub-texture id");
+                input.skipBlob();
+                input.varUInt("sub-texture width");
+                input.varUInt("sub-texture height");
+            });
+            storeTexture(result, name, bytes, width, height, -1);
+        });
+        if (format > 9) {
+            skipSounds(input, format);
+            repeat(input.count("sound lookup"), ignored -> {
+                input.text();
+                input.text();
+            });
+        }
+        repeat(input.count("extra texture"), ignored -> {
+            String name = input.text();
+            byte[] bytes = input.blob();
+            int width = input.varUInt("extra texture width");
+            int height = input.varUInt("extra texture height");
+            storeTexture(result, name, bytes, width, height, -1);
+        });
+        repeat(input.count("legacy model lookup"), ignored -> {
+            input.varUInt("legacy model lookup id");
+            input.text();
+        });
+        repeat(input.count("legacy animation lookup"), ignored -> {
+            input.varUInt("legacy animation lookup id");
+            input.text();
+        });
+        repeat(input.count("legacy texture lookup"), ignored -> {
+            input.text();
+            input.text();
+            repeat(input.count("sub-texture lookup"), child -> {
+                input.varUInt("sub-texture lookup id");
+                input.text();
+            });
+        });
+        readProperties(input, format, result);
+    }
+
+    private static void readModern(Cursor input, int format, ModelBundle result) {
+        skipSounds(input, format);
+        skipFunctions(input);
+        skipLanguages(input);
+        if (format < 26) {
+            repeat(input.count("sub-entity"), ignored -> skipSubEntity(input, format));
+            input.varUInt("sub-entity separator");
+        } else {
+            repeat(input.count("vehicle"), ignored -> skipSubEntity(input, format));
+            repeat(input.count("projectile"), ignored -> skipSubEntity(input, format));
+        }
+        require(input.varUInt("entity marker") == 1, "Invalid entity marker");
+        repeat(input.count("animation file"), ignored -> {
+            input.varUInt("animation file id");
+            input.text();
+            readAnimations(input, format, result);
+        });
+        skipControllers(input, format);
+        repeat(input.count("texture"), ignored -> readModernTexture(input, result));
+        repeat(input.count("model"), ignored -> {
+            int type = input.varUInt("model type");
+            input.text();
+            GeometryDocument geometry = readGeometry(input, type == 1);
+            if (geometry != null) {
+                result.geometry(geometry);
+            }
+        });
+        readProperties(input, format, result);
+    }
+
+    private static void readModernTexture(Cursor input, ModelBundle result) {
+        String name = input.text();
+        input.text();
+        byte[] bytes = input.blob();
+        int width = input.varUInt("texture width");
+        int height = input.varUInt("texture height");
+        int format = input.varUInt("texture format");
+        input.varUInt("texture flags");
+        repeat(input.count("sub-texture"), ignored -> {
+            input.varUInt("sub-texture id");
+            input.text();
+            input.skipBlob();
+            input.varUInt("sub-texture width");
+            input.varUInt("sub-texture height");
+            input.varUInt("sub-texture format");
+            input.varUInt("sub-texture flags");
+        });
+        storeTexture(result, name, bytes, width, height, format);
+    }
+
+    private static GeometryDocument readGeometry(Cursor input, boolean retain) {
+        GeometryDocument document = retain ? new GeometryDocument() : null;
+        int bones = input.count("geometry bone");
+        for (int boneIndex = 0; boneIndex < bones; boneIndex++) {
+            String parent = input.text();
+            GeometryDocument.Bone bone = retain ? new GeometryDocument.Bone("") : null;
+            int cubes = input.count("geometry cube");
+            for (int cubeIndex = 0; cubeIndex < cubes; cubeIndex++) {
+                int faces = input.count("geometry face");
+                for (int faceIndex = 0; faceIndex < faces; faceIndex++) {
+                    if (retain) {
+                        bone.faces().add(readFace(input));
+                    } else {
+                        input.skip(12 + 4 * 20);
+                    }
+                }
+                input.varUInt("cube texture width");
+                input.varUInt("cube texture height");
+                input.varUInt("cube flags");
+            }
+            String name = input.text();
+            for (int ignored = 0; ignored < 5; ignored++) {
+                input.varUInt("bone flags");
+            }
+            float pivotX = input.number();
+            float pivotY = input.number();
+            float pivotZ = input.number();
+            float rotationX = input.number();
+            float rotationY = input.number();
+            float rotationZ = input.number();
+            if (retain) {
+                GeometryDocument.Bone completed = new GeometryDocument.Bone(name);
+                completed.parentName(parent);
+                completed.faces().addAll(bone.faces());
+                completed.pivot(pivotX / 16.0F, pivotY / 16.0F, pivotZ / 16.0F);
+                completed.rotation(rotationX, rotationY, rotationZ);
+                document.add(completed);
+            }
+        }
+        input.text();
+        input.skip(4 * Float.BYTES);
+        input.skip(input.count("visible bounds offset") * Float.BYTES);
+        input.skip(2 * Float.BYTES);
+        if (input.varUInt("legacy info flag") > 0) {
+            skipLegacyInfo(input);
+        }
+        input.varUInt("geometry trailing flag");
+        input.varUInt("geometry trailing flag");
+        input.varUInt("geometry trailing flag");
+        if (document != null) {
+            document.linkHierarchy();
+        }
+        return document;
+    }
+
+    private static GeometryDocument.Face readFace(Cursor input) {
+        Vector3f normal = new Vector3f(input.number(), input.number(), input.number());
+        Vector3f[] positions = new Vector3f[4];
+        float[][] uv = new float[4][2];
+        for (int corner = 0; corner < 4; corner++) {
+            positions[corner] = new Vector3f(input.number(), input.number(), input.number());
+            uv[corner][0] = input.number();
+            uv[corner][1] = input.number();
+        }
+        return new GeometryDocument.Face(positions, uv, normal);
+    }
+
+    private static void readAnimations(Cursor input, int format, ModelBundle result) {
+        repeat(input.count("animation"), ignored -> {
+            String name = input.text();
+            float duration = input.number();
+            int playback = input.varUInt("animation playback");
+            skipBlendSettings(input, format);
+            boolean retain = BedrockAnimationParser.isAutomatic(name);
+            AnimationClip clip = retain ? new AnimationClip(name) : null;
+            if (retain) {
+                clip.duration(duration);
+                clip.playback(AnimationClip.Playback.fromWireValue(playback));
+            }
+            repeat(input.count("animation bone"), boneIndex -> {
+                String boneName = input.text();
+                AnimationClip.Track rotation = readTrack(input, retain);
+                AnimationClip.Track position = readTrack(input, retain);
+                AnimationClip.Track scale = readTrack(input, retain);
+                if (retain) {
+                    AnimationClip.BoneTracks tracks = new AnimationClip.BoneTracks();
+                    tracks.rotation(rotation);
+                    tracks.position(position);
+                    tracks.scale(scale);
+                    if (tracks.hasAnyTrack()) {
+                        clip.boneTracks().put(boneName, tracks);
+                    }
+                }
+            });
+            repeat(input.count("timeline group"), eventIndex -> {
+                int statements = input.count("timeline statement");
+                java.util.List<String> code = retain
+                        ? new java.util.ArrayList<>(statements) : null;
+                for (int i = 0; i < statements; i++) {
+                    String statement = input.text();
+                    if (retain) {
+                        code.add(statement);
+                    }
+                }
+                float time = input.number() / 20.0F;
+                if (retain && !code.isEmpty()) {
+                    clip.timeline().add(new AnimationClip.TimelineEvent(time, code));
+                }
+            });
+            if (format > 9) {
+                repeat(input.count("animation sound"), sound -> {
+                    input.text();
+                    input.number();
+                });
+            }
+            if (retain) {
+                result.animations().put(name, clip);
+            }
+        });
+    }
+
+    private static AnimationClip.Track readTrack(Cursor input, boolean retain) {
+        int keyframes = input.count("animation keyframe");
+        AnimationClip.Track result = retain && keyframes > 0 ? new AnimationClip.Track() : null;
+        for (int keyframe = 0; keyframe < keyframes; keyframe++) {
+            float time = input.number() / 20.0F;
+            int interpolation = input.varUInt("animation interpolation");
+            AnimationClip.VectorValue value = readVector(input, retain);
+            AnimationClip.VectorValue incoming = input.varUInt("incoming keyframe flag") > 0
+                    ? readVector(input, retain) : null;
+            if (retain) {
+                result.keyframes().add(new AnimationClip.Keyframe(time,
+                        AnimationClip.Interpolation.fromWireValue(interpolation), value, incoming));
+            }
+        }
+        return result;
+    }
+
+    private static AnimationClip.VectorValue readVector(Cursor input, boolean retain) {
+        AnimationClip.VectorValue result = retain ? new AnimationClip.VectorValue() : null;
+        for (int axis = 0; axis < 3; axis++) {
+            int type = input.unsignedByte();
+            if (type == 1) {
+                float value = input.number();
+                if (retain) {
+                    result.setConstant(axis, value);
+                }
+            } else if (type == 2) {
+                String expression = input.text();
+                if (retain) {
+                    result.setExpression(axis, expression);
+                }
+            } else if (retain) {
+                result.setConstant(axis, 0.0D);
+            }
+        }
+        return result;
+    }
+
+    private static void skipBlendSettings(Cursor input, int format) {
+        if (format <= 9) {
+            return;
+        }
+        input.varUInt("animation blend flag");
+        input.varUInt("animation blend flag");
+        repeat(input.count("blend weight"), ignored -> {
+            int type = input.unsignedByte();
+            if (type == 1) {
+                input.number();
+            } else if (type == 2) {
+                input.text();
+            }
+        });
+        input.varUInt("animation blend trailing flag");
+    }
+
+    private static void readProperties(Cursor input, int format, ModelBundle result) {
+        input.text();
+        boolean richMetadata = input.varUInt("metadata version flag") != 0;
+        if (richMetadata) {
+            if (format <= 15) {
+                input.varUInt("legacy metadata flag");
+            }
+            for (int ignored = 0; ignored < 4; ignored++) {
+                input.text();
+            }
+            repeat(input.count("author"), ignored -> {
+                input.text();
+                input.text();
+                repeat(input.count("author contact"), contact -> {
+                    input.text();
+                    input.text();
+                });
+                input.text();
+            });
+            repeat(input.count("model link"), ignored -> {
+                input.text();
+                input.text();
+            });
+        }
+        result.scales(input.number(), input.number());
+        repeat(input.count("extra animation"), ignored -> {
+            input.text();
+            input.text();
+        });
+        if (format > 9) {
+            repeat(input.count("animation button"), ignored -> {
+                input.text();
+                input.text();
+                input.varUInt("animation button flag");
+                repeat(input.count("configuration form"), form -> {
+                    for (int field = 0; field < 4; field++) {
+                        input.text();
+                    }
+                    input.skip(3 * Float.BYTES);
+                    repeat(input.count("configuration label"), label -> {
+                        input.text();
+                        input.text();
+                    });
+                });
+            });
+            repeat(input.count("animation classification"), ignored -> {
+                input.text();
+                repeat(input.count("classification entry"), entry -> {
+                    input.text();
+                    input.text();
+                });
+            });
+        }
+        result.defaultTexture(input.text());
+        input.text();
+        input.varUInt("property flag");
+        if (format > 4) {
+            input.varUInt("property flag");
+        }
+        if (format >= 15) {
+            input.varUInt("property flag");
+            input.varUInt("property flag");
+        }
+        if (format > 15) {
+            input.varUInt("property flag");
+            if (format >= 32) {
+                input.varUInt("property flag");
+            }
+            input.text();
+            input.text();
+            repeat(input.count("avatar"), ignored -> {
+                input.text();
+                input.skipBlob();
+                for (int flag = 0; flag < 4; flag++) {
+                    input.varUInt("avatar property");
+                }
+            });
+            repeat(input.count("background image"), ignored -> {
+                input.text();
+                input.skipBlob();
+                for (int flag = 0; flag < 4; flag++) {
+                    input.varUInt("background image property");
+                }
+            });
+        }
+    }
+
+    private static void skipSubEntity(Cursor input, int format) {
+        if (format <= 26) {
+            input.text();
+        }
+        repeat(input.count("sub-entity animation"), ignored -> {
+            input.text();
+            skipAnimations(input, format);
+        });
+        require(input.varUInt("sub-entity separator") == 0, "Invalid sub-entity separator");
+        input.text();
+        input.skipBlob();
+        for (int ignored = 0; ignored < 4; ignored++) {
+            input.varUInt("sub-entity texture property");
+        }
+        repeat(input.count("sub-entity texture"), ignored -> {
+            input.varUInt("sub-entity texture id");
+            input.text();
+            input.skipBlob();
+            for (int property = 0; property < 4; property++) {
+                input.varUInt("sub-entity texture property");
+            }
+        });
+        input.text();
+        readGeometry(input, false);
+        if (format > 26) {
+            input.varUInt("sub-entity type");
+            input.text();
+        }
+    }
+
+    private static void skipAnimations(Cursor input, int format) {
+        ModelBundle discard = new ModelBundle("discard");
+        readAnimations(input, format, discard);
+    }
+
+    private static void skipControllers(Cursor input, int format) {
+        repeat(input.count("animation controller"), ignored -> {
+            if (format <= 15) {
+                input.varUInt("controller id");
+            } else {
+                input.text();
+                input.text();
+            }
+            repeat(input.count("controller animation"), animation -> {
+                input.text();
+                input.text();
+                repeat(input.count("controller state"), state -> {
+                    input.text();
+                    repeat(input.count("state animation"), item -> {
+                        input.text();
+                        input.text();
+                    });
+                    repeat(input.count("state transition"), item -> {
+                        input.text();
+                        input.text();
+                    });
+                    repeat(input.count("state entry action"), item -> input.text());
+                    repeat(input.count("state exit action"), item -> input.text());
+                    if (input.varUInt("blend transition mode") != 0) {
+                        input.number();
+                    } else {
+                        repeat(input.count("blend transition"), item -> {
+                            input.number();
+                            input.number();
+                        });
+                    }
+                    input.varUInt("controller state flag");
+                    if (format > 26) {
+                        repeat(input.count("controller sound"), item -> input.text());
+                    }
+                });
+            });
+        });
+    }
+
+    private static void skipSounds(Cursor input, int format) {
+        repeat(input.count("sound file"), ignored -> {
+            input.text();
+            if (format > 15) {
+                input.text();
+            }
+            input.skipBlob();
+        });
+    }
+
+    private static void skipFunctions(Cursor input) {
+        repeat(input.count("function file"), ignored -> {
+            input.text();
+            input.text();
+            input.skipBlob();
+        });
+    }
+
+    private static void skipLanguages(Cursor input) {
+        repeat(input.count("language file"), ignored -> {
+            input.text();
+            input.text();
+            repeat(input.count("language entry"), entry -> {
+                input.text();
+                input.text();
+            });
+        });
+    }
+
+    private static void skipLegacyInfo(Cursor input) {
+        input.text();
+        input.text();
+        repeat(input.count("legacy extra animation"), ignored -> input.text());
+        repeat(input.count("legacy author"), ignored -> input.text());
+        input.text();
+        input.varUInt("legacy info flag");
+    }
+
+    private static void storeTexture(ModelBundle result, String name, byte[] bytes,
+                                     int width, int height, int format) {
+        result.textures().put(name, bytes);
+        result.textureInfo().put(name, new ModelBundle.TextureInfo(width, height, format));
+    }
+
+    private static void repeat(int count, java.util.function.IntConsumer action) {
+        for (int index = 0; index < count; index++) {
+            action.accept(index);
+        }
+    }
+
+    private static void require(boolean condition, String message) {
+        if (!condition) {
+            throw new IllegalStateException(message);
+        }
+    }
+
+    private static final class Cursor {
+        private final byte[] source;
+        private int offset;
+
+        private Cursor(byte[] source) {
+            if (source == null) {
+                throw new IllegalArgumentException("Binary model payload is null");
+            }
+            this.source = source;
+        }
+
+        private int littleEndianInt() {
+            requireAvailable(Integer.BYTES);
+            int value = (source[offset] & 0xFF)
+                    | (source[offset + 1] & 0xFF) << 8
+                    | (source[offset + 2] & 0xFF) << 16
+                    | (source[offset + 3] & 0xFF) << 24;
+            offset += Integer.BYTES;
+            return value;
+        }
+
+        private float number() {
+            return Float.intBitsToFloat(littleEndianInt());
+        }
+
+        private int unsignedByte() {
+            requireAvailable(1);
+            return source[offset++] & 0xFF;
+        }
+
+        private int varUInt(String label) {
+            long value = 0L;
+            for (int group = 0; group < 5; group++) {
+                int current = unsignedByte();
+                value |= (long) (current & 0x7F) << (group * 7);
+                if ((current & 0x80) == 0) {
+                    if (value > Integer.MAX_VALUE) {
+                        throw new IllegalStateException(label + " exceeds the supported range");
+                    }
+                    return (int) value;
+                }
+            }
+            throw new IllegalStateException(label + " uses an overlong variable integer");
+        }
+
+        private int count(String label) {
+            int value = varUInt(label + " count");
+            if (value > MAX_ITEMS) {
+                throw new IllegalStateException(label + " count exceeds " + MAX_ITEMS);
+            }
+            return value;
+        }
+
+        private String text() {
+            int length = boundedLength(MAX_TEXT_BYTES, "text");
+            String value = new String(source, offset, length, StandardCharsets.UTF_8);
+            offset += length;
+            return value;
+        }
+
+        private byte[] blob() {
+            int length = boundedLength(MAX_BLOB_BYTES, "blob");
+            byte[] value = java.util.Arrays.copyOfRange(source, offset, offset + length);
+            offset += length;
+            return value;
+        }
+
+        private void skipBlob() {
+            skip(boundedLength(MAX_BLOB_BYTES, "blob"));
+        }
+
+        private int boundedLength(int maximum, String label) {
+            int length = varUInt(label + " length");
+            if (length > maximum || length > source.length - offset) {
+                throw new IllegalStateException(label + " exceeds package bounds");
+            }
+            return length;
+        }
+
+        private void skip(int bytes) {
+            if (bytes < 0) {
+                throw new IllegalStateException("Negative binary skip");
+            }
+            requireAvailable(bytes);
+            offset += bytes;
+        }
+
+        private void requireAvailable(int bytes) {
+            if (bytes < 0 || bytes > source.length - offset) {
+                throw new IllegalStateException("Binary model section exceeds package bounds");
+            }
+        }
+    }
+}

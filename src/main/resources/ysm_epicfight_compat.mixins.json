@@ -1,0 +1,13 @@
+{
+  "required": true,
+  "minVersion": "0.8",
+  "package": "net.okitsu.ysmepicfightcompat.mixin",
+  "compatibilityLevel": "JAVA_17",
+  "client": [
+    "CombatFirstPersonMixin",
+    "FirstPersonArmorGateMixin"
+  ],
+  "injectors": {
+    "defaultRequire": 1
+  }
+}
