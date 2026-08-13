@@ -1,0 +1,4 @@
+interface:
+  display_name: "Rewrite YSM Epic Fight Compat History"
+  short_description: "Safely perform explicitly requested history rewrites"
+  default_prompt: "Use $rewrite-ysm-epicfight-compat-history to perform an explicitly requested history rewrite safely."

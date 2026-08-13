@@ -1,0 +1,4 @@
+interface:
+  display_name: "Manage YSM Epic Fight Compat Git"
+  short_description: "Manage shared and Minecraft branch work safely"
+  default_prompt: "Use $manage-ysm-epicfight-compat-git to inspect ownership and validate this repository before a Git operation."

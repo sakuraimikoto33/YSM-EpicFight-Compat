@@ -1,0 +1,11 @@
+.gradle/
+build/
+run/
+run-server/
+*.log
+*.jar
+!gradle/wrapper/gradle-wrapper.jar
+.idea/
+*.iml
+out/
+logs/

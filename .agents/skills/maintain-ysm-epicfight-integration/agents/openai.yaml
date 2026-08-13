@@ -1,0 +1,4 @@
+interface:
+  display_name: "Maintain YSM Epic Fight Integration"
+  short_description: "Maintain official YSM and Epic Fight integration"
+  default_prompt: "Use $maintain-ysm-epicfight-integration to validate an official YSM and Epic Fight compatibility change."
