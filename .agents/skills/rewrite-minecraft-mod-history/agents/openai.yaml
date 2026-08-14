@@ -1,0 +1,4 @@
+interface:
+  display_name: "Rewrite Minecraft Mod History"
+  short_description: "Safely rewrite Minecraft mod Git history"
+  default_prompt: "Use $rewrite-minecraft-mod-history for an explicitly requested history rewrite with backups and state comparison."

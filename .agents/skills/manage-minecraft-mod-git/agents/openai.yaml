@@ -1,0 +1,4 @@
+interface:
+  display_name: "Manage Minecraft Mod Git"
+  short_description: "Manage safe branches, commits, merges, and pushes"
+  default_prompt: "Use $manage-minecraft-mod-git to inspect and safely manage this Minecraft mod repository task."

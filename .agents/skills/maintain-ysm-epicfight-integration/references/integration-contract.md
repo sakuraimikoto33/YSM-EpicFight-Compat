@@ -1,6 +1,6 @@
 # Integration contract
 
-- Target only Minecraft 1.20.1 Forge until the user explicitly opens another target.
+- Target only the configured Minecraft/Forge target until the user explicitly opens another target.
 - Target the official `yes_steve_model` mod and do not branch on derivative implementation classes.
 - Use Epic Fight's biped armature and `HumanoidMesh` seam. Do not overwrite Epic Fight animation poses through official-YSM bone internals.
 - Leave official YSM rendering untouched unless Epic Fight's player patch has `overrideRender()` enabled.
