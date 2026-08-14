@@ -1,0 +1,67 @@
+{
+  "schemaVersion": 1,
+  "sourceRevision": "bff447291fd5acd71e77fe45e70948581904d584",
+  "agentsBlockSha256": "39c5dc6927867dd5ae01e8dac647cc83f12fc48eb58870394265c384a1a6152a",
+  "managedFiles": [
+    {
+      "path": ".agents/skills/manage-minecraft-mod-git/agents/openai.yaml",
+      "sha256": "30a46de246180eb891af982a7ec202bbde89b8b11363e73990d6e0e3d44a28a6"
+    },
+    {
+      "path": ".agents/skills/manage-minecraft-mod-git/references/cross-version-workflow.md",
+      "sha256": "3d704250756eb628dff25f1f27ca7f802a46ae0478dd8242703dacdb6eeb0b96"
+    },
+    {
+      "path": ".agents/skills/manage-minecraft-mod-git/references/dependency-versions.md",
+      "sha256": "bf9996449388480e08c0d58a4ca492d264b56dd3dc50d3c99f1527dc833e33f6"
+    },
+    {
+      "path": ".agents/skills/manage-minecraft-mod-git/references/task-boundaries.md",
+      "sha256": "201cb4f51be187fa8dae0ae00e4fcbbd5bad50c1422f6200c9ba386fe21d8a71"
+    },
+    {
+      "path": ".agents/skills/manage-minecraft-mod-git/scripts/repository-policy.psd1",
+      "sha256": "b4665d2becf2159438068ccd53486786be23a308c0866b963516efdccd8bcd07"
+    },
+    {
+      "path": ".agents/skills/manage-minecraft-mod-git/scripts/repository-workflow.ps1",
+      "sha256": "4060fb54a93739310d5b935110bcf012fd1b8eb5f24a3d3b2354b9f4e5f949aa"
+    },
+    {
+      "path": ".agents/skills/manage-minecraft-mod-git/scripts/test-agent-workflows.ps1",
+      "sha256": "9f72c7fe372fc5b3d0ca97612ffc9a3e41a8b4b9a5d7821c5ec8c6835f00af79"
+    },
+    {
+      "path": ".agents/skills/manage-minecraft-mod-git/scripts/test-repository-workflow.ps1",
+      "sha256": "7d6a89583bac1a5cb342d877d4f816fee8f676a87240259d0ffc0b7aafc3a3f4"
+    },
+    {
+      "path": ".agents/skills/manage-minecraft-mod-git/scripts/verify-agent-workflows.ps1",
+      "sha256": "03089a34fb0968288db1ef8c40ea39ed10501836a227100eafe3f1ee90f66d03"
+    },
+    {
+      "path": ".agents/skills/manage-minecraft-mod-git/SKILL.md",
+      "sha256": "2b99849d70812fe6b29f9a2e63303f87a897274dd059639d32b96b009e4f50cf"
+    },
+    {
+      "path": ".agents/skills/rewrite-minecraft-mod-history/agents/openai.yaml",
+      "sha256": "66e50ccb06e6adaa744b0fda098355e8af8afb36f77f5ba264afdf1c474b4abc"
+    },
+    {
+      "path": ".agents/skills/rewrite-minecraft-mod-history/references/rewrite-policy.md",
+      "sha256": "8b4ce9dbad6075f46efeeb23918e344633568c41b2d8ccba1c4ff418c35b9bb7"
+    },
+    {
+      "path": ".agents/skills/rewrite-minecraft-mod-history/scripts/history-safety.ps1",
+      "sha256": "03eb1207364c1057631963aee9010f4ccd01967644a25bfe4f7416ad8650d0f9"
+    },
+    {
+      "path": ".agents/skills/rewrite-minecraft-mod-history/scripts/test-history-safety.ps1",
+      "sha256": "b774bca9950f8608806e3c4e34f45755e6b7bfa78d058d8befea030209a3cc0c"
+    },
+    {
+      "path": ".agents/skills/rewrite-minecraft-mod-history/SKILL.md",
+      "sha256": "7d1d3bc389fcd29d75cf7da283468a512d2152a2c46af33fcf4e202e6f45e4d4"
+    }
+  ]
+}

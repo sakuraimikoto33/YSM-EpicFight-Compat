@@ -1,14 +1,18 @@
 [CmdletBinding()]
 param(
+    [string]$RepoRoot = "",
+    [switch]$AllowContractVersionChange,
     [switch]$SkipBuild
 )
 
 $ErrorActionPreference = 'Stop'
-$repository = (Resolve-Path (Join-Path $PSScriptRoot '..\..\..\..')).Path
+$repository = if ($RepoRoot) { (Resolve-Path -LiteralPath $RepoRoot).Path } else { (Resolve-Path (Join-Path $PSScriptRoot '..\..\..\..')).Path }
 $branch = (& git -C $repository branch --show-current).Trim()
-if ($LASTEXITCODE -ne 0 -or $branch -ne 'mc/1.20.1') {
-    throw "Integration validation requires mc/1.20.1; current branch is '$branch'."
-}
+if ($LASTEXITCODE -ne 0) { throw "Unable to determine the current branch." }
+$activePath = Join-Path $repository '.agents/active-minecraft-branches.txt'
+$activeBranches = @([IO.File]::ReadAllLines($activePath) | ForEach-Object { $_.Trim() } | Where-Object { $_ -and -not $_.StartsWith('#') })
+if ($branch -notin $activeBranches) { throw "Integration validation requires a branch listed in .agents/active-minecraft-branches.txt; current branch is '$branch'." }
+$minecraftVersion = $branch.Substring(3)
 $errors = [System.Collections.Generic.List[string]]::new()
 
 function Require-Text {
@@ -23,7 +27,7 @@ function Require-Text {
     }
 }
 
-Require-Text 'gradle.properties' '^minecraft_version=1\.20\.1$' 'Minecraft target must remain 1.20.1.'
+Require-Text 'gradle.properties' ("^minecraft_version=" + [regex]::Escape($minecraftVersion) + "$") "Minecraft target must match branch '$branch'."
 Require-Text 'gradle.properties' '^forge_version=47\.4\.20$' 'Forge baseline changed unexpectedly.'
 Require-Text 'build.gradle' "compileOnly 'net\.okitsu\.ysmmapping:api:0\.1\.0'" 'Mapping API must remain compile-only.'
 Require-Text 'src/main/resources/META-INF/mods.toml' 'modId="ysm_mapping_api"' 'Distribution metadata must require Mapping API.'
@@ -77,7 +81,7 @@ if (-not $SkipBuild) {
 
 [pscustomobject]@{
     success = $true
-    target = 'forge-1.20.1'
+    target = $branch
     officialYsmOnly = $true
     buildSkipped = [bool]$SkipBuild
 } | ConvertTo-Json -Compress
