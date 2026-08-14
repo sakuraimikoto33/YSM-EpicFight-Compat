@@ -7,9 +7,12 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Map;
+import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class LocalModelRepositoryTest {
     @Test
@@ -26,5 +29,40 @@ class LocalModelRepositoryTest {
 
         assertEquals(Map.of("animals/fox", false), discovered);
         assertFalse(discovered.keySet().stream().anyMatch(id -> id.contains("0123456789abcdef")));
+    }
+
+    @Test
+    void discoversAndLoadsLegacyFlatDirectoryModels(@TempDir Path root) throws IOException {
+        Path model = root.resolve("custom/legacy/fox");
+        Files.createDirectories(model);
+        Files.writeString(model.resolve("main.json"), """
+                {"minecraft:geometry":[{
+                  "description":{
+                    "texture_width":16,"texture_height":16,
+                    "ysm_width_scale":0.8,"ysm_height_scale":0.9
+                  },
+                  "bones":[{"name":"root","cubes":[{
+                    "origin":[0,0,0],"size":[1,1,1],"uv":[0,0]
+                  }]}]
+                }]}
+                """);
+        Files.writeString(model.resolve("arm.json"), "{}");
+        Files.writeString(model.resolve("main.animation.json"), """
+                {"animations":{"idle":{"loop":true,"bones":{}}}}
+                """);
+        Files.write(model.resolve("skin.png"), new byte[]{1, 2, 3});
+        Files.write(model.resolve("arrow.png"), new byte[]{4, 5, 6});
+
+        assertEquals(Map.of("legacy/fox", false), LocalModelRepository.discover(root));
+
+        ModelBundle loaded = LocalModelRepository.load(root, "legacy/fox");
+
+        assertNotNull(loaded);
+        assertNotNull(loaded.geometry());
+        assertTrue(loaded.animations().containsKey("idle"));
+        assertEquals(Set.of("skin"), loaded.textures().keySet());
+        assertEquals("skin", loaded.defaultTexture());
+        assertEquals(0.8F, loaded.widthScale(), 0.0001F);
+        assertEquals(0.9F, loaded.heightScale(), 0.0001F);
     }
 }

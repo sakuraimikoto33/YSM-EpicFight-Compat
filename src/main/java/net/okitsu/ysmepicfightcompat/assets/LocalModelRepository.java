@@ -35,23 +35,30 @@ public final class LocalModelRepository {
     private static final long MAX_ANIMATION = 64L * 1024 * 1024;
     private static final long MAX_TEXTURE = 128L * 1024 * 1024;
     private static final long MAX_ARCHIVE = 256L * 1024 * 1024;
+    private static final int MAX_LEGACY_FILES = 4_096;
 
     private LocalModelRepository() {
     }
 
     public static ModelBundle load(String modelId) {
+        return load(DEFAULT_ROOT, modelId);
+    }
+
+    static ModelBundle load(Path ysmRoot, String modelId) {
         if (modelId == null || modelId.isBlank()) {
             return null;
         }
         try {
-            Optional<LocatedModel> located = locate(DEFAULT_ROOT, modelId);
+            Optional<LocatedModel> located = locate(ysmRoot, modelId);
             if (located.isEmpty()) {
                 return null;
             }
             LocatedModel source = located.get();
-            return source.archive()
-                    ? readArchive(modelId, source.path())
-                    : readDirectory(modelId, source.path());
+            return switch (source.format()) {
+                case ARCHIVE -> readArchive(modelId, source.path());
+                case MANIFEST_DIRECTORY -> readDirectory(modelId, source.path());
+                case LEGACY_DIRECTORY -> readLegacyDirectory(modelId, source.path());
+            };
         } catch (Exception ignored) {
             return null;
         }
@@ -83,6 +90,12 @@ public final class LocalModelRepository {
                 paths.filter(path -> !Files.isSymbolicLink(path)).forEach(path -> {
                     String leaf = path.getFileName().toString();
                     if (leaf.equals("ysm.json") && Files.isRegularFile(path, LinkOption.NOFOLLOW_LINKS)) {
+                        String id = slashPath(catalogRoot.relativize(path.getParent()));
+                        if (!id.isEmpty()) {
+                            models.put(id, false);
+                        }
+                    } else if (leaf.equals("main.json")
+                            && isLegacyDirectory(path.getParent())) {
                         String id = slashPath(catalogRoot.relativize(path.getParent()));
                         if (!id.isEmpty()) {
                             models.put(id, false);
@@ -191,6 +204,44 @@ public final class LocalModelRepository {
         return BinaryPackageParser.parse(modelId, PackageEnvelopeDecoder.open(envelope));
     }
 
+    private static ModelBundle readLegacyDirectory(String modelId, Path directory)
+            throws IOException {
+        String geometryJson = textBounded(directory.resolve("main.json"), MAX_GEOMETRY);
+        ModelBundle bundle = new ModelBundle(modelId);
+        bundle.geometry(BedrockGeometryParser.parse(geometryJson));
+        readLegacyScales(geometryJson, bundle);
+
+        List<Path> files = directRegularFiles(directory);
+        for (Path file : files) {
+            String name = file.getFileName().toString();
+            if (name.endsWith(".animation.json")) {
+                readAnimationFile(file, bundle.animations());
+            } else if (isLegacyPlayerTexture(file)) {
+                bundle.textures().put(stem(name), readBounded(file, MAX_TEXTURE));
+            }
+        }
+        if (!bundle.textures().isEmpty()) {
+            bundle.defaultTexture(bundle.textures().keySet().iterator().next());
+        }
+        return bundle;
+    }
+
+    private static void readLegacyScales(String geometryJson, ModelBundle bundle) {
+        JsonObject root = JsonParser.parseString(geometryJson).getAsJsonObject();
+        JsonElement geometries = root.get("minecraft:geometry");
+        if (geometries == null || !geometries.isJsonArray()
+                || geometries.getAsJsonArray().isEmpty()
+                || !geometries.getAsJsonArray().get(0).isJsonObject()) {
+            return;
+        }
+        JsonObject description = object(
+                geometries.getAsJsonArray().get(0).getAsJsonObject(), "description");
+        if (description != null) {
+            bundle.scales(decimal(description, "ysm_width_scale", bundle.widthScale()),
+                    decimal(description, "ysm_height_scale", bundle.heightScale()));
+        }
+    }
+
     private static void readAnimationFile(Path file, Map<String, AnimationClip> target) {
         try {
             JsonObject root = JsonParser.parseString(textBounded(file, MAX_ANIMATION)).getAsJsonObject();
@@ -236,13 +287,40 @@ public final class LocalModelRepository {
         boolean archive = modelId.endsWith(".ysm");
         for (String catalog : CATALOGS) {
             Path candidate = confine(root.resolve(catalog), modelId);
-            Path marker = archive ? candidate : candidate.resolve("ysm.json");
-            if (Files.isRegularFile(marker, LinkOption.NOFOLLOW_LINKS)
-                    && !Files.isSymbolicLink(marker)) {
-                return Optional.of(new LocatedModel(candidate, archive));
+            if (archive && regularFile(candidate)) {
+                return Optional.of(new LocatedModel(candidate, ModelFormat.ARCHIVE));
+            }
+            if (!archive && regularFile(candidate.resolve("ysm.json"))) {
+                return Optional.of(new LocatedModel(candidate, ModelFormat.MANIFEST_DIRECTORY));
+            }
+            if (!archive && isLegacyDirectory(candidate)) {
+                return Optional.of(new LocatedModel(candidate, ModelFormat.LEGACY_DIRECTORY));
             }
         }
         return Optional.empty();
+    }
+
+    private static boolean isLegacyDirectory(Path directory) {
+        if (regularFile(directory.resolve("ysm.json"))
+                || !regularFile(directory.resolve("main.json"))
+                || !regularFile(directory.resolve("arm.json"))) {
+            return false;
+        }
+        try (Stream<Path> paths = Files.list(directory)) {
+            return paths.anyMatch(LocalModelRepository::isLegacyPlayerTexture);
+        } catch (IOException ignored) {
+            return false;
+        }
+    }
+
+    private static boolean isLegacyPlayerTexture(Path path) {
+        String name = path.getFileName().toString();
+        return name.endsWith(".png") && !name.equals("arrow.png") && regularFile(path);
+    }
+
+    private static boolean regularFile(Path path) {
+        return Files.isRegularFile(path, LinkOption.NOFOLLOW_LINKS)
+                && !Files.isSymbolicLink(path);
     }
 
     static Path confine(Path root, String relative) throws IOException {
@@ -273,6 +351,19 @@ public final class LocalModelRepository {
                     .filter(path -> !Files.isSymbolicLink(path)).forEach(result::add);
         }
         result.sort(Comparator.comparing(path -> slashPath(directory.relativize(path))));
+        return result;
+    }
+
+    private static List<Path> directRegularFiles(Path directory) throws IOException {
+        List<Path> result;
+        try (Stream<Path> paths = Files.list(directory)) {
+            result = paths.filter(LocalModelRepository::regularFile)
+                    .sorted(Comparator.comparing(path -> path.getFileName().toString()))
+                    .limit(MAX_LEGACY_FILES + 1L).toList();
+        }
+        if (result.size() > MAX_LEGACY_FILES) {
+            throw new IOException("Legacy model contains too many files");
+        }
         return result;
     }
 
@@ -320,6 +411,15 @@ public final class LocalModelRepository {
         return value ^ value >>> 31;
     }
 
-    private record LocatedModel(Path path, boolean archive) {
+    private enum ModelFormat {
+        ARCHIVE,
+        MANIFEST_DIRECTORY,
+        LEGACY_DIRECTORY
+    }
+
+    private record LocatedModel(Path path, ModelFormat format) {
+        private boolean archive() {
+            return format == ModelFormat.ARCHIVE;
+        }
     }
 }

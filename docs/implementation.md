@@ -18,7 +18,7 @@ The selection channel carries identifiers only. It does not carry model packages
 
 ## Model sources and parsing
 
-`LocalModelRepository` looks up models in official YSM's model catalogs. It supports folder models described by `ysm.json` and `.ysm` packages. Folder geometry and animations are parsed from their Bedrock JSON representation. Package envelopes are opened in memory by `PackageEnvelopeDecoder`, then decoded into the same internal `ModelBundle` representation by `BinaryPackageParser`.
+`LocalModelRepository` looks up models in official YSM's model catalogs. It supports current folder models described by `ysm.json`, legacy flat folder models containing `main.json`, `arm.json`, and PNG textures, and `.ysm` packages. Folder geometry and animations are parsed from their Bedrock JSON representation. Package envelopes are opened in memory by `PackageEnvelopeDecoder`, then decoded into the same internal `ModelBundle` representation by `BinaryPackageParser`.
 
 Input sizes, counts, paths, hierarchy depth, and numeric values are checked at parsing and transfer boundaries. A failure is isolated to the selected model and causes normal fallback behavior.
 

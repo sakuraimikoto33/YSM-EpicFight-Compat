@@ -18,7 +18,7 @@
 
 ## モデルの探索と解析
 
-`LocalModelRepository` は公式YSMのモデルカタログからモデルを探索します。`ysm.json` で構成されるフォルダモデルと `.ysm` パッケージに対応します。フォルダモデルのジオメトリとアニメーションはBedrock JSONとして解析します。パッケージは `PackageEnvelopeDecoder` がメモリ内で展開し、`BinaryPackageParser` が同じ内部表現である `ModelBundle` へ変換します。
+`LocalModelRepository` は公式YSMのモデルカタログからモデルを探索します。`ysm.json` で構成される現行フォルダモデル、`main.json`・`arm.json`・PNG材質を同じ階層に置く旧フォルダモデル、`.ysm` パッケージに対応します。フォルダモデルのジオメトリとアニメーションはBedrock JSONとして解析します。パッケージは `PackageEnvelopeDecoder` がメモリ内で展開し、`BinaryPackageParser` が同じ内部表現である `ModelBundle` へ変換します。
 
 解析と通信の境界では、入力サイズ、要素数、パス、階層の深さ、数値を検証します。問題が発生した場合はその選択モデルだけを失敗として扱い、通常のフォールバックへ移行します。
 
