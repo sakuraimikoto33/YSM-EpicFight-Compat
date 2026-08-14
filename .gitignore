@@ -9,3 +9,4 @@ run-server/
 *.iml
 out/
 logs/
+models/
