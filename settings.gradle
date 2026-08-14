@@ -11,8 +11,4 @@ plugins {
 
 rootProject.name = 'ysm-epicfight-compat'
 
-if (file('../YSM-Mapping-API/api/build.gradle.kts').isFile()) {
-    includeBuild('../YSM-Mapping-API')
-} else {
-    throw new GradleException('YSM-Mapping-API mc/1.20.1 checkout must exist beside this repository.')
-}
+apply from: 'gradle/ysm-mapping-api.settings.gradle'

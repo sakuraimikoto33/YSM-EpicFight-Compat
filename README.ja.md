@@ -10,7 +10,7 @@ YSM Epic Fight Compat は、公式 Yes Steve Model で選択したプレイヤ�
 - Forge 47.4.20 以降
 - Yes Steve Model 2.6.0 以降（Forge 1.20.1版）
 - Epic Fight 20.14.17 以降（Forge 1.20.1版）
-- YSM Mapping API 0.1.0 以降
+- YSM Mapping API 0.1.1 以降
 
 ## 機能
 
@@ -30,10 +30,16 @@ YSM Epic Fight Compat は、公式 Yes Steve Model で選択したプレイヤ�
 
 ## ビルド
 
-Java 17が必要です。このリポジトリと同じ親ディレクトリに、同じMinecraftブランチの `YSM-Mapping-API` を配置してから次を実行します。
+Java 17とGitが必要です。ビルド時にMinecraft 1.20.1用のYSM Mapping API安定版から0.1.1以上の最新版を選び、ソースを自動取得してビルドします。`ysm_mapping_api_version` はタグ選択、`ysm_mapping_api_version_range` はLoader依存下限に使用し、両方に同じ安定版SemVerを指定します。
 
 ```powershell
 .\gradlew.bat check
+```
+
+複数リポジトリをまたぐ開発やオフラインビルドでは、互換性のあるMapping API checkoutを明示します。`minecraftVersion`は1.20.1、安定版`modVersion`は0.1.1以上である必要があります。
+
+```powershell
+.\gradlew.bat check -PysmMappingApiPath=D:\src\YSM-Mapping-API
 ```
 
 配布用jarは次の場所に生成されます。

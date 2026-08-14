@@ -10,7 +10,7 @@ YSM Epic Fight Compat is a Forge mod that renders player models selected in the 
 - Forge 47.4.20 or later
 - Yes Steve Model 2.6.0 or later for Forge 1.20.1
 - Epic Fight 20.14.17 or later for Forge 1.20.1
-- YSM Mapping API 0.1.0 or later
+- YSM Mapping API 0.1.1 or later
 
 ## Features
 
@@ -30,10 +30,16 @@ Install this mod and all requirements in the `mods` directory. For multiplayer, 
 
 ## Building
 
-Java 17 is required. Place a `YSM-Mapping-API` checkout for the same Minecraft branch next to this repository, then run:
+Java 17 and Git are required. The build selects the newest stable YSM Mapping API release for Minecraft 1.20.1 at or above 0.1.1, then builds it from source automatically. `ysm_mapping_api_version` controls tag selection and `ysm_mapping_api_version_range` controls the loader dependency floor; both must contain the same stable SemVer.
 
 ```powershell
 .\gradlew.bat check
+```
+
+For cross-repository development or offline builds, provide an explicit compatible Mapping API checkout. Its `minecraftVersion` must be 1.20.1 and its stable `modVersion` must be at least 0.1.1:
+
+```powershell
+.\gradlew.bat check -PysmMappingApiPath=D:\src\YSM-Mapping-API
 ```
 
 The distributable jar is written to:

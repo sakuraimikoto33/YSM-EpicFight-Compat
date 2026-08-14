@@ -1,0 +1,200 @@
+import java.math.BigInteger
+import java.util.Properties
+import org.gradle.api.GradleException
+
+def mappingApiRepository = 'https://github.com/sakuraimikoto33/YSM-Mapping-API.git'
+def minimumVersionText = providers.gradleProperty('ysm_mapping_api_version').orNull
+def loaderMinimumVersionText = providers.gradleProperty('ysm_mapping_api_version_range').orNull
+def targetMinecraftVersion = providers.gradleProperty('minecraft_version')
+        .orElse(providers.gradleProperty('minecraftVersion')).orNull
+
+if (!minimumVersionText) {
+    throw new GradleException('The ysm_mapping_api_version Gradle property is required.')
+}
+if (!loaderMinimumVersionText) {
+    throw new GradleException('The ysm_mapping_api_version_range Gradle property is required.')
+}
+if (!targetMinecraftVersion) {
+    throw new GradleException('The target Minecraft version Gradle property is required.')
+}
+
+def stableSemVerPattern = ~/^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/
+def parseStableSemVer = { String value ->
+    def matcher = stableSemVerPattern.matcher(value)
+    if (!matcher.matches()) {
+        return null
+    }
+    return [
+            source: value,
+            parts : [
+                    new BigInteger(matcher.group(1)),
+                    new BigInteger(matcher.group(2)),
+                    new BigInteger(matcher.group(3))
+            ]
+    ]
+}
+def compareSemVer = { left, right ->
+    for (int index = 0; index < 3; index++) {
+        int comparison = left.parts[index] <=> right.parts[index]
+        if (comparison != 0) {
+            return comparison
+        }
+    }
+    return 0
+}
+def selectLatestTag = { Collection<String> tags, String minimum, String minecraftVersion ->
+    def parsedMinimum = parseStableSemVer(minimum)
+    if (parsedMinimum == null) {
+        throw new GradleException("YSM Mapping API selection version must be a stable SemVer: ${minimum}")
+    }
+    def suffix = "-mc${minecraftVersion}"
+    def candidates = tags.collect { String tag ->
+        if (!tag.endsWith(suffix)) {
+            return null
+        }
+        def versionText = tag.substring(0, tag.length() - suffix.length())
+        def parsed = parseStableSemVer(versionText)
+        if (parsed == null || compareSemVer(parsed, parsedMinimum) < 0) {
+            return null
+        }
+        return [tag: tag, version: parsed]
+    }.findAll { it != null }
+
+    return candidates.max { left, right ->
+        int comparison = compareSemVer(left.version, right.version)
+        return comparison != 0 ? comparison : left.tag <=> right.tag
+    }?.tag
+}
+
+def selfTestTags = [
+        '0.0.9-mc1.20.1',
+        '0.1.0-mc1.20.1',
+        '0.2.0-rc.1-mc1.20.1',
+        '0.2.0-mc1.20.1',
+        '9.0.0-mc1.21.1',
+        'invalid-mc1.20.1'
+]
+if (selectLatestTag(selfTestTags, '0.1.0', '1.20.1') != '0.2.0-mc1.20.1') {
+    throw new GradleException('YSM Mapping API resolver self-test failed.')
+}
+
+def parsedMinimum = parseStableSemVer(minimumVersionText)
+if (parsedMinimum == null) {
+    throw new GradleException(
+            "YSM Mapping API selection version must be a stable SemVer: ${minimumVersionText}")
+}
+def parsedLoaderMinimum = parseStableSemVer(loaderMinimumVersionText)
+if (parsedLoaderMinimum == null) {
+    throw new GradleException(
+            "YSM Mapping API version range floor must be a stable SemVer: " +
+                    "${loaderMinimumVersionText}")
+}
+if (minimumVersionText != loaderMinimumVersionText) {
+    throw new GradleException(
+            "YSM Mapping API selection version ${minimumVersionText} must match loader " +
+                    "dependency floor ${loaderMinimumVersionText}.")
+}
+
+def dependencyVersion
+def localPathValue = providers.gradleProperty('ysmMappingApiPath').orNull
+if (localPathValue != null) {
+    if (!localPathValue.trim()) {
+        throw new GradleException('ysmMappingApiPath must not be blank.')
+    }
+
+    def localDirectory = file(localPathValue).canonicalFile
+    def apiBuild = new File(localDirectory, 'api/build.gradle.kts')
+    def propertiesFile = new File(localDirectory, 'gradle.properties')
+    if (!apiBuild.isFile()) {
+        throw new GradleException(
+                "YSM Mapping API checkout is missing api/build.gradle.kts: ${localDirectory}")
+    }
+    if (!propertiesFile.isFile()) {
+        throw new GradleException(
+                "YSM Mapping API checkout is missing gradle.properties: ${localDirectory}")
+    }
+
+    def localProperties = new Properties()
+    propertiesFile.withInputStream { localProperties.load(it) }
+    def localMinecraftVersion = localProperties.getProperty('minecraftVersion')
+    def localVersionText = localProperties.getProperty('modVersion')
+    if (localMinecraftVersion != targetMinecraftVersion) {
+        throw new GradleException(
+                "YSM Mapping API Minecraft version ${localMinecraftVersion ?: '[missing]'} " +
+                        "does not match required ${targetMinecraftVersion}: ${localDirectory}")
+    }
+    def parsedLocalVersion = parseStableSemVer(localVersionText ?: '')
+    if (parsedLocalVersion == null) {
+        throw new GradleException(
+                "YSM Mapping API local modVersion must be a stable SemVer: " +
+                        "${localVersionText ?: '[missing]'}")
+    }
+    if (compareSemVer(parsedLocalVersion, parsedMinimum) < 0) {
+        throw new GradleException(
+                "YSM Mapping API local version ${localVersionText} is below required " +
+                        "${minimumVersionText}.")
+    }
+
+    includeBuild(localDirectory)
+    dependencyVersion = "${localVersionText}-mc${targetMinecraftVersion}".toString()
+    logger.lifecycle(
+            "YSM Mapping API ${localVersionText} for Minecraft ${targetMinecraftVersion} " +
+                    "selected from local checkout ${localDirectory}.")
+} else {
+    if (gradle.startParameter.offline) {
+        throw new GradleException(
+                'Cannot select the latest YSM Mapping API release in offline mode. ' +
+                        'Use -PysmMappingApiPath=<matching-checkout>.')
+    }
+    if (gradle.startParameter.configurationCacheRequested) {
+        throw new GradleException(
+                'Configuration cache cannot be used while selecting the latest YSM Mapping API ' +
+                        'release. Use -PysmMappingApiPath=<matching-checkout> or omit ' +
+                        '--configuration-cache.')
+    }
+
+    def remoteTags
+    try {
+        def remoteQuery = providers.exec {
+            commandLine('git', 'ls-remote', '--refs', '--tags', mappingApiRepository)
+            ignoreExitValue = true
+        }
+        def remoteResult = remoteQuery.result.get()
+        if (remoteResult.exitValue != 0) {
+            def errorText = remoteQuery.standardError.asText.get().trim()
+            throw new GradleException(
+                    "Unable to query YSM Mapping API release tags" +
+                            (errorText ? ": ${errorText}" : '.'))
+        }
+        remoteTags = remoteQuery.standardOutput.asText.get().readLines().collect { String line ->
+            def fields = line.trim().split(/\s+/)
+            def ref = fields.length > 1 ? fields[-1] : ''
+            return ref.startsWith('refs/tags/') ? ref.substring('refs/tags/'.length()) : null
+        }.findAll { it != null }
+    } catch (GradleException exception) {
+        throw exception
+    } catch (Exception exception) {
+        throw new GradleException('Unable to query YSM Mapping API release tags.', exception)
+    }
+
+    dependencyVersion = selectLatestTag(
+            remoteTags, minimumVersionText, targetMinecraftVersion)
+    if (dependencyVersion == null) {
+        throw new GradleException(
+                "No stable YSM Mapping API release was found for Minecraft " +
+                        "${targetMinecraftVersion} at or above ${minimumVersionText}.")
+    }
+
+    sourceControl {
+        gitRepository(uri(mappingApiRepository)) {
+            producesModule('net.okitsu.ysmmapping:api')
+        }
+    }
+    def selectedVersionText = dependencyVersion.substring(
+            0, dependencyVersion.length() - "-mc${targetMinecraftVersion}".length())
+    logger.lifecycle(
+            "YSM Mapping API ${selectedVersionText} " +
+                    "for Minecraft ${targetMinecraftVersion} selected from tag ${dependencyVersion}.")
+}
+
+gradle.extensions.extraProperties.set('ysmMappingApiDependencyVersion', dependencyVersion)

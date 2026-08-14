@@ -10,6 +10,8 @@ base {
     archivesName = 'ysm-epicfight-compat'
 }
 
+def ysmMappingApiDependencyVersion = gradle.ext.ysmMappingApiDependencyVersion
+
 java.toolchain.languageVersion = JavaLanguageVersion.of(17)
 
 minecraft {
@@ -51,7 +53,7 @@ repositories {
 dependencies {
     minecraft "net.minecraftforge:forge:${minecraft_version}-${forge_version}"
     implementation fg.deobf("maven.modrinth:epic-fight:${epicfight_version}")
-    compileOnly 'net.okitsu.ysmmapping:api:0.1.0'
+    compileOnly "net.okitsu.ysmmapping:api:${ysmMappingApiDependencyVersion}"
     compileOnly 'org.spongepowered:mixin:0.8.5'
     annotationProcessor 'org.spongepowered:mixin:0.8.5:processor'
 
@@ -60,7 +62,7 @@ dependencies {
 
     testImplementation platform('org.junit:junit-bom:5.10.2')
     testImplementation 'org.junit.jupiter:junit-jupiter'
-    testRuntimeOnly 'net.okitsu.ysmmapping:api:0.1.0'
+    testRuntimeOnly "net.okitsu.ysmmapping:api:${ysmMappingApiDependencyVersion}"
 }
 
 tasks.named('processResources', ProcessResources).configure {
@@ -70,6 +72,7 @@ tasks.named('processResources', ProcessResources).configure {
             loader_version_range: loader_version_range,
             ysm_version_range: ysm_version_range,
             epicfight_version_range: epicfight_version_range,
+            ysm_mapping_api_version_range: ysm_mapping_api_version_range,
             mod_id: mod_id,
             mod_name: mod_name,
             mod_license: mod_license,
