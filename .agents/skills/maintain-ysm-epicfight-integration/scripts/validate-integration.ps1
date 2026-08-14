@@ -29,10 +29,25 @@ function Require-Text {
 
 Require-Text 'gradle.properties' ("^minecraft_version=" + [regex]::Escape($minecraftVersion) + "$") "Minecraft target must match branch '$branch'."
 Require-Text 'gradle.properties' '^forge_version=47\.4\.20$' 'Forge baseline changed unexpectedly.'
-Require-Text 'build.gradle' "compileOnly 'net\.okitsu\.ysmmapping:api:0\.1\.0'" 'Mapping API must remain compile-only.'
+Require-Text 'gradle.properties' '^ysm_mapping_api_version=0\.1\.1$' 'Mapping API selection version must remain 0.1.1.'
+Require-Text 'gradle.properties' '^ysm_mapping_api_version_range=0\.1\.1$' 'Mapping API loader dependency floor must remain 0.1.1.'
+Require-Text 'settings.gradle' "apply from: 'gradle/ysm-mapping-api\.settings\.gradle'" 'Settings must apply the Mapping API resolver.'
+Require-Text 'gradle/ysm-mapping-api.settings.gradle' 'git.*ls-remote.*--refs.*--tags' 'Mapping API resolver must query remote tags.'
+Require-Text 'gradle/ysm-mapping-api.settings.gradle' 'ysm_mapping_api_version_range' 'Mapping API resolver must validate the loader dependency floor.'
+Require-Text 'gradle/ysm-mapping-api.settings.gradle' 'ysmMappingApiPath' 'Mapping API resolver must support an explicit local checkout.'
+Require-Text 'gradle/ysm-mapping-api.settings.gradle' 'producesModule\([''"]net\.okitsu\.ysmmapping:api[''"]\)' 'Mapping API resolver must register the API source module.'
+Require-Text 'build.gradle' 'compileOnly "net\.okitsu\.ysmmapping:api:\$\{ysmMappingApiDependencyVersion\}"' 'Mapping API must remain a dynamically resolved compile-only dependency.'
+Require-Text 'build.gradle' 'testRuntimeOnly "net\.okitsu\.ysmmapping:api:\$\{ysmMappingApiDependencyVersion\}"' 'Mapping API tests must use the dynamically resolved source version.'
+Require-Text 'build.gradle' 'ysm_mapping_api_version_range' 'Build resources must expand the Mapping API loader dependency floor.'
 Require-Text 'src/main/resources/META-INF/mods.toml' 'modId="ysm_mapping_api"' 'Distribution metadata must require Mapping API.'
+Require-Text 'src/main/resources/META-INF/mods.toml' 'versionRange="\[\$\{ysm_mapping_api_version_range\},\)"' 'Distribution metadata must derive the Mapping API floor from gradle.properties.'
 Require-Text 'src/main/resources/META-INF/mods.toml' 'modId="yes_steve_model"' 'Distribution metadata must require official YSM.'
 Require-Text 'src/main/resources/META-INF/mods.toml' 'modId="epicfight"' 'Distribution metadata must require Epic Fight.'
+
+$settingsText = Get-Content -Raw -LiteralPath (Join-Path $repository 'settings.gradle')
+if ($settingsText -match '(\.\./YSM-Mapping-API|\.worktrees[/\\]YSM-Mapping-API)') {
+    $errors.Add('Settings must not discover Mapping API through workspace-relative paths.')
+}
 
 $sourceRoots = @(
     (Join-Path $repository 'src'),
@@ -82,6 +97,8 @@ if (-not $SkipBuild) {
 [pscustomobject]@{
     success = $true
     target = $branch
+    mappingApiVersion = '0.1.1'
+    mappingApiVersionRange = '0.1.1'
     officialYsmOnly = $true
     buildSkipped = [bool]$SkipBuild
 } | ConvertTo-Json -Compress
