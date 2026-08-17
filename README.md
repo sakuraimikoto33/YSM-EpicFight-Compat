@@ -31,16 +31,16 @@ Install this mod and all requirements in the `mods` directory. For multiplayer, 
 
 ## Building
 
-Java 17 and Git are required. The build selects the newest stable YSM Mapping API release for Minecraft 1.20.1 at or above 0.1.1, then builds it from source automatically. `ysm_mapping_api_version` controls tag selection and `ysm_mapping_api_version_range` controls the loader dependency floor; both must contain the same stable SemVer.
+Java 17 and Git are required.
 
 ```powershell
-.\gradlew.bat check
+.\gradlew.bat build
 ```
 
-For cross-repository development or offline builds, provide an explicit compatible Mapping API checkout. Its `minecraftVersion` must be 1.20.1 and its stable `modVersion` must be at least 0.1.1:
+To use a Mapping API checkout under development, provide its path explicitly:
 
 ```powershell
-.\gradlew.bat check -PysmMappingApiPath=D:\src\YSM-Mapping-API
+.\gradlew.bat build -PysmMappingApiPath=D:\src\YSM-Mapping-API
 ```
 
 The distributable jar is written to:
@@ -52,7 +52,6 @@ build/libs/ysm-epicfight-compat-mc1.20.1-0.1.0-all.jar
 ## Documentation
 
 - [Implementation details](docs/implementation.md)
-- [実装詳細（日本語）](docs/implementation.ja.md)
 
 ## License
 
