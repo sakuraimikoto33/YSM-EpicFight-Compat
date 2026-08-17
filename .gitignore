@@ -10,3 +10,5 @@ run-server/
 out/
 logs/
 models/
+__pycache__/
+*.py[cod]

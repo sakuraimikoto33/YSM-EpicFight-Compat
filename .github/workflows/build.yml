@@ -1,0 +1,193 @@
+name: Build and Release
+
+on:
+  push:
+    branches:
+      - "mc/**"
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  build:
+    name: Build ${{ github.ref_name }}
+    runs-on: ubuntu-latest
+    outputs:
+      artifact_name: ${{ steps.artifact.outputs.name }}
+
+    steps:
+      - name: Checkout pushed branch
+        uses: actions/checkout@v7
+
+      - name: Set up Java
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v6
+        with:
+          cache-provider: basic
+
+      - name: Make Gradle wrapper executable
+        run: chmod +x gradlew
+
+      - name: Build
+        run: ./gradlew --no-daemon build
+
+      - name: Collect distribution artifact
+        id: artifact
+        shell: bash
+        env:
+          BRANCH_NAME: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+
+          minecraft_version="$(sed -n 's/^minecraft_version[[:space:]]*=[[:space:]]*//p' gradle.properties)"
+          mod_version="$(sed -n 's/^mod_version[[:space:]]*=[[:space:]]*//p' gradle.properties)"
+          if [[ -z "$minecraft_version" || -z "$mod_version" ]]; then
+            echo "::error file=gradle.properties::minecraft_version or mod_version is missing."
+            exit 1
+          fi
+
+          jar="build/libs/ysm-epicfight-compat-mc${minecraft_version}-${mod_version}-all.jar"
+          if [[ ! -f "$jar" ]]; then
+            echo "::error::Expected distribution JAR was not produced: $jar"
+            exit 1
+          fi
+
+          mkdir release-artifacts
+          cp "$jar" release-artifacts/
+
+          safe_branch="${BRANCH_NAME//\//-}"
+          echo "name=ysm-epicfight-compat-${safe_branch}-${GITHUB_SHA::12}" >> "$GITHUB_OUTPUT"
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ steps.artifact.outputs.name }}
+          path: release-artifacts/*.jar
+          if-no-files-found: error
+          retention-days: 14
+          compression-level: 0
+
+  release:
+    name: Release ${{ github.ref_name }} when version increases
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: write
+
+    steps:
+      - name: Checkout pushed commit and tags
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Refresh release tags
+        run: git fetch --force --tags origin
+
+      - name: Decide whether to release
+        id: decision
+        shell: bash
+        env:
+          GH_REPO: ${{ github.repository }}
+          TARGET_SHA: ${{ github.sha }}
+        run: >-
+          python3 .github/scripts/release_version.py
+          --github-output "$GITHUB_OUTPUT"
+          --repository "$GH_REPO"
+          --target "$TARGET_SHA"
+
+      - name: Report skipped release
+        if: steps.decision.outputs.should_release != 'true'
+        shell: bash
+        env:
+          MOD_VERSION: ${{ steps.decision.outputs.mod_version }}
+          PREVIOUS_TAG: ${{ steps.decision.outputs.previous_tag }}
+        run: |
+          if [[ -n "$PREVIOUS_TAG" ]]; then
+            echo "::notice::Release skipped: mod_version $MOD_VERSION is not newer than $PREVIOUS_TAG."
+          else
+            echo "::notice::Release skipped for mod_version $MOD_VERSION."
+          fi
+
+      - name: Download release asset
+        if: steps.decision.outputs.should_release == 'true'
+        uses: actions/download-artifact@v8
+        with:
+          name: ${{ needs.build.outputs.artifact_name }}
+          path: release-assets
+
+      - name: Create release
+        if: steps.decision.outputs.should_release == 'true'
+        shell: bash
+        env:
+          CANDIDATE_TAG: ${{ steps.decision.outputs.tag }}
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TARGET_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+
+          assets=(release-assets/*.jar)
+          if (( ${#assets[@]} == 0 )); then
+            echo "::error::No release assets were downloaded."
+            exit 1
+          fi
+
+          # Close the race between the initial decision and release creation.
+          git fetch --force --tags origin
+          recheck_output="$RUNNER_TEMP/release-recheck.out"
+          : > "$recheck_output"
+          python3 .github/scripts/release_version.py \
+            --github-output "$recheck_output" \
+            --repository "$GH_REPO" \
+            --target "$TARGET_SHA"
+
+          if ! grep -Fxq 'should_release=true' "$recheck_output"; then
+            echo "::notice::Release skipped because a same or newer version was published while this workflow was running."
+            exit 0
+          fi
+
+          tag="$(sed -n 's/^tag=//p' "$recheck_output")"
+          prerelease="$(sed -n 's/^prerelease=//p' "$recheck_output")"
+          history_url="$(sed -n 's/^history_url=//p' "$recheck_output")"
+          if [[ "$tag" != "$CANDIDATE_TAG" || -z "$history_url" ]]; then
+            echo "::error::Release metadata changed unexpectedly during the final check."
+            exit 1
+          fi
+
+          printf '[Full Changelog](%s)\n' "$history_url" > release-notes.md
+
+          release_args=(
+            "$tag"
+            "${assets[@]}"
+            --title "$tag"
+            --target "$TARGET_SHA"
+            --notes-file release-notes.md
+          )
+          if [[ "$prerelease" == "true" ]]; then
+            release_args+=(--prerelease)
+          fi
+
+          set +e
+          create_output="$(gh release create "${release_args[@]}" 2>&1)"
+          create_status=$?
+          set -e
+          if (( create_status != 0 )); then
+            if gh release view "$tag" --repo "$GH_REPO" > /dev/null 2>&1; then
+              echo "::notice::Release $tag was created concurrently by another workflow."
+              exit 0
+            fi
+            printf '%s\n' "$create_output" >&2
+            exit "$create_status"
+          fi
+
+          printf '%s\n' "$create_output"

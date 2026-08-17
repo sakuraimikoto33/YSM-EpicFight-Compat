@@ -3,6 +3,7 @@
     )
     SharedPaths = @(
         ".agents"
+        ".github"
         "AGENTS.md"
         ".gitignore"
         "docs"
