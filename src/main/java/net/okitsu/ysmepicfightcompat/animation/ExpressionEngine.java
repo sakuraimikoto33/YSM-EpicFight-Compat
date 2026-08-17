@@ -1,6 +1,7 @@
 package net.okitsu.ysmepicfightcompat.animation;
 
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
@@ -62,9 +63,32 @@ public final class ExpressionEngine {
     private static final Map<String, Expression> COMPILED = new ConcurrentHashMap<>();
     private static final Map<String, Integer> SLOT_BY_NAME = new ConcurrentHashMap<>();
     private static final List<String> NAME_BY_SLOT = new ArrayList<>();
-    private static final ThreadLocal<double[]> NUMBER_ARGUMENTS =
-            ThreadLocal.withInitial(() -> new double[4]);
+    private static final ThreadLocal<InvocationArguments> NUMBER_ARGUMENTS =
+            ThreadLocal.withInitial(InvocationArguments::new);
     private static final Expression ZERO = environment -> 0.0D;
+
+    /** Per-thread stack keeps nested Molang calls from overwriting their caller's arguments. */
+    private static final class InvocationArguments {
+        private double[][] frames = new double[4][];
+        private int depth;
+
+        private double[] acquire(int size) {
+            if (depth == frames.length) {
+                frames = Arrays.copyOf(frames, frames.length * 2);
+            }
+            double[] values = frames[depth];
+            if (values == null || values.length != size) {
+                values = new double[size];
+                frames[depth] = values;
+            }
+            depth++;
+            return values;
+        }
+
+        private void release() {
+            depth--;
+        }
+    }
 
     private ExpressionEngine() {
     }
@@ -291,15 +315,16 @@ public final class ExpressionEngine {
             }
             Node[] numbers = arguments.toArray(Node[]::new);
             return environment -> {
-                double[] values = NUMBER_ARGUMENTS.get();
-                if (values.length < numbers.length) {
-                    values = new double[numbers.length];
-                    NUMBER_ARGUMENTS.set(values);
+                InvocationArguments argumentsStack = NUMBER_ARGUMENTS.get();
+                double[] values = argumentsStack.acquire(numbers.length);
+                try {
+                    for (int i = 0; i < numbers.length; i++) {
+                        values[i] = numbers[i].evaluate(environment);
+                    }
+                    return clean(environment.invoke(name, values));
+                } finally {
+                    argumentsStack.release();
                 }
-                for (int i = 0; i < numbers.length; i++) {
-                    values[i] = numbers[i].evaluate(environment);
-                }
-                return clean(environment.invoke(name, values));
             };
         }
 

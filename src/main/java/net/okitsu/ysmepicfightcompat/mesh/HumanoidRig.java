@@ -8,6 +8,8 @@ import java.util.Map;
 
 /** Resolves official YSM bone conventions to Epic Fight's fixed biped joint layout. */
 public final class HumanoidRig {
+    /** Epic Fight's 1.20.1 humanoid armature uses joint ids 0 through 19. */
+    public static final int EPIC_JOINT_COUNT = 20;
     public static final int ROOT = 0;
     public static final int RIGHT_THIGH = 1;
     public static final int RIGHT_LEG = 2;
@@ -24,6 +26,7 @@ public final class HumanoidRig {
     public static final int LEFT_TOOL = 18;
 
     private static final Map<String, Integer> BINDINGS = createBindings();
+    private static final Map<String, Integer> MAJOR_BINDINGS = createMajorBindings();
 
     private HumanoidRig() {
     }
@@ -44,6 +47,14 @@ public final class HumanoidRig {
         return BINDINGS.containsKey(normalize(bone.name()));
     }
 
+    /**
+     * Returns whether this bone is one of the fixed humanoid controls that must remain under
+     * Epic Fight's exclusive ownership. Accessory aliases intentionally are not major bones.
+     */
+    public static boolean isMajorBone(GeometryDocument.Bone bone) {
+        return MAJOR_BINDINGS.containsKey(normalize(bone.name()));
+    }
+
     private static Map<String, Integer> createBindings() {
         Map<String, Integer> result = new HashMap<>();
         bind(result, ROOT, "root", "center");
@@ -62,6 +73,27 @@ public final class HumanoidRig {
         bind(result, RIGHT_THIGH, "rightleg", "legright");
         bind(result, LEFT_LEG, "leftlowerleg", "lowerlegleft", "leftcalf", "leftfoot", "footleft");
         bind(result, RIGHT_LEG, "rightlowerleg", "lowerlegright", "rightcalf", "rightfoot", "footright");
+        return Map.copyOf(result);
+    }
+
+    private static Map<String, Integer> createMajorBindings() {
+        Map<String, Integer> result = new HashMap<>();
+        bind(result, ROOT, "root", "center");
+        bind(result, TORSO, "allbody", "body", "waist", "torso", "downbody", "hip",
+                "hips", "pelvis", "leg");
+        bind(result, CHEST, "upbody", "upperbody", "chest", "arm");
+        bind(result, HEAD, "allhead", "head");
+        bind(result, LEFT_ARM, "leftarm", "armleft");
+        bind(result, RIGHT_ARM, "rightarm", "armright");
+        bind(result, LEFT_HAND, "leftforearm", "forearmleft", "lefthand", "handleft");
+        bind(result, RIGHT_HAND, "rightforearm", "forearmright", "righthand", "handright");
+        bind(result, LEFT_TOOL, "lefthandlocator", "leftitem", "itemleft");
+        bind(result, RIGHT_TOOL, "righthandlocator", "rightitem", "itemright");
+        bind(result, LEFT_THIGH, "leftleg", "legleft");
+        bind(result, RIGHT_THIGH, "rightleg", "legright");
+        bind(result, LEFT_LEG, "leftlowerleg", "lowerlegleft", "leftcalf", "leftfoot", "footleft");
+        bind(result, RIGHT_LEG,
+                "rightlowerleg", "lowerlegright", "rightcalf", "rightfoot", "footright");
         return Map.copyOf(result);
     }
 

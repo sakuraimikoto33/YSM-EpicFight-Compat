@@ -26,9 +26,9 @@ Input sizes, counts, paths, hierarchy depth, and numeric values are checked at p
 
 `SkinMeshCompiler` traverses the Bedrock bone hierarchy and produces the vertex arrays and indexed parts required by Epic Fight's `HumanoidMesh`. Bone pivots and rotations are accumulated before positions and normals are emitted. Vertices are deduplicated by position, normal, UV, and joint binding so UV seams remain distinct.
 
-`HumanoidRig` maps recognized humanoid bones and their descendants to Epic Fight's biped joints. Unrecognized roots are attached to the root joint. Epic Fight then owns combat deformation through its armature; the compatibility layer does not overwrite Epic Fight poses with YSM animation transforms.
+`HumanoidRig` reserves Epic Fight's 20 biped joints for a strict set of humanoid major bones. `AuxiliaryBoneLayout` assigns accessory bones parent-first to additional skinning indices, up to Epic Fight's 1,000-matrix limit. Each auxiliary bone is anchored to its nearest major joint while retaining its authored bind hierarchy.
 
-YSM's `pre_parallel` and `parallel` animations are evaluated once by `DefaultPoseProgram` to preserve form-specific visibility at the neutral pose. They are not used as a competing runtime animation system during combat.
+For every frame, `AuxiliaryPoseMatrices` copies Epic Fight's major skin matrices without modification and appends the composed auxiliary matrices. `ParallelAnimationProgram` evaluates `pre_parallel` before `parallel`; position, rotation, and scale transforms are applied only to auxiliary bones. Tracks on non-geometry Molang pseudo-bones are still evaluated in source order for their variable side effects, but can never receive a pose matrix. Nested Molang functions use separate stacked argument frames, so an inner call cannot overwrite its caller's arguments. Timeline events remain chronological across a loop boundary: tail events run before the next cycle's head events. Each clip's Molang `blend_weight` scales its contribution. Rotation channels from all parallel clips accumulate on the authored bind rotation, while the later, higher-priority clip replaces position and scale channels. Tracks on major bones never replace Epic Fight's pose. Scale tracks may still hide a major bone and its descendants, which preserves model variant visibility without moving the combat rig.
 
 ## Texture resolution
 
@@ -40,9 +40,9 @@ For a model available locally, `CombatMeshCache` can retain package texture byte
 
 If the client does not have a model selected by an online player, it requests that model from the dedicated server. `ServerModelTransfers` verifies that the model exists and is currently selected, parses it outside the server tick, and encodes it with `GeometryTransferCodec`.
 
-The transfer contains bounded, compressed geometry, scale properties, and the animation data needed to establish the default form. It never contains a `.ysm` package or texture bytes. Payloads are divided into bounded chunks; the client limits concurrent assemblies, total sizes, timeouts, and decompressed data before accepting a `ModelBundle`. Official YSM remains responsible for providing and caching the corresponding multiplayer texture on the client.
+The transfer contains bounded, compressed geometry, scale properties, and automatic animation clips, including their blend weights. It never contains a `.ysm` package or texture bytes. Payloads are divided into bounded chunks; the client limits concurrent assemblies, total sizes, timeouts, and decompressed data before accepting a `ModelBundle`. Official YSM remains responsible for providing and caching the corresponding multiplayer texture on the client.
 
-Some official packages represent an animation with no finite end by using positive infinity as its duration. Duration is not used by the transferred default-form evaluator, so the encoder normalizes that value to zero. The decoder continues to reject non-finite values received from the network.
+Some official packages represent an animation with no finite declared end by using positive infinity. The encoder normalizes that declaration to zero; the runtime derives an effective duration from retained keyframes where possible. The decoder continues to reject non-finite values received from the network.
 
 ## Caching and reloads
 

@@ -14,6 +14,7 @@ class HumanoidRigTest {
         GeometryDocument.Bone left = bone("Left_Arm2", "");
         assertEquals(HumanoidRig.LEFT_ARM, HumanoidRig.jointFor(left));
         assertTrue(HumanoidRig.hasDirectBinding(left));
+        assertTrue(HumanoidRig.isMajorBone(left));
     }
 
     @Test
@@ -27,6 +28,16 @@ class HumanoidRigTest {
 
         assertEquals(HumanoidRig.HEAD, HumanoidRig.jointFor(ear));
         assertFalse(HumanoidRig.hasDirectBinding(ear));
+        assertFalse(HumanoidRig.isMajorBone(ear));
+    }
+
+    @Test
+    void accessoryAliasesRemainAuxiliaryEvenWhenTheyHaveAnAnchorBinding() {
+        GeometryDocument.Bone cape = bone("cape", "");
+
+        assertEquals(HumanoidRig.CHEST, HumanoidRig.jointFor(cape));
+        assertTrue(HumanoidRig.hasDirectBinding(cape));
+        assertFalse(HumanoidRig.isMajorBone(cape));
     }
 
     @Test

@@ -7,6 +7,7 @@ import net.minecraft.client.renderer.texture.DynamicTexture;
 import net.minecraft.resources.ResourceLocation;
 import net.okitsu.ysmepicfightcompat.CompatMod;
 import net.okitsu.ysmepicfightcompat.animation.DefaultPoseProgram;
+import net.okitsu.ysmepicfightcompat.animation.ParallelAnimationProgram;
 import net.okitsu.ysmepicfightcompat.assets.LocalModelRepository;
 import net.okitsu.ysmepicfightcompat.assets.ModelBundle;
 import net.okitsu.ysmepicfightcompat.assets.OfficialTextureResolver;
@@ -315,7 +316,11 @@ public final class CombatMeshCache {
         Mesh.RenderProperties properties = Mesh.RenderProperties.Builder.create()
                 .transparency(false).build();
         DefaultPoseProgram pose = new DefaultPoseProgram(source.geometry(), source.animations());
-        CompatHumanoidMesh mesh = new CompatHumanoidMesh(source.modelId(), pose,
+        ParallelAnimationProgram parallel = new ParallelAnimationProgram(
+                source.geometry(), source.animations(), baked.auxiliaryBones(),
+                source.widthScale(), source.heightScale());
+        CompatHumanoidMesh mesh = new CompatHumanoidMesh(source.modelId(), pose, parallel,
+                baked.auxiliaryBones(),
                 baked.arrays(), baked.parts(), null, properties);
         List<TextureSource> textures = new ArrayList<>();
         source.textures().forEach((name, bytes) -> textures.add(new TextureSource(

@@ -260,15 +260,17 @@ public final class BinaryPackageParser {
     private static void readAnimations(Cursor input, int format, ModelBundle result) {
         repeat(input.count("animation"), ignored -> {
             String name = input.text();
-            float duration = input.number();
+            // YSM's binary animation section stores its timeline in ticks.
+            // Keep duration in the same seconds unit used by retained keyframes.
+            float duration = input.number() / 20.0F;
             int playback = input.varUInt("animation playback");
-            skipBlendSettings(input, format);
             boolean retain = BedrockAnimationParser.isAutomatic(name);
             AnimationClip clip = retain ? new AnimationClip(name) : null;
             if (retain) {
                 clip.duration(duration);
                 clip.playback(AnimationClip.Playback.fromWireValue(playback));
             }
+            readBlendSettings(input, format, retain ? clip.blendWeight() : null);
             repeat(input.count("animation bone"), boneIndex -> {
                 String boneName = input.text();
                 AnimationClip.Track rotation = readTrack(input, retain);
@@ -349,20 +351,28 @@ public final class BinaryPackageParser {
         return result;
     }
 
-    private static void skipBlendSettings(Cursor input, int format) {
+    private static void readBlendSettings(Cursor input, int format,
+                                          AnimationClip.ScalarValue target) {
         if (format <= 9) {
             return;
         }
         input.varUInt("animation blend flag");
         input.varUInt("animation blend flag");
-        repeat(input.count("blend weight"), ignored -> {
+        int values = input.count("blend weight");
+        for (int index = 0; index < values; index++) {
             int type = input.unsignedByte();
             if (type == 1) {
-                input.number();
+                float value = input.number();
+                if (target != null && values == 1) {
+                    target.setConstant(value);
+                }
             } else if (type == 2) {
-                input.text();
+                String expression = input.text();
+                if (target != null && values == 1) {
+                    target.setExpression(expression);
+                }
             }
-        });
+        }
         input.varUInt("animation blend trailing flag");
     }
 

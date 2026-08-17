@@ -1,11 +1,13 @@
 package net.okitsu.ysmepicfightcompat.mesh;
 
 import com.mojang.blaze3d.vertex.PoseStack;
+import net.minecraft.client.Minecraft;
 import net.minecraft.client.renderer.MultiBufferSource;
 import net.minecraft.client.renderer.RenderType;
 import net.minecraft.resources.ResourceLocation;
 import net.okitsu.ysmepicfightcompat.CompatMod;
 import net.okitsu.ysmepicfightcompat.animation.DefaultPoseProgram;
+import net.okitsu.ysmepicfightcompat.animation.ParallelAnimationProgram;
 import net.okitsu.ysmepicfightcompat.render.RenderFrameContext;
 import yesman.epicfight.api.client.model.Mesh;
 import yesman.epicfight.api.client.model.MeshPart;
@@ -30,18 +32,26 @@ import java.util.concurrent.atomic.AtomicBoolean;
 public final class CompatHumanoidMesh extends HumanoidMesh {
     private static final Field COMPUTE_SETUP = locateComputeSetup();
     private static final AtomicBoolean CPU_FALLBACK_LOGGED = new AtomicBoolean();
+    private static final AtomicBoolean AUXILIARY_FALLBACK_LOGGED = new AtomicBoolean();
 
     private final String modelId;
     private final DefaultPoseProgram poseProgram;
+    private final ParallelAnimationProgram parallelAnimations;
+    private final AuxiliaryPoseMatrices auxiliaryPoses;
     private ResourceLocation texture;
 
     public CompatHumanoidMesh(String modelId, DefaultPoseProgram poseProgram,
+                              ParallelAnimationProgram parallelAnimations,
+                              AuxiliaryBoneLayout auxiliaryBones,
                               Map<String, Number[]> arrays,
                               Map<MeshPartDefinition, List<VertexBuilder>> parts,
                               @Nullable SkinnedMesh parent, RenderProperties properties) {
         super(arrays, parts, parent, properties);
         this.modelId = modelId;
         this.poseProgram = poseProgram;
+        this.parallelAnimations = parallelAnimations;
+        auxiliaryPoses = auxiliaryBones.isEmpty() ? null
+                : new AuxiliaryPoseMatrices(auxiliaryBones);
     }
 
     public String modelId() {
@@ -63,9 +73,23 @@ public final class CompatHumanoidMesh extends HumanoidMesh {
                      float red, float green, float blue, float alpha, int overlay,
                      @Nullable Armature armature, OpenMatrix4f[] poses) {
         RenderFrameContext.Frame frame = RenderFrameContext.current();
+        ParallelAnimationProgram.Frame animationFrame = frame == null
+                || parallelAnimations.isEmpty() ? null
+                : parallelAnimations.sample(frame.entity(),
+                Minecraft.getInstance().getFrameTime(), frame.firstPerson());
         poseProgram.apply(this, frame == null ? Map.of() : frame.visibleParts(),
-                frame == null || frame.showUnlistedParts(), frame != null && frame.firstPerson());
-        if (armature != null && poses != null && poses.length > armature.getJointNumber()) {
+                frame == null || frame.showUnlistedParts(), frame != null && frame.firstPerson(),
+                animationFrame == null ? null : animationFrame.hiddenBones());
+        if (auxiliaryPoses != null) {
+            OpenMatrix4f[] complete = auxiliaryPoses.compose(armature, poses,
+                    animationFrame == null ? null : animationFrame.auxiliaryDeltas());
+            if (complete != null) {
+                poses = complete;
+                armature = null;
+            } else if (AUXILIARY_FALLBACK_LOGGED.compareAndSet(false, true)) {
+                CompatMod.LOG.warn("YSM-EF Compat: auxiliary pose matrices are unavailable");
+            }
+        } else if (armature != null && poses != null && poses.length > armature.getJointNumber()) {
             poses = Arrays.copyOf(poses, armature.getJointNumber());
         }
         ResourceLocation selectedTexture = texture != null ? texture

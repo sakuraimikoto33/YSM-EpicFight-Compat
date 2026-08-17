@@ -33,6 +33,43 @@ class DefaultPoseProgramTest {
     }
 
     @Test
+    void blendWeightIsAppliedFromIdentityBeforeVisibilityIsCalculated() {
+        GeometryDocument geometry = new GeometryDocument();
+        GeometryDocument.Bone tail = new GeometryDocument.Bone("tail");
+        geometry.add(tail);
+        geometry.linkHierarchy();
+        AnimationClip clip = BedrockAnimationParser.parse("parallel0",
+                JsonParser.parseString("""
+                        {"blend_weight":0.5,"bones":{"tail":{"scale":0}}}
+                        """).getAsJsonObject());
+
+        DefaultPoseProgram program = new DefaultPoseProgram(
+                geometry, Map.of(clip.name(), clip));
+
+        assertEquals(0, program.hiddenBoneCount());
+    }
+
+    @Test
+    void evaluatesScriptTracksBeforeLaterVisibilityExpressions() {
+        GeometryDocument geometry = new GeometryDocument();
+        geometry.add(new GeometryDocument.Bone("tail"));
+        geometry.linkHierarchy();
+        AnimationClip script = BedrockAnimationParser.parse("pre_parallel0",
+                JsonParser.parseString("""
+                        {"bones":{"molang":{"rotation":["v.hide_tail=1",0,0]}}}
+                        """).getAsJsonObject());
+        AnimationClip visibility = BedrockAnimationParser.parse("parallel0",
+                JsonParser.parseString("""
+                        {"bones":{"tail":{"scale":"1-v.hide_tail"}}}
+                        """).getAsJsonObject());
+
+        DefaultPoseProgram program = new DefaultPoseProgram(
+                geometry, Map.of(script.name(), script, visibility.name(), visibility));
+
+        assertEquals(1, program.hiddenBoneCount());
+    }
+
+    @Test
     void firstPersonGroupsTreatArmAndSleeveAsOneVisibleJointFamily() {
         Map<String, Boolean> arms = Map.of(
                 "rightArm", false, "rightSleeve", true,
@@ -50,5 +87,16 @@ class DefaultPoseProgramTest {
         assertTrue(BedrockAnimationParser.isAutomatic("pre_parallel.forms"));
         assertTrue(BedrockAnimationParser.isAutomatic("hold_mainhand:minecraft:bow"));
         assertFalse(BedrockAnimationParser.isAutomatic("manual.wave"));
+    }
+
+    @Test
+    void parserKeepsMolangBlendWeight() {
+        AnimationClip clip = BedrockAnimationParser.parse("pre_parallel2",
+                JsonParser.parseString("""
+                        {"blend_weight":"0.75*math.sin(query.anim_time*20)+1.5"}
+                        """).getAsJsonObject());
+
+        assertEquals("0.75*math.sin(query.anim_time*20)+1.5",
+                clip.blendWeight().expression());
     }
 }

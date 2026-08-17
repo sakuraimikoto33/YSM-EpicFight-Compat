@@ -51,9 +51,22 @@ public final class BedrockAnimationParser {
         if (source.has("animation_length")) {
             clip.duration(source.get("animation_length").getAsFloat());
         }
+        readScalar(source.get("blend_weight"), clip.blendWeight());
         readBones(source.getAsJsonObject("bones"), clip);
         readTimeline(source.getAsJsonObject("timeline"), clip);
         return clip;
+    }
+
+    private static void readScalar(JsonElement source, AnimationClip.ScalarValue target) {
+        if (source == null || !source.isJsonPrimitive()) {
+            return;
+        }
+        JsonPrimitive primitive = source.getAsJsonPrimitive();
+        if (primitive.isNumber()) {
+            target.setConstant(primitive.getAsDouble());
+        } else if (primitive.isString()) {
+            target.setExpression(primitive.getAsString());
+        }
     }
 
     private static void readBones(JsonObject bones, AnimationClip clip) {

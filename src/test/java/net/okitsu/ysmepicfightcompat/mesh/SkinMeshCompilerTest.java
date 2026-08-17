@@ -38,5 +38,43 @@ class SkinMeshCompilerTest {
         assertEquals(0.1F, uvs[0].floatValue());
         assertEquals(0.2F, uvs[1].floatValue());
         assertEquals(1, result.faceCount());
+        assertEquals(0, result.auxiliaryBones().entries().size());
+    }
+
+    @Test
+    void assignsAuxiliaryBonesToDistinctPoseIndicesWithoutMovingMajorBones() {
+        GeometryDocument geometry = new GeometryDocument();
+        GeometryDocument.Bone head = faceBone("head");
+        GeometryDocument.Bone ear = faceBone("ear");
+        ear.parentName("head");
+        GeometryDocument.Bone tail = faceBone("tail");
+        tail.parentName("body");
+        GeometryDocument.Bone body = faceBone("body");
+        geometry.add(head);
+        geometry.add(ear);
+        geometry.add(body);
+        geometry.add(tail);
+        geometry.linkHierarchy();
+        ModelBundle model = ModelBundle.remote("test", geometry, null, 1.0F, 1.0F, "");
+
+        SkinMeshCompiler.Result result = SkinMeshCompiler.compile(model);
+
+        assertNotNull(result);
+        assertEquals(2, result.auxiliaryBones().entries().size());
+        Number[] influences = result.arrays().get("vindices");
+        assertEquals(HumanoidRig.HEAD, influences[0].intValue());
+        assertEquals(HumanoidRig.EPIC_JOINT_COUNT, influences[4 * 2].intValue());
+        assertEquals(HumanoidRig.TORSO, influences[8 * 2].intValue());
+        assertEquals(HumanoidRig.EPIC_JOINT_COUNT + 1, influences[12 * 2].intValue());
+    }
+
+    private static GeometryDocument.Bone faceBone(String name) {
+        GeometryDocument.Bone bone = new GeometryDocument.Bone(name);
+        bone.faces().add(new GeometryDocument.Face(new Vector3f[]{
+                new Vector3f(0, 0, 0), new Vector3f(1, 0, 0),
+                new Vector3f(1, 1, 0), new Vector3f(0, 1, 0)},
+                new float[][]{{0, 0}, {1, 0}, {1, 1}, {0, 1}},
+                new Vector3f(0, 0, 1)));
+        return bone;
     }
 }

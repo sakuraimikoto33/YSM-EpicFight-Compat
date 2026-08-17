@@ -3,12 +3,16 @@ package net.okitsu.ysmepicfightcompat.network.geometry;
 import net.okitsu.ysmepicfightcompat.animation.AnimationClip;
 import net.okitsu.ysmepicfightcompat.assets.ModelBundle;
 import net.okitsu.ysmepicfightcompat.geometry.GeometryDocument;
+import net.okitsu.ysmepicfightcompat.network.CompatNetwork;
 import org.joml.Vector3f;
 import org.junit.jupiter.api.Test;
 
+import java.io.ByteArrayInputStream;
+import java.io.DataInputStream;
 import java.io.IOException;
 import java.util.Arrays;
 import java.util.Map;
+import java.util.zip.GZIPInputStream;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -17,6 +21,23 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class GeometryTransferCodecTest {
+    @Test
+    void keepsUnreleasedProtocolsAtVersionOne() throws IOException {
+        assertEquals("1", CompatNetwork.PROTOCOL);
+
+        GeometryDocument geometry = new GeometryDocument();
+        geometry.add(bone("root", ""));
+        geometry.linkHierarchy();
+        byte[] payload = GeometryTransferCodec.encode(
+                ModelBundle.remote("protocol", geometry, Map.of(), 1, 1, ""));
+
+        try (DataInputStream input = new DataInputStream(
+                new GZIPInputStream(new ByteArrayInputStream(payload)))) {
+            assertEquals(0x59454632, input.readInt());
+            assertEquals(1, input.readInt());
+        }
+    }
+
     @Test
     void roundTripsOnlyGeometryAndTheDefaultFormProgram() throws IOException {
         GeometryDocument geometry = new GeometryDocument();
@@ -31,6 +52,7 @@ class GeometryTransferCodecTest {
         AnimationClip clip = new AnimationClip("parallel.test");
         clip.playback(AnimationClip.Playback.REPEAT);
         clip.duration(1.25F);
+        clip.blendWeight().setExpression("variable.tail_weight");
         AnimationClip.Track scale = new AnimationClip.Track();
         AnimationClip.VectorValue scaleValue = new AnimationClip.VectorValue();
         scaleValue.setConstant(0, 1.0D);
@@ -66,6 +88,7 @@ class GeometryTransferCodecTest {
         AnimationClip restored = decoded.animations().get("parallel.test");
         assertEquals(AnimationClip.Playback.REPEAT, restored.playback());
         assertEquals(1.25F, restored.duration());
+        assertEquals("variable.tail_weight", restored.blendWeight().expression());
         assertEquals("variable.scale=1", restored.timeline().get(0).statements().get(0));
         assertEquals("variable.scale", restored.boneTracks().get("head")
                 .scale().keyframes().get(0).value().expression(2));

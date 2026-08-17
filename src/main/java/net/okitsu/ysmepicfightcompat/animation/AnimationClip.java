@@ -74,6 +74,29 @@ public final class AnimationClip {
         }
     }
 
+    public static final class ScalarValue {
+        private String expression;
+        private double constant = 1.0D;
+
+        public void setConstant(double value) {
+            expression = null;
+            constant = value;
+        }
+
+        public void setExpression(String source) {
+            expression = source;
+            constant = 0.0D;
+        }
+
+        public String expression() {
+            return expression;
+        }
+
+        public double constant() {
+            return constant;
+        }
+    }
+
     public record Keyframe(float time, Interpolation interpolation,
                            VectorValue value, VectorValue incomingValue) {
     }
@@ -129,6 +152,7 @@ public final class AnimationClip {
     private final String name;
     private Playback playback = Playback.ONCE;
     private float duration;
+    private final ScalarValue blendWeight = new ScalarValue();
     private final Map<String, BoneTracks> boneTracks = new LinkedHashMap<>();
     private final List<TimelineEvent> timeline = new ArrayList<>();
 
@@ -154,6 +178,10 @@ public final class AnimationClip {
 
     public void duration(float value) {
         duration = value;
+    }
+
+    public ScalarValue blendWeight() {
+        return blendWeight;
     }
 
     public Map<String, BoneTracks> boneTracks() {

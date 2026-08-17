@@ -24,6 +24,7 @@ public final class SkinMeshCompiler {
 
     public record Result(Map<String, Number[]> arrays,
                          Map<MeshPartDefinition, List<VertexBuilder>> parts,
+                         AuxiliaryBoneLayout auxiliaryBones,
                          int faceCount) {
     }
 
@@ -43,6 +44,7 @@ public final class SkinMeshCompiler {
             return null;
         }
         Accumulator output = new Accumulator();
+        AuxiliaryBoneLayout auxiliaryBones = AuxiliaryBoneLayout.create(geometry);
         ArrayDeque<Visit> pending = new ArrayDeque<>();
         List<GeometryDocument.Bone> roots = geometry.roots();
         for (int index = roots.size() - 1; index >= 0; index--) {
@@ -51,13 +53,14 @@ public final class SkinMeshCompiler {
         while (!pending.isEmpty()) {
             Visit visit = pending.pop();
             Matrix4f transform = bindTransform(visit.parentTransform(), visit.bone());
-            output.append(visit.bone(), transform, model.widthScale(), model.heightScale());
+            output.append(visit.bone(), transform, auxiliaryBones,
+                    model.widthScale(), model.heightScale());
             List<GeometryDocument.Bone> children = visit.bone().children();
             for (int index = children.size() - 1; index >= 0; index--) {
                 pending.push(new Visit(children.get(index), transform));
             }
         }
-        return output.finish();
+        return output.finish(auxiliaryBones);
     }
 
     public static String partName(GeometryDocument.Bone bone) {
@@ -82,11 +85,12 @@ public final class SkinMeshCompiler {
         private int faces;
 
         private void append(GeometryDocument.Bone bone, Matrix4f transform,
+                            AuxiliaryBoneLayout auxiliaryBones,
                             float horizontalScale, float verticalScale) {
             if (bone.faces().isEmpty()) {
                 return;
             }
-            int joint = HumanoidRig.jointFor(bone);
+            int joint = auxiliaryBones.poseIndexFor(bone);
             List<Integer> triangles = trianglesByPart.computeIfAbsent(
                     partName(bone), ignored -> new ArrayList<>());
             for (GeometryDocument.Face face : bone.faces()) {
@@ -138,7 +142,7 @@ public final class SkinMeshCompiler {
             }
         }
 
-        private Result finish() {
+        private Result finish(AuxiliaryBoneLayout auxiliaryBones) {
             if (positions.isEmpty()) {
                 return null;
             }
@@ -157,7 +161,7 @@ public final class SkinMeshCompiler {
             trianglesByPart.forEach((name, indices) -> parts.put(
                     VanillaMeshPartDefinition.of(name), VertexBuilder.create(
                             indices.stream().mapToInt(Integer::intValue).toArray())));
-            return new Result(Map.copyOf(arrays), Map.copyOf(parts), faces);
+            return new Result(Map.copyOf(arrays), Map.copyOf(parts), auxiliaryBones, faces);
         }
     }
 }

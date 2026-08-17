@@ -16,7 +16,7 @@ import java.util.Optional;
 
 /** Forge channel for compatibility-owned state; official YSM's channel remains untouched. */
 public final class CompatNetwork {
-    public static final String PROTOCOL = "2";
+    public static final String PROTOCOL = "1";
     public static final SimpleChannel CHANNEL = NetworkRegistry.newSimpleChannel(
             ResourceLocation.fromNamespaceAndPath(CompatMod.MOD_ID, "bridge"),
             () -> PROTOCOL, PROTOCOL::equals, PROTOCOL::equals);

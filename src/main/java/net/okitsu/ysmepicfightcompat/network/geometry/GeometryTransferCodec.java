@@ -25,7 +25,7 @@ import java.util.zip.GZIPOutputStream;
 /** Texture-free, size-limited transfer format used for server-only model geometry. */
 public final class GeometryTransferCodec {
     private static final int MAGIC = 0x59454632;
-    private static final int VERSION = 2;
+    private static final int VERSION = 1;
     public static final int MAX_COMPRESSED_BYTES = 64 * 1024 * 1024;
     private static final int MAX_EXPANDED_BYTES = 256 * 1024 * 1024;
     private static final int MAX_BONES = 65_536;
@@ -178,6 +178,7 @@ public final class GeometryTransferCodec {
             // Duration is not consulted by the transferred default-form program, so keep
             // the wire format finite without rejecting an otherwise valid package.
             finite(output, Float.isFinite(clip.duration()) ? clip.duration() : 0.0F);
+            writeScalar(output, clip.blendWeight());
             bounded(clip.boneTracks().size(), MAX_BONES, "animated bone");
             output.writeInt(clip.boneTracks().size());
             for (Map.Entry<String, AnimationClip.BoneTracks> entry : clip.boneTracks().entrySet()) {
@@ -240,6 +241,21 @@ public final class GeometryTransferCodec {
         }
     }
 
+    private static void writeScalar(DataOutputStream output, AnimationClip.ScalarValue value)
+            throws IOException {
+        String expression = value.expression();
+        output.writeBoolean(expression != null);
+        if (expression == null) {
+            double constant = value.constant();
+            if (!Double.isFinite(constant)) {
+                throw new IOException("Non-finite animation blend weight");
+            }
+            output.writeDouble(constant);
+        } else {
+            string(output, expression);
+        }
+    }
+
     private static Map<String, AnimationClip> readAnimations(DataInputStream input)
             throws IOException {
         int animationCount = bounded(input.readInt(), MAX_ANIMATIONS, "animation");
@@ -251,6 +267,7 @@ public final class GeometryTransferCodec {
             AnimationClip clip = new AnimationClip(name);
             clip.playback(AnimationClip.Playback.fromWireValue(input.readUnsignedByte()));
             clip.duration(finite(input));
+            readScalar(input, clip.blendWeight());
             int boneCount = bounded(input.readInt(), MAX_BONES, "animated bone");
             for (int boneIndex = 0; boneIndex < boneCount; boneIndex++) {
                 String bone = string(input);
@@ -289,6 +306,19 @@ public final class GeometryTransferCodec {
             }
         }
         return result;
+    }
+
+    private static void readScalar(DataInputStream input, AnimationClip.ScalarValue target)
+            throws IOException {
+        if (input.readBoolean()) {
+            target.setExpression(string(input));
+        } else {
+            double constant = input.readDouble();
+            if (!Double.isFinite(constant)) {
+                throw new IOException("Non-finite animation blend weight");
+            }
+            target.setConstant(constant);
+        }
     }
 
     private static TrackResult readTrack(DataInputStream input) throws IOException {

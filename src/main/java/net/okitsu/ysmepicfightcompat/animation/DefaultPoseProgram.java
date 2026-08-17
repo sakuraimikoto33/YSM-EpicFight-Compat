@@ -33,14 +33,17 @@ public final class DefaultPoseProgram {
     }
 
     public void apply(CompatHumanoidMesh mesh, Map<String, Boolean> firstPersonParts,
-                      boolean showUnlistedParts, boolean firstPerson) {
+                      boolean showUnlistedParts, boolean firstPerson,
+                      Set<String> runtimeHiddenBones) {
         for (Map.Entry<String, MeshPart> entry : mesh.partsView()) {
             String name = entry.getKey();
             if (!name.startsWith(SkinMeshCompiler.BONE_PART_PREFIX)) {
                 continue;
             }
             String bone = name.substring(SkinMeshCompiler.BONE_PART_PREFIX.length());
-            boolean hidden = hiddenByBone.getOrDefault(bone, false);
+            boolean hidden = runtimeHiddenBones == null
+                    ? hiddenByBone.getOrDefault(bone, false)
+                    : runtimeHiddenBones.contains(bone);
             if (firstPerson) {
                 int joint = jointByBone.getOrDefault(bone, HumanoidRig.ROOT);
                 hidden |= !isJointVisible(joint, firstPersonParts, showUnlistedParts);
@@ -86,9 +89,30 @@ public final class DefaultPoseProgram {
                             ExpressionEngine.compile(statement).evaluate(environment));
                 }
             }
+            double sampledWeight = sampleScalar(clip.blendWeight(), environment);
+            double blendWeight = Double.isFinite(sampledWeight) ? sampledWeight : 1.0D;
+            if (Math.abs(blendWeight) <= HIDDEN_SCALE) {
+                continue;
+            }
             clip.boneTracks().forEach((bone, tracks) -> {
+                // YSM models may put variable assignments on non-geometry Molang bones.
+                // Evaluate channels in the serialized rotation/position/scale order even
+                // when only scale contributes to this precomputed visibility snapshot.
+                if (tracks.rotation() != null) {
+                    sampleAtZero(tracks.rotation(), environment);
+                }
+                if (tracks.position() != null) {
+                    sampleAtZero(tracks.position(), environment);
+                }
                 if (tracks.scale() != null) {
-                    directScale.put(bone, sampleAtZero(tracks.scale(), environment));
+                    double[] scale = sampleAtZero(tracks.scale(), environment);
+                    for (int axis = 0; axis < scale.length; axis++) {
+                        scale[axis] = 1.0D + (scale[axis] - 1.0D) * blendWeight;
+                        if (!Double.isFinite(scale[axis])) {
+                            scale[axis] = 1.0D;
+                        }
+                    }
+                    directScale.put(bone, scale);
                 }
             });
         }
@@ -117,6 +141,12 @@ public final class DefaultPoseProgram {
                     : ExpressionEngine.compile(expression).evaluate(environment);
         }
         return result;
+    }
+
+    private static double sampleScalar(AnimationClip.ScalarValue value,
+                                       ExpressionEngine.Environment environment) {
+        return value.expression() == null ? value.constant()
+                : ExpressionEngine.compile(value.expression()).evaluate(environment);
     }
 
     private static double effectiveScale(GeometryDocument.Bone bone,

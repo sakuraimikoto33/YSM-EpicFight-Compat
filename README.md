@@ -17,6 +17,7 @@ YSM Epic Fight Compat is a Forge mod that renders player models selected in the 
 - Converts YSM folder models and `.ysm` packages, including encrypted packages, into Epic Fight combat meshes.
 - Uses the model and texture selected by each player in single-player and multiplayer.
 - Supports Epic Fight's third-person and first-person combat rendering.
+- Preserves auxiliary-bone `pre_parallel`/`parallel` motion without replacing Epic Fight's major-joint poses.
 - Returns rendering to official YSM when Epic Fight no longer overrides the player renderer.
 - Refreshes converted models after resource reloads and YSM model reload commands.
 - Falls back to Epic Fight's default player mesh when a selected model cannot be prepared.
