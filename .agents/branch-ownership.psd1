@@ -5,11 +5,11 @@
         ".agents"
         "AGENTS.md"
         ".gitignore"
+        "docs"
         "LICENSE"
     )
     MinecraftPaths = @(
         "src"
-        "docs"
         "gradle"
         "gradlew"
         "gradlew.bat"
