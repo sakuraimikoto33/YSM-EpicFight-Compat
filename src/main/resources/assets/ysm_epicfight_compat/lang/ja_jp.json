@@ -1,0 +1,10 @@
+{
+  "config.ysm_epicfight_compat.client": "クライアント",
+  "config.ysm_epicfight_compat.client.tooltip": "クライアント側のYSMとEpic Fightの互換設定です。",
+  "config.ysm_epicfight_compat.model_cache_capacity": "モデルキャッシュ容量",
+  "config.ysm_epicfight_compat.model_cache_capacity.tooltip": "メモリに保持する変換済みYSM戦闘モデルの最大数です。",
+  "config.ysm_epicfight_compat.suppress_battle_overlay": "戦闘モード中にYSMオーバーレイを非表示",
+  "config.ysm_epicfight_compat.suppress_battle_overlay.tooltip": "Epic Fightの戦闘モード中、公式YSMの左上に表示されるプレイヤーオーバーレイを非表示にします。",
+  "config.ysm_epicfight_compat.warning_acknowledged": "互換性警告を確認済み",
+  "config.ysm_epicfight_compat.warning_acknowledged.tooltip": "公式YSMとEpic Fightの互換性警告が既に表示されたかを記録します。"
+}

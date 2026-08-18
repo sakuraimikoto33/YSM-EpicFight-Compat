@@ -25,6 +25,32 @@
       "key": "ysm.client.texture_cache.location_getter.method",
       "kind": "METHOD",
       "required": true
+    },
+    {
+      "key": "combat_overlay.render.method",
+      "kind": "METHOD",
+      "required": true,
+      "sourceAlias": {
+        "common": {
+          "owner": "net/okitsu/ysmepicfightcompat/ysmref/ModelPreviewRendererAlias",
+          "name": "renderPlayerOverlay",
+          "descriptor": "(Lnet/minecraft/client/gui/GuiGraphics;Lnet/minecraft/client/player/LocalPlayer;DDFFIF)V"
+        }
+      },
+      "definition": {
+        "common": {
+          "requiredAccess": 8,
+          "descriptorShapes": [
+            "(L@minecraft;L@minecraft;DDFFIF)V"
+          ]
+        },
+        "forge": {}
+      }
     }
-  ]
+  ],
+  "mixinRequirements": {
+    "net.okitsu.ysmepicfightcompat.mixin.CombatOverlayMixin": [
+      "combat_overlay.render.method"
+    ]
+  }
 }

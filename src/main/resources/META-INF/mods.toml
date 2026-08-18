@@ -43,3 +43,10 @@ description='''${mod_description}'''
     versionRange="[${ysm_mapping_api_version_range},)"
     ordering="AFTER"
     side="BOTH"
+
+[[dependencies.${mod_id}]]
+    modId="configured"
+    mandatory=false
+    versionRange="${configured_version_range}"
+    ordering="NONE"
+    side="CLIENT"

@@ -1,0 +1,10 @@
+{
+  "config.ysm_epicfight_compat.client": "Client",
+  "config.ysm_epicfight_compat.client.tooltip": "Client-side YSM and Epic Fight compatibility settings.",
+  "config.ysm_epicfight_compat.model_cache_capacity": "Model cache capacity",
+  "config.ysm_epicfight_compat.model_cache_capacity.tooltip": "Maximum number of converted YSM combat meshes retained in memory.",
+  "config.ysm_epicfight_compat.suppress_battle_overlay": "Hide YSM overlay in battle mode",
+  "config.ysm_epicfight_compat.suppress_battle_overlay.tooltip": "Hides official YSM's top-left player overlay while Epic Fight battle mode is active.",
+  "config.ysm_epicfight_compat.warning_acknowledged": "Compatibility warning acknowledged",
+  "config.ysm_epicfight_compat.warning_acknowledged.tooltip": "Whether the official YSM and Epic Fight compatibility warning has already been shown."
+}

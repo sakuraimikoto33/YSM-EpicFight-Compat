@@ -62,6 +62,7 @@ dependencies {
 
     testImplementation platform('org.junit:junit-bom:5.10.2')
     testImplementation 'org.junit.jupiter:junit-jupiter'
+    testCompileOnly "net.okitsu.ysmmapping:api:${ysmMappingApiDependencyVersion}"
     testRuntimeOnly "net.okitsu.ysmmapping:api:${ysmMappingApiDependencyVersion}"
 }
 
@@ -73,6 +74,7 @@ tasks.named('processResources', ProcessResources).configure {
             ysm_version_range: ysm_version_range,
             epicfight_version_range: epicfight_version_range,
             ysm_mapping_api_version_range: ysm_mapping_api_version_range,
+            configured_version_range: configured_version_range,
             mod_id: mod_id,
             mod_name: mod_name,
             mod_license: mod_license,
@@ -114,9 +116,26 @@ tasks.register('verifyDistributions') {
         new java.util.zip.ZipFile(archive).withCloseable { zip ->
             ['META-INF/mods.toml', 'META-INF/ysm-mapping-api/requests-v1.json',
              'ysm_epicfight_compat.mixins.json',
-             'net/okitsu/ysmepicfightcompat/CompatMod.class'].each { entry ->
+             'net/okitsu/ysmepicfightcompat/CompatMod.class',
+             'assets/ysm_epicfight_compat/lang/en_us.json',
+             'assets/ysm_epicfight_compat/lang/ja_jp.json'].each { entry ->
                 if (zip.getEntry(entry) == null) {
                     throw new GradleException("Distribution is missing ${entry}")
+                }
+            }
+            def modsToml = zip.getInputStream(zip.getEntry('META-INF/mods.toml'))
+                    .getText('UTF-8')
+            def configuredDependency = ~/(?s)\[\[dependencies\.ysm_epicfight_compat\]\]\s*modId="configured"\s*mandatory=false\s*versionRange="\[2\.2\.3,\)"\s*ordering="NONE"\s*side="CLIENT"/
+            if (!(modsToml =~ configuredDependency).find()) {
+                throw new GradleException(
+                        'Distribution must declare Configured 2.2.3+ as a client-side optional dependency')
+            }
+            ['net/okitsu/ysmepicfightcompat/client/ClientBootstrap.class',
+             'net/okitsu/ysmepicfightcompat/client/BattleOverlayConfigScreen.class'].each {
+                customScreen ->
+                if (zip.getEntry(customScreen) != null) {
+                    throw new GradleException(
+                            "Distribution contains obsolete custom config screen class ${customScreen}")
                 }
             }
             if (zip.entries().toList().any { it.name.startsWith('net/okitsu/ysmmapping/') }) {
@@ -138,6 +157,10 @@ tasks.register('verifyDistributions') {
             }.each { classEntry ->
                 def classText = new String(zip.getInputStream(classEntry).bytes,
                         java.nio.charset.StandardCharsets.ISO_8859_1)
+                if (classText.contains('com/mrcrayfish/configured/')) {
+                    throw new GradleException(
+                            "Optional Configured integration must not link its API from ${classEntry.name}")
+                }
                 forbiddenText.each { marker ->
                     if (classText.contains(marker)) {
                         throw new GradleException(
@@ -151,6 +174,28 @@ tasks.register('verifyDistributions') {
                 def classPath = mixinJson.package.replace('.', '/') + '/' + mixin + '.class'
                 if (zip.getEntry(classPath) == null) {
                     throw new GradleException("Mixin config references missing ${classPath}")
+                }
+            }
+            if (mixinJson.refmapWrapper) {
+                def wrapperPath = mixinJson.package.replace('.', '/') + '/' +
+                        mixinJson.refmapWrapper.replace('.', '/') + '.class'
+                if (zip.getEntry(wrapperPath) == null) {
+                    throw new GradleException(
+                            "Mixin config references missing refmap wrapper ${wrapperPath}")
+                }
+            }
+            def overlayMixinPath = mixinJson.package.replace('.', '/') +
+                    '/CombatOverlayMixin.class'
+            def overlayMixin = zip.getEntry(overlayMixinPath)
+            if (overlayMixin != null) {
+                def overlayMixinText = new String(zip.getInputStream(overlayMixin).bytes,
+                        java.nio.charset.StandardCharsets.ISO_8859_1)
+                if (!overlayMixinText.contains('targets') ||
+                        !overlayMixinText.contains(
+                                'net.okitsu.ysmepicfightcompat.ysmref.ModelPreviewRendererAlias')) {
+                    throw new GradleException(
+                            'CombatOverlayMixin must use the string source-alias target so ' +
+                                    'Mixin 0.8.5 invokes runtime class remapping')
                 }
             }
         }
