@@ -10,7 +10,7 @@ YSM Epic Fight Compat は、公式 Yes Steve Model で選択したプレイヤ�
 - Forge 47.4.20 以降
 - Yes Steve Model 2.6.0 以降（Forge 1.20.1版）
 - Epic Fight 20.14.17 以降（Forge 1.20.1版）
-- [YSM Mapping API](https://github.com/sakuraimikoto33/YSM-Mapping-API) 0.1.1 以降
+- [YSM Mapping API](https://github.com/sakuraimikoto33/YSM-Mapping-API) 0.1.2 以降
 
 ## 機能
 
