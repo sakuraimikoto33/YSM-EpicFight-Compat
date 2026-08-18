@@ -65,4 +65,48 @@ class LocalModelRepositoryTest {
         assertEquals(0.8F, loaded.widthScale(), 0.0001F);
         assertEquals(0.9F, loaded.heightScale(), 0.0001F);
     }
+
+    @Test
+    void keepsFirstManifestAnimationWhenLaterFilesReuseItsName(@TempDir Path root)
+            throws IOException {
+        Path model = root.resolve("custom/layered/outfit");
+        Files.createDirectories(model.resolve("models"));
+        Files.createDirectories(model.resolve("animations"));
+        Files.writeString(model.resolve("ysm.json"), """
+                {
+                  "files":{"player":{
+                    "model":{"main":"models/main.json"},
+                    "animation":{
+                      "main":"animations/main.animation.json",
+                      "fp_arm":"animations/fp.arm.animation.json"
+                    }
+                  }}
+                }
+                """);
+        Files.writeString(model.resolve("models/main.json"), """
+                {"minecraft:geometry":[{
+                  "description":{"texture_width":16,"texture_height":16},
+                  "bones":[
+                    {"name":"Jacket"},
+                    {"name":"FirstPersonArm"}
+                  ]
+                }]}
+                """);
+        Files.writeString(model.resolve("animations/main.animation.json"), """
+                {"animations":{"parallel0":{"bones":{
+                  "Jacket":{"scale":[0,0,0]}
+                }}}}
+                """);
+        Files.writeString(model.resolve("animations/fp.arm.animation.json"), """
+                {"animations":{"parallel0":{"bones":{
+                  "FirstPersonArm":{"scale":[1,1,1]}
+                }}}}
+                """);
+
+        ModelBundle loaded = LocalModelRepository.load(root, "layered/outfit");
+
+        assertNotNull(loaded);
+        assertEquals(Set.of("Jacket"),
+                loaded.animations().get("parallel0").boneTracks().keySet());
+    }
 }

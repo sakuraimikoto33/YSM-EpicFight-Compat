@@ -251,7 +251,10 @@ public final class LocalModelRepository {
             }
             for (Map.Entry<String, JsonElement> entry : animations.entrySet()) {
                 if (BedrockAnimationParser.isAutomatic(entry.getKey()) && entry.getValue().isJsonObject()) {
-                    target.put(entry.getKey(), BedrockAnimationParser.parse(
+                    // A model can reuse an animation name in a later, specialized file
+                    // (for example fp_arm). The manifest order is the precedence order:
+                    // keep the main definition instead of replacing it with a partial one.
+                    target.putIfAbsent(entry.getKey(), BedrockAnimationParser.parse(
                             entry.getKey(), entry.getValue().getAsJsonObject()));
                 }
             }

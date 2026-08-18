@@ -25,6 +25,7 @@ final class EntityAnimationEnvironment implements ExpressionEngine.Environment {
     private double deltaTime;
     private double animationTime;
     private double lifeTime;
+    private OfficialRoamingVariables.View roamingVariables;
 
     EntityAnimationEnvironment(LivingEntity entity, Map<Integer, Double> variables,
                                Set<Integer> assigned) {
@@ -33,6 +34,7 @@ final class EntityAnimationEnvironment implements ExpressionEngine.Environment {
         this.assigned = assigned;
         random = new Random(entity.getUUID().getMostSignificantBits()
                 ^ entity.getUUID().getLeastSignificantBits());
+        roamingVariables = OfficialRoamingVariables.view(entity);
     }
 
     void update(float partialTick, boolean firstPerson, double deltaTime) {
@@ -40,6 +42,7 @@ final class EntityAnimationEnvironment implements ExpressionEngine.Environment {
         this.firstPerson = firstPerson;
         this.deltaTime = deltaTime;
         lifeTime = (entity.tickCount + partialTick) / 20.0D;
+        roamingVariables = OfficialRoamingVariables.view(entity);
     }
 
     void clipTime(double animationTime) {
@@ -48,12 +51,18 @@ final class EntityAnimationEnvironment implements ExpressionEngine.Environment {
 
     @Override
     public double readVariable(int slot) {
+        RoamingVariableLookup.Lookup roaming = roamingVariables.lookup(
+                ExpressionEngine.slotName(slot));
+        if (roaming.present()) {
+            return roaming.value();
+        }
         return variables.getOrDefault(slot, 0.0D);
     }
 
     @Override
     public boolean hasVariable(int slot) {
-        return assigned.contains(slot);
+        return assigned.contains(slot) || roamingVariables.lookup(
+                ExpressionEngine.slotName(slot)).present();
     }
 
     @Override

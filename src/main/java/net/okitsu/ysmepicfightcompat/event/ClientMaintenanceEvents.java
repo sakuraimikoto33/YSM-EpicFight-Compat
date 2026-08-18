@@ -8,6 +8,7 @@ import net.minecraftforge.event.TickEvent;
 import net.minecraftforge.eventbus.api.SubscribeEvent;
 import net.minecraftforge.fml.common.Mod;
 import net.okitsu.ysmepicfightcompat.CompatMod;
+import net.okitsu.ysmepicfightcompat.animation.OfficialRoamingVariables;
 import net.okitsu.ysmepicfightcompat.mesh.CombatMeshCache;
 import net.okitsu.ysmepicfightcompat.network.RemoteSelectionState;
 import net.okitsu.ysmepicfightcompat.network.geometry.ClientModelTransfers;
@@ -30,6 +31,7 @@ public final class ClientMaintenanceEvents {
         PlayerSelectionResolver.clear();
         RemoteSelectionState.beginConnection();
         ClientModelTransfers.clear();
+        OfficialRoamingVariables.clear();
         reloadCountdown = -1;
         failureCountdown = 0;
         Minecraft.getInstance().execute(CombatMeshCache::clear);

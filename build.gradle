@@ -170,11 +170,30 @@ tasks.register('verifyDistributions') {
             }
             def mixinJson = new groovy.json.JsonSlurper().parse(
                     zip.getInputStream(zip.getEntry('ysm_epicfight_compat.mixins.json')))
+            def requestJson = new groovy.json.JsonSlurper().parse(
+                    zip.getInputStream(zip.getEntry(
+                            'META-INF/ysm-mapping-api/requests-v1.json')))
             mixinJson.client.each { mixin ->
                 def classPath = mixinJson.package.replace('.', '/') + '/' + mixin + '.class'
                 if (zip.getEntry(classPath) == null) {
                     throw new GradleException("Mixin config references missing ${classPath}")
                 }
+            }
+            def playerStateClassRequest = requestJson.symbols.find {
+                it.key == 'ysm.player_state.capability.class'
+            }
+            def playerStateAliasOwner =
+                    'net/okitsu/ysmepicfightcompat/ysmref/PlayerStateCapabilityAlias'
+            if (playerStateClassRequest?.sourceAlias?.common?.owner != playerStateAliasOwner) {
+                throw new GradleException(
+                        'Player-state capability request must declare its stable source alias')
+            }
+            def playerStateMixin =
+                    'net.okitsu.ysmepicfightcompat.mixin.PlayerStateCapabilityMixin'
+            if (requestJson.mixinRequirements[playerStateMixin] !=
+                    ['ysm.player_state.capability.class']) {
+                throw new GradleException(
+                        'PlayerStateCapabilityMixin must require its mapped capability class')
             }
             if (mixinJson.refmapWrapper) {
                 def wrapperPath = mixinJson.package.replace('.', '/') + '/' +
@@ -184,17 +203,23 @@ tasks.register('verifyDistributions') {
                             "Mixin config references missing refmap wrapper ${wrapperPath}")
                 }
             }
-            def overlayMixinPath = mixinJson.package.replace('.', '/') +
-                    '/CombatOverlayMixin.class'
-            def overlayMixin = zip.getEntry(overlayMixinPath)
-            if (overlayMixin != null) {
-                def overlayMixinText = new String(zip.getInputStream(overlayMixin).bytes,
+            [
+                    CombatOverlayMixin:
+                            'net.okitsu.ysmepicfightcompat.ysmref.ModelPreviewRendererAlias',
+                    PlayerStateCapabilityMixin:
+                            'net.okitsu.ysmepicfightcompat.ysmref.PlayerStateCapabilityAlias'
+            ].each { mixinName, sourceAlias ->
+                def mixinPath = mixinJson.package.replace('.', '/') +
+                        "/${mixinName}.class"
+                def mixinEntry = zip.getEntry(mixinPath)
+                if (mixinEntry == null) {
+                    throw new GradleException("Distribution is missing ${mixinPath}")
+                }
+                def mixinText = new String(zip.getInputStream(mixinEntry).bytes,
                         java.nio.charset.StandardCharsets.ISO_8859_1)
-                if (!overlayMixinText.contains('targets') ||
-                        !overlayMixinText.contains(
-                                'net.okitsu.ysmepicfightcompat.ysmref.ModelPreviewRendererAlias')) {
+                if (!mixinText.contains('targets') || !mixinText.contains(sourceAlias)) {
                     throw new GradleException(
-                            'CombatOverlayMixin must use the string source-alias target so ' +
+                            "${mixinName} must use the string source-alias target so " +
                                     'Mixin 0.8.5 invokes runtime class remapping')
                 }
             }

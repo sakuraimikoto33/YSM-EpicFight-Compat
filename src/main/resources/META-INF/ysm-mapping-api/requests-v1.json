@@ -46,11 +46,39 @@
         },
         "forge": {}
       }
+    },
+    {
+      "key": "ysm.player_state.capability.class",
+      "kind": "CLASS",
+      "required": true,
+      "sourceAlias": {
+        "common": {
+          "owner": "net/okitsu/ysmepicfightcompat/ysmref/PlayerStateCapabilityAlias"
+        }
+      }
+    },
+    {
+      "key": "ysm.player_state.roaming_provider_getter.method",
+      "kind": "METHOD",
+      "required": true
+    },
+    {
+      "key": "ysm.player_state.roaming_value_getter.method",
+      "kind": "METHOD",
+      "required": true
+    },
+    {
+      "key": "ysm.player_state.roaming_name_hasher.method",
+      "kind": "METHOD",
+      "required": true
     }
   ],
   "mixinRequirements": {
     "net.okitsu.ysmepicfightcompat.mixin.CombatOverlayMixin": [
       "combat_overlay.render.method"
+    ],
+    "net.okitsu.ysmepicfightcompat.mixin.PlayerStateCapabilityMixin": [
+      "ysm.player_state.capability.class"
     ]
   }
 }
