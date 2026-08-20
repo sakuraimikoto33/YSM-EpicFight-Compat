@@ -11,6 +11,32 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class RoamingVariableLookupTest {
     @Test
+    void readsOrdinaryAndRoamingVariablesFromTheSameOfficialProvider() {
+        RoamingVariableLookup lookup = new RoamingVariableLookup(String::hashCode);
+        Map<Integer, Object> values = Map.of(
+                "eye".hashCode(), 1.0F,
+                "jacket".hashCode(), 2.0F);
+
+        assertEquals(1.0D, lookup.lookup("v.eye", values::get).value(), 0.0001D);
+        assertEquals(2.0D, lookup.lookup("v.roaming.jacket", values::get).value(),
+                0.0001D);
+    }
+
+    @Test
+    void fullVariableNamespacesUseTheSameOfficialProviderLookup() {
+        RoamingVariableLookup lookup = new RoamingVariableLookup(String::hashCode);
+        Map<Integer, Object> values = Map.of(
+                "eye".hashCode(), 1.0F,
+                "jacket".hashCode(), 2.0F);
+
+        assertEquals(lookup.lookup("v.eye", values::get),
+                lookup.lookup("variable.eye", values::get));
+        assertEquals(lookup.lookup("v.roaming.jacket", values::get),
+                lookup.lookup("variable.roaming.jacket", values::get));
+        assertTrue(RoamingVariableLookup.isRoaming("variable.roaming.jacket"));
+    }
+
+    @Test
     void readsNamesEncodedWithTheOfficialSuffixConvention() {
         RoamingVariableLookup lookup = new RoamingVariableLookup(String::hashCode);
         Map<Integer, Object> values = Map.of("jacket".hashCode(), 2.0F);
@@ -46,6 +72,16 @@ class RoamingVariableLookupTest {
 
         assertTrue(result.present());
         assertEquals(0.0D, result.value(), 0.0001D);
+    }
+
+    @Test
+    void doesNotTreatTheOfficialOrdinaryFallbackZeroAsADeclaredVariable() {
+        RoamingVariableLookup lookup = new RoamingVariableLookup(String::hashCode);
+
+        RoamingVariableLookup.Lookup result = lookup.lookup(
+                "v.missing", ignored -> 0.0F);
+
+        assertFalse(result.present());
     }
 
     @Test

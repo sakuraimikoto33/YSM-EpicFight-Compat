@@ -34,6 +34,7 @@ public final class SelectionBroadcaster {
         }
         for (ServerPlayer online : recipient.server.getPlayerList().getPlayers()) {
             send(online, recipient);
+            ConfigurationVariableBroadcaster.send(online, recipient);
         }
     }
 
@@ -42,12 +43,25 @@ public final class SelectionBroadcaster {
         if (event.getEntity() instanceof ServerPlayer recipient
                 && event.getTarget() instanceof ServerPlayer tracked) {
             send(tracked, recipient);
+            ConfigurationVariableBroadcaster.send(tracked, recipient);
         }
     }
 
     @SubscribeEvent
     public static void playerLoggedOut(PlayerEvent.PlayerLoggedOutEvent event) {
         LAST_SENT.remove(event.getEntity().getUUID());
+        if (event.getEntity() instanceof ServerPlayer player) {
+            ConfigurationVariableBroadcaster.remove(player);
+        }
+    }
+
+    @SubscribeEvent
+    public static void playerChangedDimension(PlayerEvent.PlayerChangedDimensionEvent event) {
+        if (event.getEntity() instanceof ServerPlayer player) {
+            PlayerSelectionNbt.Selection selection = PlayerSelectionNbt.read(player);
+            ConfigurationVariableBroadcaster.reset(player,
+                    selection == null ? "" : selection.modelId());
+        }
     }
 
     @SubscribeEvent
@@ -65,12 +79,16 @@ public final class SelectionBroadcaster {
             if (!current.equals(previous)) {
                 broadcast(player, current);
             }
+            if (previous != null && !current.modelId().equals(previous.modelId())) {
+                ConfigurationVariableBroadcaster.reset(player, current.modelId());
+            }
         }
     }
 
     @SubscribeEvent
     public static void serverStopped(ServerStoppedEvent event) {
         LAST_SENT.clear();
+        ConfigurationVariableBroadcaster.clear();
         ServerModelTransfers.clear();
     }
 

@@ -9,7 +9,8 @@
     "CombatOverlayMixin",
     "CombatFirstPersonMixin",
     "FirstPersonArmorGateMixin",
-    "PlayerStateCapabilityMixin"
+    "PlayerStateCapabilityMixin",
+    "YsmConfigurationExpressionMixin"
   ],
   "injectors": {
     "defaultRequire": 1

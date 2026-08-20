@@ -3,6 +3,7 @@ package net.okitsu.ysmepicfightcompat.network.message;
 import net.minecraft.network.FriendlyByteBuf;
 import net.minecraftforge.network.NetworkEvent;
 import net.okitsu.ysmepicfightcompat.network.RemoteSelectionState;
+import net.okitsu.ysmepicfightcompat.render.PlayerSelectionResolver;
 
 import java.util.UUID;
 import java.util.function.Supplier;
@@ -34,8 +35,11 @@ public record SelectionUpdateMessage(UUID playerId, String modelId,
                                Supplier<NetworkEvent.Context> suppliedContext) {
         NetworkEvent.Context context = suppliedContext.get();
         if (context.getDirection().getReceptionSide().isClient()) {
-            context.enqueueWork(() -> RemoteSelectionState.accept(
-                    message.playerId(), message.modelId(), message.textureName(), message.disabled()));
+            context.enqueueWork(() -> {
+                RemoteSelectionState.accept(message.playerId(), message.modelId(),
+                        message.textureName(), message.disabled());
+                PlayerSelectionResolver.clear();
+            });
         }
         context.setPacketHandled(true);
     }

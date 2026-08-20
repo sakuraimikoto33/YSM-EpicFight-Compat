@@ -1,13 +1,16 @@
 package net.okitsu.ysmepicfightcompat.event;
 
 import net.minecraft.client.Minecraft;
+import net.minecraft.world.entity.player.Player;
 import net.minecraftforge.api.distmarker.Dist;
 import net.minecraftforge.client.event.ClientPlayerNetworkEvent;
 import net.minecraftforge.event.CommandEvent;
 import net.minecraftforge.event.TickEvent;
+import net.minecraftforge.event.entity.EntityLeaveLevelEvent;
 import net.minecraftforge.eventbus.api.SubscribeEvent;
 import net.minecraftforge.fml.common.Mod;
 import net.okitsu.ysmepicfightcompat.CompatMod;
+import net.okitsu.ysmepicfightcompat.animation.OfficialConfigurationVariables;
 import net.okitsu.ysmepicfightcompat.animation.OfficialRoamingVariables;
 import net.okitsu.ysmepicfightcompat.mesh.CombatMeshCache;
 import net.okitsu.ysmepicfightcompat.network.RemoteSelectionState;
@@ -31,10 +34,18 @@ public final class ClientMaintenanceEvents {
         PlayerSelectionResolver.clear();
         RemoteSelectionState.beginConnection();
         ClientModelTransfers.clear();
+        OfficialConfigurationVariables.clear();
         OfficialRoamingVariables.clear();
         reloadCountdown = -1;
         failureCountdown = 0;
         Minecraft.getInstance().execute(CombatMeshCache::clear);
+    }
+
+    @SubscribeEvent
+    public static void playerLeftLevel(EntityLeaveLevelEvent event) {
+        if (event.getLevel().isClientSide() && event.getEntity() instanceof Player player) {
+            OfficialConfigurationVariables.reset(player);
+        }
     }
 
     @SubscribeEvent

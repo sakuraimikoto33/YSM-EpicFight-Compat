@@ -10,8 +10,11 @@ import net.minecraftforge.network.simple.SimpleChannel;
 import net.okitsu.ysmepicfightcompat.CompatMod;
 import net.okitsu.ysmepicfightcompat.network.message.ModelChunkMessage;
 import net.okitsu.ysmepicfightcompat.network.message.ModelRequestMessage;
+import net.okitsu.ysmepicfightcompat.network.message.ConfigurationVariableSnapshotMessage;
+import net.okitsu.ysmepicfightcompat.network.message.ConfigurationVariableUpdateMessage;
 import net.okitsu.ysmepicfightcompat.network.message.SelectionUpdateMessage;
 
+import java.util.Map;
 import java.util.Optional;
 
 /** Forge channel for compatibility-owned state; official YSM's channel remains untouched. */
@@ -32,9 +35,19 @@ public final class CompatNetwork {
         CHANNEL.registerMessage(id++, ModelRequestMessage.class,
                 ModelRequestMessage::write, ModelRequestMessage::read,
                 ModelRequestMessage::receive, Optional.of(NetworkDirection.PLAY_TO_SERVER));
-        CHANNEL.registerMessage(id, ModelChunkMessage.class,
+        CHANNEL.registerMessage(id++, ModelChunkMessage.class,
                 ModelChunkMessage::write, ModelChunkMessage::read,
                 ModelChunkMessage::receive, Optional.of(NetworkDirection.PLAY_TO_CLIENT));
+        CHANNEL.registerMessage(id++, ConfigurationVariableUpdateMessage.class,
+                ConfigurationVariableUpdateMessage::write,
+                ConfigurationVariableUpdateMessage::read,
+                ConfigurationVariableUpdateMessage::receive,
+                Optional.of(NetworkDirection.PLAY_TO_SERVER));
+        CHANNEL.registerMessage(id, ConfigurationVariableSnapshotMessage.class,
+                ConfigurationVariableSnapshotMessage::write,
+                ConfigurationVariableSnapshotMessage::read,
+                ConfigurationVariableSnapshotMessage::receive,
+                Optional.of(NetworkDirection.PLAY_TO_CLIENT));
     }
 
     public static boolean isConnected(ServerPlayer player) {
@@ -51,5 +64,9 @@ public final class CompatNetwork {
 
     public static void toTrackersAndSelf(Player player, Object message) {
         CHANNEL.send(PacketDistributor.TRACKING_ENTITY_AND_SELF.with(() -> player), message);
+    }
+
+    public static void sendConfigurationUpdate(Map<String, Double> changes) {
+        CHANNEL.sendToServer(new ConfigurationVariableUpdateMessage(changes));
     }
 }

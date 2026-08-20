@@ -20,7 +20,7 @@ import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicBoolean;
 
-/** Reads the live roaming provider already maintained by official YSM. */
+/** Reads the live animation-variable providers already maintained by official YSM. */
 public final class OfficialRoamingVariables {
     private static final Set<YsmSymbolKey<?>> REQUIRED_SYMBOLS = Set.of(
             YsmSymbols.PLAYER_STATE_ROAMING_PROVIDER_GETTER,
@@ -68,10 +68,11 @@ public final class OfficialRoamingVariables {
     /** Called by the mapped official YSM player-state constructor Mixin. */
     public static void register(Player player, Object capability) {
         if (player != null && capability != null) {
+            OfficialConfigurationVariables.reset(player);
             CAPABILITIES.put(player.getUUID(), new WeakReference<>(capability));
             if (REGISTRATION_LOGGED.compareAndSet(false, true)) {
                 CompatMod.LOG.info(
-                        "YSM-EF Compat: official YSM live roaming holder was captured");
+                        "YSM-EF Compat: official YSM live animation state was captured");
             }
         }
     }
@@ -127,10 +128,11 @@ public final class OfficialRoamingVariables {
                 access = new Access(providerGetter, valueGetter,
                         new RoamingVariableLookup(name -> invokeHasher(hasher, name)));
                 CompatMod.LOG.info(
-                        "YSM-EF Compat: official YSM live roaming bridge is ready");
+                        "YSM-EF Compat: official YSM live animation-variable bridge is ready");
             } catch (Exception exception) {
                 CompatMod.LOG.warn(
-                        "YSM-EF Compat: official YSM roaming state is unavailable", exception);
+                        "YSM-EF Compat: official YSM animation variables are unavailable",
+                        exception);
             }
             return access;
         }
@@ -140,7 +142,8 @@ public final class OfficialRoamingVariables {
         try {
             return getter.invoke(provider, hash);
         } catch (Throwable exception) {
-            throw new IllegalStateException("Official YSM roaming value lookup failed", exception);
+            throw new IllegalStateException("Official YSM animation variable lookup failed",
+                    exception);
         }
     }
 
@@ -157,7 +160,7 @@ public final class OfficialRoamingVariables {
         Method method = owner(symbol.owner()).getDeclaredMethod(symbol.name(), parameters);
         if (Modifier.isStatic(method.getModifiers())) {
             throw new ReflectiveOperationException(
-                    "Official YSM roaming accessor is unexpectedly static");
+                    "Official YSM animation-variable accessor is unexpectedly static");
         }
         method.setAccessible(true);
         return MethodHandles.lookup().unreflect(method);
@@ -168,7 +171,7 @@ public final class OfficialRoamingVariables {
         Method method = owner(symbol.owner()).getDeclaredMethod(symbol.name(), String.class);
         if (!Modifier.isStatic(method.getModifiers()) || method.getReturnType() != int.class) {
             throw new ReflectiveOperationException(
-                    "Official YSM roaming hasher does not match its semantic contract");
+                    "Official YSM variable hasher does not match its semantic contract");
         }
         method.setAccessible(true);
         return MethodHandles.lookup().unreflect(method);
@@ -181,7 +184,7 @@ public final class OfficialRoamingVariables {
 
     private static void logReadFailure(Throwable exception) {
         if (READ_FAILURE_LOGGED.compareAndSet(false, true)) {
-            CompatMod.LOG.warn("YSM-EF Compat: official roaming value could not be read",
+            CompatMod.LOG.warn("YSM-EF Compat: official animation variable could not be read",
                     exception);
         }
     }

@@ -94,12 +94,13 @@ public final class ExpressionEngine {
     }
 
     public static int slot(String name) {
-        Integer known = SLOT_BY_NAME.get(name);
+        String canonicalName = canonicalVariableName(name);
+        Integer known = SLOT_BY_NAME.get(canonicalName);
         if (known != null) {
             return known;
         }
         synchronized (NAME_BY_SLOT) {
-            return SLOT_BY_NAME.computeIfAbsent(name, key -> {
+            return SLOT_BY_NAME.computeIfAbsent(canonicalName, key -> {
                 int id = NAME_BY_SLOT.size();
                 NAME_BY_SLOT.add(key);
                 return id;
@@ -439,6 +440,11 @@ public final class ExpressionEngine {
         String prefix = name.substring(0, separator);
         return prefix.equals("v") || prefix.equals("variable")
                 || prefix.equals("temp") || prefix.equals("t");
+    }
+
+    private static String canonicalVariableName(String name) {
+        return name != null && name.startsWith("variable.")
+                ? "v." + name.substring("variable.".length()) : name;
     }
 
     private static boolean truth(double value) {

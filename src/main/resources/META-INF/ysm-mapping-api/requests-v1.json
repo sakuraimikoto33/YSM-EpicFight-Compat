@@ -71,6 +71,18 @@
       "key": "ysm.player_state.roaming_name_hasher.method",
       "kind": "METHOD",
       "required": true
+    },
+    {
+      "key": "ysm.client.animation_roulette.configuration_expression.method",
+      "kind": "METHOD",
+      "required": true,
+      "sourceAlias": {
+        "common": {
+          "owner": "net/okitsu/ysmepicfightcompat/ysmref/AnimationRouletteScreenAlias",
+          "name": "executeConfigurationExpression",
+          "descriptor": "(Ljava/lang/String;Ljava/util/function/Consumer;)V"
+        }
+      }
     }
   ],
   "mixinRequirements": {
@@ -79,6 +91,9 @@
     ],
     "net.okitsu.ysmepicfightcompat.mixin.PlayerStateCapabilityMixin": [
       "ysm.player_state.capability.class"
+    ],
+    "net.okitsu.ysmepicfightcompat.mixin.YsmConfigurationExpressionMixin": [
+      "ysm.client.animation_roulette.configuration_expression.method"
     ]
   }
 }

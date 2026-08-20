@@ -51,18 +51,32 @@ final class EntityAnimationEnvironment implements ExpressionEngine.Environment {
 
     @Override
     public double readVariable(int slot) {
-        RoamingVariableLookup.Lookup roaming = roamingVariables.lookup(
-                ExpressionEngine.slotName(slot));
-        if (roaming.present()) {
-            return roaming.value();
+        String name = ExpressionEngine.slotName(slot);
+        RoamingVariableLookup.Lookup official = roamingVariables.lookup(name);
+        if (RoamingVariableLookup.isRoaming(name) && official.present()) {
+            return official.value();
+        }
+        ConfigurationVariableOverrides.Lookup configuration =
+                OfficialConfigurationVariables.lookup(entity, slot);
+        if (configuration.present()) {
+            return configuration.value();
+        }
+        if (assigned.contains(slot)) {
+            return variables.getOrDefault(slot, 0.0D);
+        }
+        if (official.present()) {
+            return official.value();
         }
         return variables.getOrDefault(slot, 0.0D);
     }
 
     @Override
     public boolean hasVariable(int slot) {
-        return assigned.contains(slot) || roamingVariables.lookup(
-                ExpressionEngine.slotName(slot)).present();
+        String name = ExpressionEngine.slotName(slot);
+        RoamingVariableLookup.Lookup official = roamingVariables.lookup(name);
+        return official.present()
+                || OfficialConfigurationVariables.lookup(entity, slot).present()
+                || assigned.contains(slot);
     }
 
     @Override

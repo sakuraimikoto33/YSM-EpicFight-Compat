@@ -7,6 +7,7 @@ import net.minecraft.world.level.Level;
 import net.minecraftforge.api.distmarker.Dist;
 import net.minecraftforge.api.distmarker.OnlyIn;
 import net.minecraftforge.server.ServerLifecycleHooks;
+import net.okitsu.ysmepicfightcompat.animation.OfficialConfigurationVariables;
 import net.okitsu.ysmepicfightcompat.network.PlayerSelectionNbt;
 import net.okitsu.ysmepicfightcompat.network.RemoteSelectionState;
 
@@ -38,10 +39,12 @@ public final class PlayerSelectionResolver {
         Cached cached = CACHE.get(player.getUUID());
         if (cached != null && cached.level() == level
                 && now >= cached.readAt() && now - cached.readAt() < CACHE_TICKS) {
+            bindModel(player, cached.selection());
             return cached.selection();
         }
         Selection selected = resolve(player);
         CACHE.put(player.getUUID(), new Cached(level, now, selected));
+        bindModel(player, selected);
         return selected;
     }
 
@@ -79,5 +82,10 @@ public final class PlayerSelectionResolver {
     private static Selection convert(PlayerSelectionNbt.Selection selection) {
         return selection == null ? null
                 : new Selection(selection.modelId(), selection.textureName());
+    }
+
+    private static void bindModel(Player player, Selection selection) {
+        OfficialConfigurationVariables.bindModel(player,
+                selection == null ? null : selection.modelId());
     }
 }

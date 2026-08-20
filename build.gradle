@@ -195,6 +195,30 @@ tasks.register('verifyDistributions') {
                 throw new GradleException(
                         'PlayerStateCapabilityMixin must require its mapped capability class')
             }
+            def configurationExpressionKey =
+                    'ysm.client.animation_roulette.configuration_expression.method'
+            def configurationExpressionRequest = requestJson.symbols.find {
+                it.key == configurationExpressionKey
+            }
+            def configurationExpressionAlias = [
+                    owner: 'net/okitsu/ysmepicfightcompat/ysmref/AnimationRouletteScreenAlias',
+                    name: 'executeConfigurationExpression',
+                    descriptor: '(Ljava/lang/String;Ljava/util/function/Consumer;)V'
+            ]
+            if (configurationExpressionRequest?.sourceAlias?.common !=
+                    configurationExpressionAlias ||
+                    configurationExpressionRequest.containsKey('definition')) {
+                throw new GradleException(
+                        'Configuration-expression request must use the curated Mapping API key ' +
+                                'with its stable source alias')
+            }
+            def configurationExpressionMixin =
+                    'net.okitsu.ysmepicfightcompat.mixin.YsmConfigurationExpressionMixin'
+            if (requestJson.mixinRequirements[configurationExpressionMixin] !=
+                    [configurationExpressionKey]) {
+                throw new GradleException(
+                        'YsmConfigurationExpressionMixin must require its curated mapped method')
+            }
             if (mixinJson.refmapWrapper) {
                 def wrapperPath = mixinJson.package.replace('.', '/') + '/' +
                         mixinJson.refmapWrapper.replace('.', '/') + '.class'
@@ -207,7 +231,9 @@ tasks.register('verifyDistributions') {
                     CombatOverlayMixin:
                             'net.okitsu.ysmepicfightcompat.ysmref.ModelPreviewRendererAlias',
                     PlayerStateCapabilityMixin:
-                            'net.okitsu.ysmepicfightcompat.ysmref.PlayerStateCapabilityAlias'
+                            'net.okitsu.ysmepicfightcompat.ysmref.PlayerStateCapabilityAlias',
+                    YsmConfigurationExpressionMixin:
+                            'net.okitsu.ysmepicfightcompat.ysmref.AnimationRouletteScreenAlias'
             ].each { mixinName, sourceAlias ->
                 def mixinPath = mixinJson.package.replace('.', '/') +
                         "/${mixinName}.class"

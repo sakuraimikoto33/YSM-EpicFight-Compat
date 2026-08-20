@@ -31,6 +31,21 @@ class ExpressionEngineTest {
     }
 
     @Test
+    void abbreviatedAndFullVariableNamespacesShareTheSameSlot() {
+        TestEnvironment environment = new TestEnvironment();
+
+        double result = ExpressionEngine.compile(
+                "variable.eye=1;v.eye+=2;variable.roaming.jacket=4;"
+                        + "v.roaming.jacket+=1;variable.eye+v.roaming.jacket")
+                .evaluate(environment);
+
+        assertEquals(ExpressionEngine.slot("variable.eye"), ExpressionEngine.slot("v.eye"));
+        assertEquals(ExpressionEngine.slot("variable.roaming.jacket"),
+                ExpressionEngine.slot("v.roaming.jacket"));
+        assertEquals(8.0D, result, 0.0001D);
+    }
+
+    @Test
     void malformedExpressionsFailClosedToZero() {
         assertEquals(0.0D,
                 ExpressionEngine.compile("variable.a = (").evaluate(new TestEnvironment()));
