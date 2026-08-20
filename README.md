@@ -10,7 +10,7 @@ YSM Epic Fight Compat is a Forge mod that renders player models selected in the 
 - Forge 47.4.20 or later
 - Yes Steve Model 2.6.0 or later for Forge 1.20.1
 - Epic Fight 20.14.17 or later for Forge 1.20.1
-- [YSM Mapping API](https://github.com/sakuraimikoto33/YSM-Mapping-API) 0.1.2 or later
+- [YSM Mapping API](https://github.com/sakuraimikoto33/YSM-Mapping-API) 0.1.3 or later
 
 ## Features
 
