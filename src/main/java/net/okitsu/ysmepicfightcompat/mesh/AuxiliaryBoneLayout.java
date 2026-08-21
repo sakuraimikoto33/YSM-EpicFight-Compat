@@ -29,16 +29,24 @@ public final class AuxiliaryBoneLayout {
     private final List<Entry> entries;
     private final Map<GeometryDocument.Bone, Entry> byBone;
     private final Map<String, Entry> byName;
+    private final Map<Integer, org.joml.Vector3f> jointPivots;
 
     private AuxiliaryBoneLayout(List<Entry> entries,
                                 Map<GeometryDocument.Bone, Entry> byBone,
-                                Map<String, Entry> byName) {
+                                Map<String, Entry> byName,
+                                Map<Integer, org.joml.Vector3f> jointPivots) {
         this.entries = List.copyOf(entries);
         this.byBone = Map.copyOf(byBone);
         this.byName = Map.copyOf(byName);
+        this.jointPivots = Map.copyOf(jointPivots);
     }
 
     public static AuxiliaryBoneLayout create(GeometryDocument geometry) {
+        return create(geometry, 1.0F, 1.0F);
+    }
+
+    public static AuxiliaryBoneLayout create(GeometryDocument geometry,
+                                             float horizontalScale, float verticalScale) {
         List<Entry> entries = new ArrayList<>();
         Map<GeometryDocument.Bone, Entry> byBone = new IdentityHashMap<>();
         Map<String, Entry> byName = new java.util.LinkedHashMap<>();
@@ -69,7 +77,8 @@ public final class AuxiliaryBoneLayout {
                 pending.push(new Visit(children.get(index), parentAuxiliary, bindWorld));
             }
         }
-        return new AuxiliaryBoneLayout(entries, byBone, byName);
+        return new AuxiliaryBoneLayout(entries, byBone, byName,
+                ModelJointPivots.estimate(geometry, horizontalScale, verticalScale));
     }
 
     public List<Entry> entries() {
@@ -91,6 +100,14 @@ public final class AuxiliaryBoneLayout {
 
     public Entry entryForBoneName(String name) {
         return name == null ? null : byName.get(name.toLowerCase(Locale.ROOT));
+    }
+
+    org.joml.Vector3f jointPivot(int joint) {
+        return jointPivots.get(joint);
+    }
+
+    boolean hasJointPivots() {
+        return !jointPivots.isEmpty();
     }
 
     private static Matrix4f bindLocal(GeometryDocument.Bone bone) {

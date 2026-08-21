@@ -18,12 +18,16 @@ public final class HumanoidRig {
     public static final int TORSO = 7;
     public static final int CHEST = 8;
     public static final int HEAD = 9;
+    public static final int RIGHT_SHOULDER = 10;
     public static final int RIGHT_ARM = 11;
     public static final int RIGHT_HAND = 12;
     public static final int RIGHT_TOOL = 13;
+    public static final int RIGHT_ELBOW = 14;
+    public static final int LEFT_SHOULDER = 15;
     public static final int LEFT_ARM = 16;
     public static final int LEFT_HAND = 17;
     public static final int LEFT_TOOL = 18;
+    public static final int LEFT_ELBOW = 19;
 
     private static final Map<String, Integer> BINDINGS = createBindings();
     private static final Map<String, Integer> MAJOR_BINDINGS = createMajorBindings();
@@ -105,10 +109,18 @@ public final class HumanoidRig {
 
     private static String normalize(String name) {
         String compact = name.toLowerCase(Locale.ROOT).replace("_", "").replace(" ", "");
-        int end = compact.length();
-        while (end > 0 && Character.isDigit(compact.charAt(end - 1))) {
-            end--;
-        }
-        return compact.substring(0, end);
+        String previous;
+        do {
+            previous = compact;
+            int end = compact.length();
+            while (end > 0 && Character.isDigit(compact.charAt(end - 1))) {
+                end--;
+            }
+            compact = compact.substring(0, end);
+            if (compact.endsWith("default")) {
+                compact = compact.substring(0, compact.length() - "default".length());
+            }
+        } while (!compact.equals(previous));
+        return compact;
     }
 }

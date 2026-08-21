@@ -18,6 +18,15 @@ class HumanoidRigTest {
     }
 
     @Test
+    void normalizesOfficialDefaultFormSuffixes() {
+        GeometryDocument.Bone right = bone("RightArm_Default", "");
+
+        assertEquals(HumanoidRig.RIGHT_ARM, HumanoidRig.jointFor(right));
+        assertTrue(HumanoidRig.hasDirectBinding(right));
+        assertTrue(HumanoidRig.isMajorBone(right));
+    }
+
+    @Test
     void customGeometryUsesTheNearestMappedAncestor() {
         GeometryDocument model = new GeometryDocument();
         GeometryDocument.Bone head = bone("head", "");

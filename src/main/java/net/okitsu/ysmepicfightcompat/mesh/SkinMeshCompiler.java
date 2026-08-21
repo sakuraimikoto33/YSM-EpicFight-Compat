@@ -44,7 +44,8 @@ public final class SkinMeshCompiler {
             return null;
         }
         Accumulator output = new Accumulator();
-        AuxiliaryBoneLayout auxiliaryBones = AuxiliaryBoneLayout.create(geometry);
+        AuxiliaryBoneLayout auxiliaryBones = AuxiliaryBoneLayout.create(
+                geometry, model.widthScale(), model.heightScale());
         ArrayDeque<Visit> pending = new ArrayDeque<>();
         List<GeometryDocument.Bone> roots = geometry.roots();
         for (int index = roots.size() - 1; index >= 0; index--) {

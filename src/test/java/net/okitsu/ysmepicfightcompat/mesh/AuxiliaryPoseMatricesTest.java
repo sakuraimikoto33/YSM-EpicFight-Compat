@@ -125,6 +125,27 @@ class AuxiliaryPoseMatricesTest {
         assertMatrixEquals(output[HumanoidRig.HEAD], output[earEntry.poseIndex()]);
     }
 
+    @Test
+    void usesRetargetedAnchorsOnlyForPrivateYsmPoses() {
+        GeometryDocument geometry = new GeometryDocument();
+        GeometryDocument.Bone rightArm = new GeometryDocument.Bone("rightArm");
+        geometry.add(rightArm);
+        geometry.linkHierarchy();
+        AuxiliaryBoneLayout layout = AuxiliaryBoneLayout.create(geometry);
+        OpenMatrix4f[] poses = translatedMatrices(HumanoidRig.EPIC_JOINT_COUNT, 1.0F);
+        OpenMatrix4f[] toOrigin = AuxiliaryPoseMatrices.allocate(HumanoidRig.EPIC_JOINT_COUNT);
+        OpenMatrix4f[] output = AuxiliaryPoseMatrices.allocate(layout.totalPoseCount());
+        OpenMatrix4f[] retargeted = AuxiliaryPoseMatrices.allocate(HumanoidRig.EPIC_JOINT_COUNT);
+        retargeted[HumanoidRig.RIGHT_ARM].translate(40.0F, 50.0F, 60.0F);
+
+        AuxiliaryPoseMatrices.compose(poses, toOrigin, layout, output,
+                null, null, retargeted);
+
+        AuxiliaryBoneLayout.Entry armEntry = layout.entries().get(0);
+        assertMatrixEquals(poses[HumanoidRig.RIGHT_ARM], output[HumanoidRig.RIGHT_ARM]);
+        assertMatrixEquals(retargeted[HumanoidRig.RIGHT_ARM], output[armEntry.poseIndex()]);
+    }
+
     private static OpenMatrix4f[] translatedMatrices(int count, float multiplier) {
         OpenMatrix4f[] result = AuxiliaryPoseMatrices.allocate(count);
         for (int index = 0; index < count; index++) {

@@ -9,12 +9,14 @@ import javax.annotation.Nullable;
 /** Builds complete skin matrices without adding joints to Epic Fight's armature. */
 public final class AuxiliaryPoseMatrices {
     private final AuxiliaryBoneLayout layout;
+    private final ModelPoseRetargeter retargeter;
     private final OpenMatrix4f[] output;
     private final OpenMatrix4f[] toOrigin = new OpenMatrix4f[HumanoidRig.EPIC_JOINT_COUNT];
     private Armature preparedArmature;
 
     public AuxiliaryPoseMatrices(AuxiliaryBoneLayout layout) {
         this.layout = layout;
+        retargeter = new ModelPoseRetargeter(layout);
         output = allocate(layout.totalPoseCount());
     }
 
@@ -38,13 +40,25 @@ public final class AuxiliaryPoseMatrices {
             }
             preparedArmature = armature;
         }
-        return compose(poses, toOrigin, layout, output, parallelDeltas, rouletteDeltas);
+        OpenMatrix4f[] retargetedAnchors = poses == armature.getPoseMatrices()
+                ? retargeter.retarget(armature, poses) : null;
+        return compose(poses, toOrigin, layout, output, parallelDeltas, rouletteDeltas,
+                retargetedAnchors);
     }
 
     static OpenMatrix4f[] compose(OpenMatrix4f[] poses, OpenMatrix4f[] toOrigin,
                                   AuxiliaryBoneLayout layout, OpenMatrix4f[] destination,
                                   @Nullable OpenMatrix4f[] parallelDeltas,
                                   @Nullable OpenMatrix4f[] rouletteDeltas) {
+        return compose(poses, toOrigin, layout, destination, parallelDeltas, rouletteDeltas,
+                null);
+    }
+
+    static OpenMatrix4f[] compose(OpenMatrix4f[] poses, OpenMatrix4f[] toOrigin,
+                                  AuxiliaryBoneLayout layout, OpenMatrix4f[] destination,
+                                  @Nullable OpenMatrix4f[] parallelDeltas,
+                                  @Nullable OpenMatrix4f[] rouletteDeltas,
+                                  @Nullable OpenMatrix4f[] retargetedAnchors) {
         if (poses.length < HumanoidRig.EPIC_JOINT_COUNT
                 || toOrigin.length < HumanoidRig.EPIC_JOINT_COUNT
                 || destination.length != layout.totalPoseCount()) {
@@ -54,7 +68,12 @@ public final class AuxiliaryPoseMatrices {
             destination[index].load(poses[index]).mulBack(toOrigin[index]);
         }
         for (AuxiliaryBoneLayout.Entry entry : layout.entries()) {
-            destination[entry.poseIndex()].load(destination[entry.anchorJoint()]);
+            OpenMatrix4f anchor = retargetedAnchors != null
+                    && entry.anchorJoint() < retargetedAnchors.length
+                    && retargetedAnchors[entry.anchorJoint()] != null
+                    ? retargetedAnchors[entry.anchorJoint()]
+                    : destination[entry.anchorJoint()];
+            destination[entry.poseIndex()].load(anchor);
             int auxiliary = entry.auxiliaryIndex();
             if (parallelDeltas != null && auxiliary < parallelDeltas.length) {
                 // Hair, tails, and other secondary bones are authored inside their YSM
