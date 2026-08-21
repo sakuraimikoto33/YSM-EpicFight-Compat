@@ -34,6 +34,9 @@ class RoamingVariableLookupTest {
         assertEquals(lookup.lookup("v.roaming.jacket", values::get),
                 lookup.lookup("variable.roaming.jacket", values::get));
         assertTrue(RoamingVariableLookup.isRoaming("variable.roaming.jacket"));
+        assertEquals("jacket".hashCode(), lookup.roamingHash("v.roaming.jacket"));
+        assertEquals(lookup.roamingHash("v.roaming.jacket"),
+                lookup.roamingHash("Variable.Roaming.Jacket"));
     }
 
     @Test

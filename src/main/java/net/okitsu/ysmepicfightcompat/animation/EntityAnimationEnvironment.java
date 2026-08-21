@@ -81,6 +81,11 @@ final class EntityAnimationEnvironment implements ExpressionEngine.Environment {
 
     @Override
     public void writeVariable(int slot, double value) {
+        String name = ExpressionEngine.slotName(slot);
+        if (RoamingVariableLookup.isRoaming(name)
+                && roamingVariables.writeRoaming(name, value)) {
+            return;
+        }
         variables.put(slot, Double.isFinite(value) ? value : 0.0D);
         assigned.add(slot);
     }
@@ -92,8 +97,8 @@ final class EntityAnimationEnvironment implements ExpressionEngine.Environment {
                 + entity.getDeltaMovement().z * entity.getDeltaMovement().z) * 20.0D;
         float headYaw = Mth.lerp(partialTick, entity.yHeadRotO, entity.yHeadRot);
         float bodyYaw = Mth.lerp(partialTick, entity.yBodyRotO, entity.yBodyRot);
-        float relativeHeadYaw = Mth.wrapDegrees(headYaw - bodyYaw);
-        float headPitch = entity.getViewXRot(partialTick);
+        float relativeHeadYaw = officialHeadYaw(headYaw, bodyYaw);
+        float headPitch = officialHeadPitch(entity.getViewXRot(partialTick));
         return switch (name) {
             case "math.pi" -> Math.PI;
             case "math.e" -> Math.E;
@@ -251,6 +256,14 @@ final class EntityAnimationEnvironment implements ExpressionEngine.Environment {
             case 2 -> z;
             default -> x;
         };
+    }
+
+    static float officialHeadYaw(float headYaw, float bodyYaw) {
+        return -Mth.clamp(Mth.wrapDegrees(headYaw - bodyYaw), -85.0F, 85.0F);
+    }
+
+    static float officialHeadPitch(float headPitch) {
+        return -headPitch;
     }
 
     private static double arg(double[] values, int index) {

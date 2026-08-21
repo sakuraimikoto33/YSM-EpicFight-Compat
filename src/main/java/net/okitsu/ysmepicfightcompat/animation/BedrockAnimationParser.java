@@ -11,7 +11,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
-/** Decodes the automatically played subset of Bedrock animation JSON. */
+/** Decodes Bedrock/YSM animation JSON used by automatic, parallel, and roulette playback. */
 public final class BedrockAnimationParser {
     private static final Set<String> STATES = Set.of(
             "idle", "new_idle_empty", "walk", "run", "sneak", "sneaking",

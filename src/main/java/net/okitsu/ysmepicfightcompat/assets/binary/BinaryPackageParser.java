@@ -264,7 +264,7 @@ public final class BinaryPackageParser {
             // Keep duration in the same seconds unit used by retained keyframes.
             float duration = input.number() / 20.0F;
             int playback = input.varUInt("animation playback");
-            boolean retain = BedrockAnimationParser.isAutomatic(name);
+            boolean retain = true;
             AnimationClip clip = retain ? new AnimationClip(name) : null;
             if (retain) {
                 clip.duration(duration);

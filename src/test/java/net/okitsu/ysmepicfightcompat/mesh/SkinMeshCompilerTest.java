@@ -38,11 +38,13 @@ class SkinMeshCompilerTest {
         assertEquals(0.1F, uvs[0].floatValue());
         assertEquals(0.2F, uvs[1].floatValue());
         assertEquals(1, result.faceCount());
-        assertEquals(0, result.auxiliaryBones().entries().size());
+        assertEquals(1, result.auxiliaryBones().entries().size());
+        assertEquals(HumanoidRig.EPIC_JOINT_COUNT,
+                result.arrays().get("vindices")[0].intValue());
     }
 
     @Test
-    void assignsAuxiliaryBonesToDistinctPoseIndicesWithoutMovingMajorBones() {
+    void assignsEveryModelBoneADistinctPrivatePoseIndex() {
         GeometryDocument geometry = new GeometryDocument();
         GeometryDocument.Bone head = faceBone("head");
         GeometryDocument.Bone ear = faceBone("ear");
@@ -60,12 +62,12 @@ class SkinMeshCompilerTest {
         SkinMeshCompiler.Result result = SkinMeshCompiler.compile(model);
 
         assertNotNull(result);
-        assertEquals(2, result.auxiliaryBones().entries().size());
+        assertEquals(4, result.auxiliaryBones().entries().size());
         Number[] influences = result.arrays().get("vindices");
-        assertEquals(HumanoidRig.HEAD, influences[0].intValue());
-        assertEquals(HumanoidRig.EPIC_JOINT_COUNT, influences[4 * 2].intValue());
-        assertEquals(HumanoidRig.TORSO, influences[8 * 2].intValue());
-        assertEquals(HumanoidRig.EPIC_JOINT_COUNT + 1, influences[12 * 2].intValue());
+        assertEquals(HumanoidRig.EPIC_JOINT_COUNT, influences[0].intValue());
+        assertEquals(HumanoidRig.EPIC_JOINT_COUNT + 1, influences[4 * 2].intValue());
+        assertEquals(HumanoidRig.EPIC_JOINT_COUNT + 2, influences[8 * 2].intValue());
+        assertEquals(HumanoidRig.EPIC_JOINT_COUNT + 3, influences[12 * 2].intValue());
     }
 
     private static GeometryDocument.Bone faceBone(String name) {

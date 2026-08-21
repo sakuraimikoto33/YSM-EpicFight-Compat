@@ -20,7 +20,8 @@ public final class AuxiliaryPoseMatrices {
 
     @Nullable
     public OpenMatrix4f[] compose(@Nullable Armature armature, @Nullable OpenMatrix4f[] poses,
-                                  @Nullable OpenMatrix4f[] auxiliaryDeltas) {
+                                  @Nullable OpenMatrix4f[] parallelDeltas,
+                                  @Nullable OpenMatrix4f[] rouletteDeltas) {
         if (armature == null || poses == null
                 || armature.getJointNumber() < HumanoidRig.EPIC_JOINT_COUNT
                 || poses.length < HumanoidRig.EPIC_JOINT_COUNT) {
@@ -37,12 +38,13 @@ public final class AuxiliaryPoseMatrices {
             }
             preparedArmature = armature;
         }
-        return compose(poses, toOrigin, layout, output, auxiliaryDeltas);
+        return compose(poses, toOrigin, layout, output, parallelDeltas, rouletteDeltas);
     }
 
     static OpenMatrix4f[] compose(OpenMatrix4f[] poses, OpenMatrix4f[] toOrigin,
                                   AuxiliaryBoneLayout layout, OpenMatrix4f[] destination,
-                                  @Nullable OpenMatrix4f[] auxiliaryDeltas) {
+                                  @Nullable OpenMatrix4f[] parallelDeltas,
+                                  @Nullable OpenMatrix4f[] rouletteDeltas) {
         if (poses.length < HumanoidRig.EPIC_JOINT_COUNT
                 || toOrigin.length < HumanoidRig.EPIC_JOINT_COUNT
                 || destination.length != layout.totalPoseCount()) {
@@ -53,8 +55,16 @@ public final class AuxiliaryPoseMatrices {
         }
         for (AuxiliaryBoneLayout.Entry entry : layout.entries()) {
             destination[entry.poseIndex()].load(destination[entry.anchorJoint()]);
-            if (auxiliaryDeltas != null && entry.auxiliaryIndex() < auxiliaryDeltas.length) {
-                destination[entry.poseIndex()].mulBack(auxiliaryDeltas[entry.auxiliaryIndex()]);
+            int auxiliary = entry.auxiliaryIndex();
+            if (parallelDeltas != null && auxiliary < parallelDeltas.length) {
+                // Hair, tails, and other secondary bones are authored inside their YSM
+                // anchor. Apply those deltas before Epic Fight moves the anchor.
+                destination[entry.poseIndex()].mulBack(parallelDeltas[auxiliary]);
+            }
+            if (rouletteDeltas != null && auxiliary < rouletteDeltas.length) {
+                // Roulette clips can move the whole model. Apply their chained model-space
+                // delta outside the Epic Fight pose so falling motions keep the head attached.
+                destination[entry.poseIndex()].mulFront(rouletteDeltas[auxiliary]);
             }
         }
         return destination;

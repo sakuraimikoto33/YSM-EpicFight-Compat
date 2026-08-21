@@ -58,12 +58,37 @@
       }
     },
     {
+      "key": "ysm.player_state.active_animation_getter.method",
+      "kind": "METHOD",
+      "required": true
+    },
+    {
+      "key": "ysm.player_state.animation_playing_getter.method",
+      "kind": "METHOD",
+      "required": true
+    },
+    {
+      "key": "ysm.player_state.animation_stop_packet_factory.method",
+      "kind": "METHOD",
+      "required": true
+    },
+    {
+      "key": "ysm.player_state.animation_stop_sender.method",
+      "kind": "METHOD",
+      "required": true
+    },
+    {
       "key": "ysm.player_state.roaming_provider_getter.method",
       "kind": "METHOD",
       "required": true
     },
     {
       "key": "ysm.player_state.roaming_value_getter.method",
+      "kind": "METHOD",
+      "required": true
+    },
+    {
+      "key": "ysm.player_state.roaming_value_setter.method",
       "kind": "METHOD",
       "required": true
     },

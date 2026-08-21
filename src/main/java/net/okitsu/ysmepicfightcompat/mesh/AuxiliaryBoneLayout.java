@@ -10,11 +10,11 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 
-/** Assigns stable pose indices to YSM bones that are not part of Epic Fight's humanoid rig. */
+/** Assigns stable private pose indices to YSM bones without extending Epic Fight's armature. */
 public final class AuxiliaryBoneLayout {
     /** Epic Fight's compute skinning arrays contain 1000 pose slots. */
     public static final int MAX_TOTAL_POSES = 1000;
-    public static final int MAX_AUXILIARY_BONES = MAX_TOTAL_POSES - HumanoidRig.EPIC_JOINT_COUNT;
+    public static final int MAX_MODEL_BONES = MAX_TOTAL_POSES - HumanoidRig.EPIC_JOINT_COUNT;
 
     public record Entry(GeometryDocument.Bone bone, int auxiliaryIndex, int poseIndex,
                         int anchorJoint, int parentAuxiliaryIndex,
@@ -52,8 +52,7 @@ public final class AuxiliaryBoneLayout {
             Matrix4f bindLocal = bindLocal(visit.bone());
             Matrix4f bindWorld = new Matrix4f(visit.parentBindWorld()).mul(bindLocal);
             int parentAuxiliary = visit.parentAuxiliaryIndex();
-            if (!HumanoidRig.isMajorBone(visit.bone())
-                    && entries.size() < MAX_AUXILIARY_BONES) {
+            if (entries.size() < MAX_MODEL_BONES) {
                 int auxiliaryIndex = entries.size();
                 Entry entry = new Entry(visit.bone(), auxiliaryIndex,
                         HumanoidRig.EPIC_JOINT_COUNT + entries.size(),
@@ -64,8 +63,6 @@ public final class AuxiliaryBoneLayout {
                 byBone.put(visit.bone(), entry);
                 byName.putIfAbsent(visit.bone().name().toLowerCase(Locale.ROOT), entry);
                 parentAuxiliary = auxiliaryIndex;
-            } else if (HumanoidRig.isMajorBone(visit.bone())) {
-                parentAuxiliary = -1;
             }
             List<GeometryDocument.Bone> children = visit.bone().children();
             for (int index = children.size() - 1; index >= 0; index--) {

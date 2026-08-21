@@ -1,6 +1,7 @@
 package net.okitsu.ysmepicfightcompat.animation;
 
 import java.util.Arrays;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.ConcurrentHashMap;
@@ -51,6 +52,14 @@ final class RoamingVariableLookup {
                 ? new Lookup(true, 0.0D) : Lookup.missing();
     }
 
+    int roamingHash(String variableName) {
+        String canonicalName = canonicalName(variableName);
+        if (!isRoaming(canonicalName)) {
+            throw new IllegalArgumentException("Not a roaming variable: " + variableName);
+        }
+        return nameHasher.applyAsInt(canonicalName.substring(ROAMING_PREFIX.length()));
+    }
+
     private int[] hashCandidates(String variableName) {
         boolean roaming = isRoaming(variableName);
         String suffix = variableName.substring(
@@ -80,8 +89,11 @@ final class RoamingVariableLookup {
     }
 
     private static String canonicalName(String variableName) {
-        return variableName != null && variableName.startsWith("variable.")
-                ? VARIABLE_PREFIX + variableName.substring("variable.".length())
-                : variableName;
+        if (variableName == null) {
+            return null;
+        }
+        String lower = variableName.toLowerCase(Locale.ROOT);
+        return lower.startsWith("variable.")
+                ? VARIABLE_PREFIX + lower.substring("variable.".length()) : lower;
     }
 }

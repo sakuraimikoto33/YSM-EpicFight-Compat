@@ -17,6 +17,92 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class ParallelAnimationProgramTest {
     @Test
+    void keepsParallelAndRouletteTransformsInSeparateSpaces() {
+        GeometryDocument geometry = headAndEar();
+        AnimationClip parallel = new AnimationClip("pre_parallel0");
+        parallel.boneTracks().put("ear", rotation(0.0D, 0.0D, 15.0D));
+        AnimationClip roulette = new AnimationClip("extra0");
+        roulette.boneTracks().put("head", rotation(0.0D, 0.0D, 90.0D));
+        ParallelAnimationProgram program = new ParallelAnimationProgram(
+                geometry, Map.of(parallel.name(), parallel, roulette.name(), roulette),
+                AuxiliaryBoneLayout.create(geometry), 1.0F, 1.0F);
+
+        ParallelAnimationProgram.Frame frame = program.sampleAt(
+                0.0D, "extra0", 0.0D, new NeutralEnvironment());
+
+        Matrix4f parallelEar = new Matrix4f().translation(0.0F, 1.0F, 0.0F)
+                .rotateZ((float) Math.toRadians(15.0D)).translate(0.0F, -1.0F, 0.0F);
+        Matrix4f rouletteHead = new Matrix4f()
+                .rotateZ((float) Math.toRadians(90.0D));
+        assertIdentity(frame.parallelDeltas()[0]);
+        assertMatrix(parallelEar, frame.parallelDeltas()[1]);
+        assertMatrix(rouletteHead, frame.rouletteDeltas()[0]);
+        assertMatrix(rouletteHead, frame.rouletteDeltas()[1]);
+    }
+
+    @Test
+    void appliesRouletteTracksToMajorBonesAndTheirChildren() {
+        GeometryDocument geometry = headAndEar();
+        AnimationClip clip = new AnimationClip("extra0");
+        clip.boneTracks().put("head", rotation(0.0D, 0.0D, 90.0D));
+        ParallelAnimationProgram program = program(geometry, clip);
+
+        ParallelAnimationProgram.Frame frame = program.sampleAt(
+                0.0D, "extra0", 0.0D, new NeutralEnvironment());
+
+        Matrix4f expected = new Matrix4f().rotateZ((float) Math.toRadians(90.0D));
+        assertMatrix(expected, frame.rouletteDeltas()[0]);
+        assertMatrix(expected, frame.rouletteDeltas()[1]);
+        assertIdentity(frame.parallelDeltas()[0]);
+        assertIdentity(frame.parallelDeltas()[1]);
+    }
+
+    @Test
+    void leavesThePoseUntouchedWhenTheSelectedRouletteClipIsUnknown() {
+        GeometryDocument geometry = headAndEar();
+        AnimationClip clip = new AnimationClip("extra0");
+        clip.boneTracks().put("head", rotation(0.0D, 0.0D, 90.0D));
+        ParallelAnimationProgram program = program(geometry, clip);
+
+        ParallelAnimationProgram.Frame frame = program.sampleAt(
+                0.0D, "missing", 0.0D, new NeutralEnvironment());
+
+        assertIdentity(frame.rouletteDeltas()[0]);
+        assertIdentity(frame.rouletteDeltas()[1]);
+    }
+
+    @Test
+    void releasesAOneShotRoulettePoseAfterItsDuration() {
+        GeometryDocument geometry = headAndEar();
+        AnimationClip clip = new AnimationClip("extra0");
+        clip.duration(1.0F);
+        clip.boneTracks().put("head", rotation(0.0D, 0.0D, 90.0D));
+        ParallelAnimationProgram program = program(geometry, clip);
+
+        ParallelAnimationProgram.Frame frame = program.sampleAt(
+                0.0D, "extra0", 1.1D, new NeutralEnvironment());
+
+        assertIdentity(frame.rouletteDeltas()[0]);
+        assertIdentity(frame.rouletteDeltas()[1]);
+    }
+
+    @Test
+    void holdsTheLastRoulettePoseWhenTheClipRequestsIt() {
+        GeometryDocument geometry = headAndEar();
+        AnimationClip clip = new AnimationClip("extra0");
+        clip.duration(1.0F);
+        clip.playback(AnimationClip.Playback.HOLD_LAST_FRAME);
+        clip.boneTracks().put("head", rotation(0.0D, 0.0D, 90.0D));
+        ParallelAnimationProgram program = program(geometry, clip);
+
+        ParallelAnimationProgram.Frame frame = program.sampleAt(
+                0.0D, "extra0", 1.1D, new NeutralEnvironment());
+
+        assertFalse(isIdentity(frame.rouletteDeltas()[0]));
+        assertFalse(isIdentity(frame.rouletteDeltas()[1]));
+    }
+
+    @Test
     void ignoresMajorPoseTracksEvenForTheirAuxiliaryChildren() {
         GeometryDocument geometry = headAndEar();
         AnimationClip clip = new AnimationClip("parallel0");
@@ -25,7 +111,8 @@ class ParallelAnimationProgramTest {
 
         ParallelAnimationProgram.Frame frame = program.sampleAt(0.0D, new NeutralEnvironment());
 
-        assertIdentity(frame.auxiliaryDeltas()[0]);
+        assertIdentity(frame.parallelDeltas()[0]);
+        assertIdentity(frame.parallelDeltas()[1]);
     }
 
     @Test
@@ -37,7 +124,7 @@ class ParallelAnimationProgramTest {
 
         ParallelAnimationProgram.Frame frame = program.sampleAt(0.0D, new NeutralEnvironment());
 
-        assertFalse(isIdentity(frame.auxiliaryDeltas()[0]));
+        assertFalse(isIdentity(frame.parallelDeltas()[1]));
     }
 
     @Test
@@ -57,7 +144,7 @@ class ParallelAnimationProgramTest {
         Matrix4f animated = new Matrix4f().translation(0.0F, 1.0F, 0.0F)
                 .rotateZ((float) Math.toRadians(120.0D)).translate(0.0F, -1.0F, 0.0F);
         assertMatrix(new Matrix4f(animated).mul(new Matrix4f(bind).invert()),
-                frame.auxiliaryDeltas()[0]);
+                frame.parallelDeltas()[1]);
     }
 
     @Test
@@ -77,7 +164,7 @@ class ParallelAnimationProgramTest {
 
         Matrix4f animated = new Matrix4f().translation(0.0F, 1.0F, 0.0F)
                 .rotateZ((float) Math.toRadians(35.0D)).translate(0.0F, -1.0F, 0.0F);
-        assertMatrix(animated, frame.auxiliaryDeltas()[0]);
+        assertMatrix(animated, frame.parallelDeltas()[1]);
     }
 
     @Test
@@ -93,7 +180,7 @@ class ParallelAnimationProgramTest {
 
         Matrix4f animated = new Matrix4f().translation(0.0F, 1.0F, 0.0F)
                 .rotateZ((float) Math.toRadians(20.0D)).translate(0.0F, -1.0F, 0.0F);
-        assertMatrix(animated, frame.auxiliaryDeltas()[0]);
+        assertMatrix(animated, frame.parallelDeltas()[1]);
     }
 
     @Test
@@ -121,7 +208,7 @@ class ParallelAnimationProgramTest {
         double offset = Math.sin(Math.toRadians(animationTime * 1440.0D))
                 * Math.exp(-animationTime * 5.0D);
         assertMatrix(new Matrix4f().translation((float) (-offset / 16.0D), 0.0F, 0.0F),
-                frame.auxiliaryDeltas()[0]);
+                frame.parallelDeltas()[1]);
     }
 
     @Test
@@ -144,7 +231,7 @@ class ParallelAnimationProgramTest {
 
         Matrix4f animated = new Matrix4f().translation(0.0F, 1.0F, 0.0F)
                 .rotateZ((float) Math.toRadians(15.0D)).translate(0.0F, -1.0F, 0.0F);
-        assertMatrix(animated, frame.auxiliaryDeltas()[0]);
+        assertMatrix(animated, frame.parallelDeltas()[1]);
     }
 
     @Test
@@ -177,7 +264,7 @@ class ParallelAnimationProgramTest {
 
         assertTrue(frame.hiddenBones().contains("head"));
         assertTrue(frame.hiddenBones().contains("ear"));
-        assertIdentity(frame.auxiliaryDeltas()[0]);
+        assertIdentity(frame.parallelDeltas()[0]);
     }
 
     private static ParallelAnimationProgram program(GeometryDocument geometry,

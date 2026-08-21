@@ -2,8 +2,10 @@ package net.okitsu.ysmepicfightcompat.animation;
 
 import net.minecraft.client.Minecraft;
 import net.minecraft.world.entity.LivingEntity;
+import net.okitsu.ysmepicfightcompat.CompatMod;
 import net.okitsu.ysmepicfightcompat.geometry.GeometryDocument;
 import net.okitsu.ysmepicfightcompat.mesh.AuxiliaryBoneLayout;
+import net.okitsu.ysmepicfightcompat.mesh.HumanoidRig;
 import org.joml.Matrix4f;
 import yesman.epicfight.api.utils.math.OpenMatrix4f;
 
@@ -20,13 +22,14 @@ import java.util.Map;
 import java.util.Set;
 import java.util.WeakHashMap;
 
-/** Evaluates parallel clips while keeping every Epic Fight humanoid joint untouched. */
+/** Evaluates YSM parallel and roulette clips without mutating Epic Fight's animator. */
 public final class ParallelAnimationProgram {
     private static final float HIDDEN_SCALE = 0.01F;
     private static final float EPSILON = 0.0001F;
 
     /** Values are reused and remain valid only until this program's next sample. */
-    public record Frame(OpenMatrix4f[] auxiliaryDeltas, Set<String> hiddenBones) {
+    public record Frame(OpenMatrix4f[] parallelDeltas, OpenMatrix4f[] rouletteDeltas,
+                        Set<String> hiddenBones) {
     }
 
     private record VisibilityBone(GeometryDocument.Bone bone, int parentIndex) {
@@ -43,28 +46,61 @@ public final class ParallelAnimationProgram {
                                List<BoneProgram> bones) {
     }
 
+    private static final class PoseScratch {
+        private final float[][] positions;
+        private final float[][] rotations;
+        private final float[][] scales;
+        private final boolean[] hasPosition;
+        private final boolean[] hasRotation;
+        private final boolean[] hasScale;
+        private final Matrix4f[] localAnimated;
+        private final Matrix4f[] deltaModel;
+        private final Matrix4f[] chainDelta;
+        private final OpenMatrix4f[] output;
+
+        private PoseScratch(int count) {
+            positions = new float[count][3];
+            rotations = new float[count][3];
+            scales = new float[count][3];
+            hasPosition = new boolean[count];
+            hasRotation = new boolean[count];
+            hasScale = new boolean[count];
+            localAnimated = matrices(count);
+            deltaModel = matrices(count);
+            chainDelta = matrices(count);
+            output = openMatrices(count);
+        }
+
+        private void reset() {
+            Arrays.fill(hasPosition, false);
+            Arrays.fill(hasRotation, false);
+            Arrays.fill(hasScale, false);
+            for (float[] position : positions) {
+                Arrays.fill(position, 0.0F);
+            }
+            for (float[] rotation : rotations) {
+                Arrays.fill(rotation, 0.0F);
+            }
+            for (float[] scale : scales) {
+                Arrays.fill(scale, 1.0F);
+            }
+        }
+    }
+
     private final AuxiliaryBoneLayout layout;
     private final List<VisibilityBone> visibilityBones;
-    private final List<ClipProgram> clips;
-    private final int[] visibilityByAuxiliary;
+    private final List<ClipProgram> parallelClips;
+    private final Map<String, ClipProgram> rouletteClips;
     private final float horizontalScale;
     private final float verticalScale;
     private final Map<LivingEntity, RuntimeState> states = new WeakHashMap<>();
 
-    private final float[][] positions;
-    private final float[][] rotations;
-    private final boolean[] hasPosition;
-    private final boolean[] hasRotation;
     private final float[][] visibilityScales;
     private final boolean[] hasVisibilityScale;
-    private final float[][] matrixScales;
-    private final boolean[] hasMatrixScale;
     private final float[] effectiveScale;
-    private final Matrix4f[] localAnimated;
-    private final Matrix4f[] deltaModel;
-    private final Matrix4f[] chainDelta;
+    private final PoseScratch parallelPose;
+    private final PoseScratch roulettePose;
     private final Matrix4f scaledDelta = new Matrix4f();
-    private final OpenMatrix4f[] output;
     private final Set<String> hiddenBones = new LinkedHashSet<>();
     private final Set<String> hiddenView = Collections.unmodifiableSet(hiddenBones);
     private final double[] sample = new double[3];
@@ -85,32 +121,19 @@ public final class ParallelAnimationProgram {
         for (int index = 0; index < visibilityBones.size(); index++) {
             visibilityByName.putIfAbsent(normalize(visibilityBones.get(index).bone().name()), index);
         }
-        visibilityByAuxiliary = new int[layout.entries().size()];
-        Arrays.fill(visibilityByAuxiliary, -1);
-        for (AuxiliaryBoneLayout.Entry entry : layout.entries()) {
-            visibilityByAuxiliary[entry.auxiliaryIndex()] =
-                    visibilityByName.getOrDefault(normalize(entry.bone().name()), -1);
-        }
-        clips = compileClips(animations, visibilityByName);
+        parallelClips = compileParallelClips(animations, visibilityByName);
+        rouletteClips = compileRouletteClips(animations, visibilityByName);
 
         int auxiliaryCount = layout.entries().size();
-        positions = new float[auxiliaryCount][3];
-        rotations = new float[auxiliaryCount][3];
-        hasPosition = new boolean[auxiliaryCount];
-        hasRotation = new boolean[auxiliaryCount];
         visibilityScales = new float[visibilityBones.size()][3];
         hasVisibilityScale = new boolean[visibilityBones.size()];
-        matrixScales = new float[visibilityBones.size()][3];
-        hasMatrixScale = new boolean[visibilityBones.size()];
         effectiveScale = new float[visibilityBones.size()];
-        localAnimated = matrices(auxiliaryCount);
-        deltaModel = matrices(auxiliaryCount);
-        chainDelta = matrices(auxiliaryCount);
-        output = openMatrices(auxiliaryCount);
+        parallelPose = new PoseScratch(auxiliaryCount);
+        roulettePose = new PoseScratch(auxiliaryCount);
     }
 
     public boolean isEmpty() {
-        return clips.isEmpty();
+        return parallelClips.isEmpty() && rouletteClips.isEmpty();
     }
 
     public Frame sample(LivingEntity entity, float partialTick, boolean firstPerson) {
@@ -124,90 +147,130 @@ public final class ParallelAnimationProgram {
                 : Math.min(0.25D, Math.max(0.0D, now - state.lastNow));
         state.lastNow = now;
         state.environment.update(partialTick, firstPerson, deltaTime);
-        evaluate(elapsed, state.environment, state);
-        return new Frame(output, hiddenView);
+        OfficialRoamingVariables.RouletteState roulette =
+                OfficialRoamingVariables.rouletteState(entity);
+        double rouletteElapsed = state.rouletteElapsed(roulette, now);
+        ClipProgram rouletteClip = roulette.playing()
+                ? rouletteClip(roulette.animationName()) : null;
+        state.selectRouletteClip(rouletteClip);
+        state.reportRoulette(entity, roulette, rouletteClip != null);
+        evaluate(elapsed, rouletteClip, rouletteElapsed, state.environment, state);
+        if (rouletteClip != null
+                && state.shouldStopRoulette(rouletteClip, rouletteElapsed)) {
+            OfficialRoamingVariables.stopLocalRouletteAnimation(entity);
+        }
+        return frame();
     }
 
     Frame sampleAt(double elapsed, ExpressionEngine.Environment environment) {
-        evaluate(elapsed, environment, null);
-        return new Frame(output, hiddenView);
+        evaluate(elapsed, null, 0.0D, environment, null);
+        return frame();
     }
 
-    private void evaluate(double elapsed, ExpressionEngine.Environment environment,
+    Frame sampleAt(double elapsed, String rouletteAnimation, double rouletteElapsed,
+                   ExpressionEngine.Environment environment) {
+        evaluate(elapsed, rouletteClip(rouletteAnimation), rouletteElapsed,
+                environment, null);
+        return frame();
+    }
+
+    private Frame frame() {
+        return new Frame(parallelPose.output, roulettePose.output, hiddenView);
+    }
+
+    private void evaluate(double elapsed, ClipProgram rouletteClip, double rouletteElapsed,
+                          ExpressionEngine.Environment environment,
                           RuntimeState runtimeState) {
         resetScratch();
-        for (ClipProgram program : clips) {
-            float localTime = localTime(program, elapsed);
-            if (environment instanceof EntityAnimationEnvironment entityEnvironment) {
-                entityEnvironment.clipTime(localTime);
+        for (ClipProgram program : parallelClips) {
+            if (program.clip().name().startsWith("pre_parallel")) {
+                evaluateProgram(program, localTime(program, elapsed), environment,
+                        runtimeState, parallelPose);
             }
-            if (runtimeState != null) {
-                fireTimeline(program.clip(), localTime, environment,
-                        runtimeState.lastLocalTime);
+        }
+        if (rouletteClip != null && rouletteElapsed >= 0.0D) {
+            float localTime = rouletteTime(rouletteClip, rouletteElapsed);
+            if (localTime >= 0.0F) {
+                evaluateProgram(rouletteClip, localTime, environment, runtimeState,
+                        roulettePose);
             }
-            float blendWeight = finite(evaluate(program.clip().blendWeight(), environment), 1.0F);
-            if (Math.abs(blendWeight) <= EPSILON) {
-                continue;
-            }
-            for (BoneProgram bone : program.bones()) {
-                AnimationClip.BoneTracks tracks = bone.tracks();
-                if (tracks.rotation() != null) {
-                    sample(tracks.rotation(), localTime, environment, sample);
-                    if (bone.auxiliaryIndex() >= 0) {
-                        // Bedrock/YSM blends rotation channels additively. Keep the bind
-                        // rotation as the base and accumulate every parallel clip here.
-                        rotations[bone.auxiliaryIndex()][0] +=
-                                radians(-finite(sample[0] * blendWeight, 0.0F));
-                        rotations[bone.auxiliaryIndex()][1] +=
-                                radians(-finite(sample[1] * blendWeight, 0.0F));
-                        rotations[bone.auxiliaryIndex()][2] +=
-                                radians(finite(sample[2] * blendWeight, 0.0F));
-                        hasRotation[bone.auxiliaryIndex()] = true;
-                    }
-                }
-                if (tracks.position() != null) {
-                    sample(tracks.position(), localTime, environment, sample);
-                    if (bone.auxiliaryIndex() >= 0) {
-                        positions[bone.auxiliaryIndex()][0] =
-                                -finite(sample[0] * blendWeight, 0.0F) / 16.0F;
-                        positions[bone.auxiliaryIndex()][1] =
-                                finite(sample[1] * blendWeight, 0.0F) / 16.0F;
-                        positions[bone.auxiliaryIndex()][2] =
-                                finite(sample[2] * blendWeight, 0.0F) / 16.0F;
-                        hasPosition[bone.auxiliaryIndex()] = true;
-                    }
-                }
-                if (tracks.scale() != null) {
-                    sample(tracks.scale(), localTime, environment, sample);
-                    if (bone.visibilityIndex() >= 0) {
-                        for (int axis = 0; axis < 3; axis++) {
-                            float value = finite(
-                                    1.0D + (sample[axis] - 1.0D) * blendWeight, 1.0F);
-                            visibilityScales[bone.visibilityIndex()][axis] = value;
-                            matrixScales[bone.visibilityIndex()][axis] = value;
-                        }
-                        hasVisibilityScale[bone.visibilityIndex()] = true;
-                        hasMatrixScale[bone.visibilityIndex()] = true;
-                    }
-                }
+        }
+        for (ClipProgram program : parallelClips) {
+            if (!program.clip().name().startsWith("pre_parallel")) {
+                evaluateProgram(program, localTime(program, elapsed), environment,
+                        runtimeState, parallelPose);
             }
         }
         composeVisibility();
-        composeAuxiliaryMatrices();
+        composeAuxiliaryMatrices(parallelPose);
+        composeAuxiliaryMatrices(roulettePose);
+    }
+
+    private void evaluateProgram(ClipProgram program, float localTime,
+                                 ExpressionEngine.Environment environment,
+                                 RuntimeState runtimeState, PoseScratch pose) {
+        if (environment instanceof EntityAnimationEnvironment entityEnvironment) {
+            entityEnvironment.clipTime(localTime);
+        }
+        if (runtimeState != null) {
+            fireTimeline(program.clip(), localTime, environment,
+                    runtimeState.lastLocalTime);
+        }
+        float blendWeight = finite(evaluate(program.clip().blendWeight(), environment), 1.0F);
+        if (Math.abs(blendWeight) <= EPSILON) {
+            return;
+        }
+        for (BoneProgram bone : program.bones()) {
+            AnimationClip.BoneTracks tracks = bone.tracks();
+            if (tracks.rotation() != null) {
+                sample(tracks.rotation(), localTime, environment, sample);
+                if (bone.auxiliaryIndex() >= 0) {
+                    pose.rotations[bone.auxiliaryIndex()][0] +=
+                            radians(-finite(sample[0] * blendWeight, 0.0F));
+                    pose.rotations[bone.auxiliaryIndex()][1] +=
+                            radians(-finite(sample[1] * blendWeight, 0.0F));
+                    pose.rotations[bone.auxiliaryIndex()][2] +=
+                            radians(finite(sample[2] * blendWeight, 0.0F));
+                    pose.hasRotation[bone.auxiliaryIndex()] = true;
+                }
+            }
+            if (tracks.position() != null) {
+                sample(tracks.position(), localTime, environment, sample);
+                if (bone.auxiliaryIndex() >= 0) {
+                    pose.positions[bone.auxiliaryIndex()][0] =
+                            -finite(sample[0] * blendWeight, 0.0F) / 16.0F;
+                    pose.positions[bone.auxiliaryIndex()][1] =
+                            finite(sample[1] * blendWeight, 0.0F) / 16.0F;
+                    pose.positions[bone.auxiliaryIndex()][2] =
+                            finite(sample[2] * blendWeight, 0.0F) / 16.0F;
+                    pose.hasPosition[bone.auxiliaryIndex()] = true;
+                }
+            }
+            if (tracks.scale() != null) {
+                sample(tracks.scale(), localTime, environment, sample);
+                if (bone.visibilityIndex() >= 0) {
+                    for (int axis = 0; axis < 3; axis++) {
+                        float value = finite(
+                                1.0D + (sample[axis] - 1.0D) * blendWeight, 1.0F);
+                        visibilityScales[bone.visibilityIndex()][axis] = value;
+                        if (bone.auxiliaryIndex() >= 0) {
+                            pose.scales[bone.auxiliaryIndex()][axis] = value;
+                        }
+                    }
+                    hasVisibilityScale[bone.visibilityIndex()] = true;
+                    if (bone.auxiliaryIndex() >= 0) {
+                        pose.hasScale[bone.auxiliaryIndex()] = true;
+                    }
+                }
+            }
+        }
     }
 
     private void resetScratch() {
-        Arrays.fill(hasPosition, false);
-        Arrays.fill(hasRotation, false);
+        parallelPose.reset();
+        roulettePose.reset();
         Arrays.fill(hasVisibilityScale, false);
-        Arrays.fill(hasMatrixScale, false);
-        for (float[] rotation : rotations) {
-            Arrays.fill(rotation, 0.0F);
-        }
         for (float[] scale : visibilityScales) {
-            Arrays.fill(scale, 1.0F);
-        }
-        for (float[] scale : matrixScales) {
             Arrays.fill(scale, 1.0F);
         }
     }
@@ -228,45 +291,45 @@ public final class ParallelAnimationProgram {
         }
     }
 
-    private void composeAuxiliaryMatrices() {
+    private void composeAuxiliaryMatrices(PoseScratch pose) {
         for (AuxiliaryBoneLayout.Entry entry : layout.entries()) {
             int auxiliary = entry.auxiliaryIndex();
             GeometryDocument.Bone bone = entry.bone();
-            float px = bone.pivotX() + (hasPosition[auxiliary] ? positions[auxiliary][0] : 0.0F);
-            float py = bone.pivotY() + (hasPosition[auxiliary] ? positions[auxiliary][1] : 0.0F);
-            float pz = bone.pivotZ() + (hasPosition[auxiliary] ? positions[auxiliary][2] : 0.0F);
+            float px = bone.pivotX() + (pose.hasPosition[auxiliary]
+                    ? pose.positions[auxiliary][0] : 0.0F);
+            float py = bone.pivotY() + (pose.hasPosition[auxiliary]
+                    ? pose.positions[auxiliary][1] : 0.0F);
+            float pz = bone.pivotZ() + (pose.hasPosition[auxiliary]
+                    ? pose.positions[auxiliary][2] : 0.0F);
             float rx = bone.rotationX()
-                    + (hasRotation[auxiliary] ? rotations[auxiliary][0] : 0.0F);
+                    + (pose.hasRotation[auxiliary] ? pose.rotations[auxiliary][0] : 0.0F);
             float ry = bone.rotationY()
-                    + (hasRotation[auxiliary] ? rotations[auxiliary][1] : 0.0F);
+                    + (pose.hasRotation[auxiliary] ? pose.rotations[auxiliary][1] : 0.0F);
             float rz = bone.rotationZ()
-                    + (hasRotation[auxiliary] ? rotations[auxiliary][2] : 0.0F);
-            int visibility = visibilityByAuxiliary[auxiliary];
-            float sx = visibility >= 0 && hasMatrixScale[visibility]
-                    ? matrixScales[visibility][0] : 1.0F;
-            float sy = visibility >= 0 && hasMatrixScale[visibility]
-                    ? matrixScales[visibility][1] : 1.0F;
-            float sz = visibility >= 0 && hasMatrixScale[visibility]
-                    ? matrixScales[visibility][2] : 1.0F;
+                    + (pose.hasRotation[auxiliary] ? pose.rotations[auxiliary][2] : 0.0F);
+            float sx = pose.hasScale[auxiliary] ? pose.scales[auxiliary][0] : 1.0F;
+            float sy = pose.hasScale[auxiliary] ? pose.scales[auxiliary][1] : 1.0F;
+            float sz = pose.hasScale[auxiliary] ? pose.scales[auxiliary][2] : 1.0F;
 
-            localAnimated[auxiliary].translation(px, py, pz)
+            pose.localAnimated[auxiliary].translation(px, py, pz)
                     .rotateZ(rz).rotateY(ry).rotateX(rx)
                     .scale(sx, sy, sz)
                     .translate(-bone.pivotX(), -bone.pivotY(), -bone.pivotZ());
-            deltaModel[auxiliary].set(entry.bindWorld()).mul(entry.bindLocalInverse())
-                    .mul(localAnimated[auxiliary])
+            pose.deltaModel[auxiliary].set(entry.bindWorld()).mul(entry.bindLocalInverse())
+                    .mul(pose.localAnimated[auxiliary])
                     .mul(entry.bindWorldInverse());
             if (entry.parentAuxiliaryIndex() >= 0) {
-                chainDelta[auxiliary].set(chainDelta[entry.parentAuxiliaryIndex()])
-                        .mul(deltaModel[auxiliary]);
+                pose.chainDelta[auxiliary].set(
+                                pose.chainDelta[entry.parentAuxiliaryIndex()])
+                        .mul(pose.deltaModel[auxiliary]);
             } else {
-                chainDelta[auxiliary].set(deltaModel[auxiliary]);
+                pose.chainDelta[auxiliary].set(pose.deltaModel[auxiliary]);
             }
             scaledDelta.identity().scale(horizontalScale, verticalScale, horizontalScale)
-                    .mul(chainDelta[auxiliary])
+                    .mul(pose.chainDelta[auxiliary])
                     .scale(1.0F / horizontalScale, 1.0F / verticalScale,
                             1.0F / horizontalScale);
-            importMatrix(output[auxiliary], scaledDelta);
+            importMatrix(pose.output[auxiliary], scaledDelta);
         }
     }
 
@@ -297,8 +360,8 @@ public final class ParallelAnimationProgram {
         }
     }
 
-    private List<ClipProgram> compileClips(Map<String, AnimationClip> animations,
-                                           Map<String, Integer> visibilityByName) {
+    private List<ClipProgram> compileParallelClips(Map<String, AnimationClip> animations,
+                                                   Map<String, Integer> visibilityByName) {
         List<AnimationClip> ordered = animations.values().stream()
                 .filter(clip -> clip.name().startsWith("pre_parallel")
                         || clip.name().startsWith("parallel"))
@@ -315,13 +378,49 @@ public final class ParallelAnimationProgram {
                 // Official models also use non-geometry "molang" bones as ordered
                 // expression runners. Retain them, but never give them a pose index.
                 bones.add(new BoneProgram(visibility == null ? -1 : visibility,
-                        auxiliary == null ? -1 : auxiliary.auxiliaryIndex(), tracks));
+                        auxiliary == null || HumanoidRig.isMajorBone(auxiliary.bone())
+                                ? -1 : auxiliary.auxiliaryIndex(), tracks));
             });
             if (!bones.isEmpty() || !clip.timeline().isEmpty()) {
                 result.add(new ClipProgram(clip, duration(clip), List.copyOf(bones)));
             }
         }
         return List.copyOf(result);
+    }
+
+    private Map<String, ClipProgram> compileRouletteClips(
+            Map<String, AnimationClip> animations, Map<String, Integer> visibilityByName) {
+        Map<String, ClipProgram> result = new HashMap<>();
+        for (AnimationClip clip : animations.values()) {
+            if (BedrockAnimationParser.isAutomatic(clip.name())) {
+                continue;
+            }
+            List<BoneProgram> bones = new ArrayList<>();
+            clip.boneTracks().forEach((name, tracks) -> {
+                Integer visibility = visibilityByName.get(normalize(name));
+                AuxiliaryBoneLayout.Entry pose = layout.entryForBoneName(name);
+                bones.add(new BoneProgram(visibility == null ? -1 : visibility,
+                        pose == null ? -1 : pose.auxiliaryIndex(), tracks));
+            });
+            if (!bones.isEmpty() || !clip.timeline().isEmpty()) {
+                result.putIfAbsent(normalize(clip.name()),
+                        new ClipProgram(clip, duration(clip), List.copyOf(bones)));
+            }
+        }
+        return Map.copyOf(result);
+    }
+
+    private ClipProgram rouletteClip(String name) {
+        if (name == null || name.isBlank()) {
+            return null;
+        }
+        ClipProgram direct = rouletteClips.get(normalize(name));
+        if (direct != null) {
+            return direct;
+        }
+        int separator = name.lastIndexOf('.');
+        return separator < 0 ? null
+                : rouletteClips.get(normalize(name.substring(separator + 1)));
     }
 
     private static float duration(AnimationClip clip) {
@@ -345,6 +444,17 @@ public final class ParallelAnimationProgram {
     private static float localTime(ClipProgram program, double elapsed) {
         return program.duration() <= EPSILON ? (float) elapsed
                 : (float) (elapsed % program.duration());
+    }
+
+    private static float rouletteTime(ClipProgram program, double elapsed) {
+        if (program.duration() <= EPSILON) {
+            return (float) elapsed;
+        }
+        return switch (program.clip().playback()) {
+            case REPEAT -> (float) (elapsed % program.duration());
+            case ONCE -> elapsed <= program.duration() ? (float) elapsed : -1.0F;
+            case HOLD_LAST_FRAME -> (float) Math.min(elapsed, program.duration());
+        };
     }
 
     private void sample(AnimationClip.Track track, float time,
@@ -485,6 +595,11 @@ public final class ParallelAnimationProgram {
         private final EntityAnimationEnvironment environment;
         private double startedAt;
         private double lastNow = -1.0D;
+        private String rouletteAnimation = "";
+        private String rouletteClip = "";
+        private String reportedRoulette = "";
+        private double rouletteStartedAt;
+        private boolean rouletteStopSent;
 
         private RuntimeState(LivingEntity entity) {
             environment = new EntityAnimationEnvironment(entity, variables, assigned);
@@ -497,6 +612,79 @@ public final class ParallelAnimationProgram {
             lastLocalTime.clear();
             startedAt = now;
             lastNow = -1.0D;
+            rouletteAnimation = "";
+            rouletteClip = "";
+            reportedRoulette = "";
+            rouletteStartedAt = now;
+            rouletteStopSent = false;
+        }
+
+        private void reportRoulette(LivingEntity entity,
+                                    OfficialRoamingVariables.RouletteState state,
+                                    boolean available) {
+            String name = state.playing() ? state.animationName() : "";
+            if (name.equals(reportedRoulette)) {
+                return;
+            }
+            reportedRoulette = name;
+            if (name.isEmpty()) {
+                return;
+            }
+            if (available) {
+                CompatMod.LOG.info(
+                        "YSM-EF Compat: applying YSM roulette animation '{}' for {}",
+                        name, entity.getScoreboardName());
+            } else {
+                CompatMod.LOG.warn(
+                        "YSM-EF Compat: YSM roulette animation '{}' is not retained for {}",
+                        name, entity.getScoreboardName());
+            }
+        }
+
+        private double rouletteElapsed(OfficialRoamingVariables.RouletteState state,
+                                       double now) {
+            String name = state.playing() ? state.animationName() : "";
+            if (name.isBlank()) {
+                clearRouletteTimeline();
+                rouletteAnimation = "";
+                rouletteStartedAt = now;
+                rouletteStopSent = false;
+                return -1.0D;
+            }
+            if (!name.equals(rouletteAnimation)) {
+                clearRouletteTimeline();
+                rouletteAnimation = name;
+                rouletteStartedAt = now;
+                rouletteStopSent = false;
+            }
+            return Math.max(0.0D, now - rouletteStartedAt);
+        }
+
+        private void selectRouletteClip(ClipProgram program) {
+            String name = program == null ? "" : program.clip().name();
+            if (!name.equals(rouletteClip)) {
+                clearRouletteTimeline();
+                rouletteClip = name;
+                if (!name.isEmpty()) {
+                    lastLocalTime.remove(name);
+                }
+            }
+        }
+
+        private boolean shouldStopRoulette(ClipProgram program, double elapsed) {
+            if (rouletteStopSent || program.clip().playback() != AnimationClip.Playback.ONCE
+                    || elapsed <= program.duration()) {
+                return false;
+            }
+            rouletteStopSent = true;
+            return true;
+        }
+
+        private void clearRouletteTimeline() {
+            if (!rouletteClip.isEmpty()) {
+                lastLocalTime.remove(rouletteClip);
+                rouletteClip = "";
+            }
         }
     }
 }

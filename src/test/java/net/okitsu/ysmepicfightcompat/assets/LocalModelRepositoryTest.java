@@ -93,9 +93,10 @@ class LocalModelRepositoryTest {
                 }]}
                 """);
         Files.writeString(model.resolve("animations/main.animation.json"), """
-                {"animations":{"parallel0":{"bones":{
-                  "Jacket":{"scale":[0,0,0]}
-                }}}}
+                {"animations":{
+                  "parallel0":{"bones":{"Jacket":{"scale":[0,0,0]}}},
+                  "extra0":{"animation_length":1.0,"bones":{"Jacket":{"rotation":[0,0,20]}}}
+                }}
                 """);
         Files.writeString(model.resolve("animations/fp.arm.animation.json"), """
                 {"animations":{"parallel0":{"bones":{
@@ -108,5 +109,7 @@ class LocalModelRepositoryTest {
         assertNotNull(loaded);
         assertEquals(Set.of("Jacket"),
                 loaded.animations().get("parallel0").boneTracks().keySet());
+        assertEquals(Set.of("Jacket"),
+                loaded.animations().get("extra0").boneTracks().keySet());
     }
 }

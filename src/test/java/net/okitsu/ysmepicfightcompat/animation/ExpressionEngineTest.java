@@ -46,6 +46,31 @@ class ExpressionEngineTest {
     }
 
     @Test
+    void identifiersAreCaseInsensitiveLikeOfficialMolang() {
+        TestEnvironment environment = new TestEnvironment();
+        int slot = ExpressionEngine.querySlot("ysm.head_yaw");
+        environment.values.put(slot, 35.0D);
+
+        assertEquals(slot, ExpressionEngine.querySlot("YSM.head_yaw"));
+        assertEquals(35.0D,
+                ExpressionEngine.compile("YSM.head_yaw").evaluate(environment), 0.0001D);
+    }
+
+    @Test
+    void uppercaseVariableAndQueryAliasesKeepTheirOfficialSemantics() {
+        TestEnvironment environment = new TestEnvironment();
+        environment.animationTime = 0.25D;
+
+        double variable = ExpressionEngine.compile(
+                "Variable.Roaming.Jacket=3;V.ROAMING.JACKET+=2;v.roaming.jacket")
+                .evaluate(environment);
+        double query = ExpressionEngine.compile("Q.ANIM_TIME").evaluate(environment);
+
+        assertEquals(5.0D, variable, 0.0001D);
+        assertEquals(0.25D, query, 0.0001D);
+    }
+
+    @Test
     void malformedExpressionsFailClosedToZero() {
         assertEquals(0.0D,
                 ExpressionEngine.compile("variable.a = (").evaluate(new TestEnvironment()));
@@ -91,7 +116,7 @@ class ExpressionEngineTest {
         @Override
         public double readQuery(int slot) {
             return "query.anim_time".equals(ExpressionEngine.slotName(slot))
-                    ? animationTime : 0.0D;
+                    ? animationTime : values.getOrDefault(slot, 0.0D);
         }
 
         @Override

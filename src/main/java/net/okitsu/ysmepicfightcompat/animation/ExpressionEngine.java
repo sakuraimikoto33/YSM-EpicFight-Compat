@@ -3,6 +3,7 @@ package net.okitsu.ysmepicfightcompat.animation;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -47,8 +48,9 @@ public final class ExpressionEngine {
         private final boolean writable;
 
         private Variable(String name) {
-            writable = isVariableName(name);
-            slot = writable ? slot(name) : querySlot(name);
+            String canonicalName = canonicalVariableName(name);
+            writable = isVariableName(canonicalName);
+            slot = writable ? slot(canonicalName) : querySlot(canonicalName);
         }
 
         @Override
@@ -109,7 +111,9 @@ public final class ExpressionEngine {
     }
 
     public static int querySlot(String name) {
-        return slot(name.startsWith("q.") ? "query." + name.substring(2) : name);
+        String canonicalName = canonicalVariableName(name);
+        return slot(canonicalName.startsWith("q.")
+                ? "query." + canonicalName.substring(2) : canonicalName);
     }
 
     public static String slotName(int id) {
@@ -433,6 +437,9 @@ public final class ExpressionEngine {
     }
 
     private static boolean isVariableName(String name) {
+        if (name == null) {
+            return false;
+        }
         int separator = name.indexOf('.');
         if (separator <= 0) {
             return false;
@@ -443,8 +450,12 @@ public final class ExpressionEngine {
     }
 
     private static String canonicalVariableName(String name) {
-        return name != null && name.startsWith("variable.")
-                ? "v." + name.substring("variable.".length()) : name;
+        if (name == null) {
+            return null;
+        }
+        String lower = name.toLowerCase(Locale.ROOT);
+        return lower.startsWith("variable.")
+                ? "v." + lower.substring("variable.".length()) : lower;
     }
 
     private static boolean truth(double value) {

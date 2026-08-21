@@ -250,7 +250,7 @@ public final class LocalModelRepository {
                 return;
             }
             for (Map.Entry<String, JsonElement> entry : animations.entrySet()) {
-                if (BedrockAnimationParser.isAutomatic(entry.getKey()) && entry.getValue().isJsonObject()) {
+                if (entry.getValue().isJsonObject()) {
                     // A model can reuse an animation name in a later, specialized file
                     // (for example fp_arm). The manifest order is the precedence order:
                     // keep the main definition instead of replacing it with a partial one.
