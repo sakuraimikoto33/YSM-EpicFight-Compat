@@ -20,7 +20,7 @@ class CombatOverlayPolicyTest {
     void defaultsToSuppressedAndObservesLivePersistedConfigChanges(@TempDir Path directory)
             throws IOException {
         Path path = directory.resolve("ysm-epicfight-compat-client.toml");
-        try (CommentedFileConfig config = CommentedFileConfig.of(path)) {
+        try (CommentedFileConfig config = CommentedFileConfig.builder(path).sync().build()) {
             config.load();
             ClientPreferences.CLIENT_SPEC.setConfig(config);
 
