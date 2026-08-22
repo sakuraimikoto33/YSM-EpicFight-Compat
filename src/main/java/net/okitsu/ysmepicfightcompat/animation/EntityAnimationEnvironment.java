@@ -293,6 +293,8 @@ final class EntityAnimationEnvironment implements ExpressionEngine.Environment {
         return switch (function) {
             case "ysm.first_order" -> firstOrder(textArguments, numericArguments);
             case "ysm.second_order" -> secondOrder(textArguments, numericArguments);
+            case "ysm.particle" -> particle(textArguments, numericArguments, false);
+            case "ysm.abs_particle" -> particle(textArguments, numericArguments, true);
             case "query.biome_has_all_tags" -> biomeHasTags(textArguments, true);
             case "query.biome_has_any_tag", "query.biome_has_any_tags" ->
                     biomeHasTags(textArguments, false);
@@ -343,6 +345,12 @@ final class EntityAnimationEnvironment implements ExpressionEngine.Environment {
                 numericArguments.length > 2 ? arg(numericArguments, 2) : 1.0D,
                 numericArguments.length > 3 ? arg(numericArguments, 3) : 1.0D,
                 numericArguments.length > 4 ? arg(numericArguments, 4) : 1.0D);
+    }
+
+    private double particle(String[] textArguments, double[] numericArguments,
+                            boolean absolute) {
+        return flag(ClientParticleOutput.emit(entity, random, textArguments,
+                numericArguments, absolute));
     }
 
     private double biomeHasTags(String[] arguments, boolean requireAll) {
