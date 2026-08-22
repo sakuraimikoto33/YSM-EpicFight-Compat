@@ -1,11 +1,26 @@
 package net.okitsu.ysmepicfightcompat.animation;
 
+import net.minecraft.client.Camera;
+import net.minecraft.client.Minecraft;
+import net.minecraft.client.multiplayer.ClientLevel;
+import net.minecraft.client.player.AbstractClientPlayer;
+import net.minecraft.core.BlockPos;
+import net.minecraft.core.Direction;
+import net.minecraft.core.registries.BuiltInRegistries;
+import net.minecraft.core.registries.Registries;
+import net.minecraft.resources.ResourceLocation;
+import net.minecraft.tags.TagKey;
 import net.minecraft.util.Mth;
 import net.minecraft.world.entity.EquipmentSlot;
+import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.entity.player.Player;
+import net.minecraft.world.entity.player.PlayerModelPart;
+import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
 import net.minecraft.world.item.UseAnim;
+import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.phys.Vec3;
 
 import java.util.Locale;
 import java.util.Map;
@@ -15,6 +30,8 @@ import java.util.Set;
 /** Render-thread Molang values used by auxiliary animations. */
 final class EntityAnimationEnvironment implements ExpressionEngine.Environment {
     private static final double EPSILON = 0.0001D;
+    private static final int MAX_DIE_ROLLS = 1024;
+    private static final int MAX_RELATIVE_BLOCK_OFFSET = 8;
 
     private final LivingEntity entity;
     private final Map<Integer, Double> variables;
@@ -27,6 +44,9 @@ final class EntityAnimationEnvironment implements ExpressionEngine.Environment {
     private double animationTime;
     private double lifeTime;
     private OfficialRoamingVariables.View roamingVariables;
+    private int cachedActorCount = -1;
+    private boolean cameraPositionResolved;
+    private Vec3 cachedCameraPosition;
 
     EntityAnimationEnvironment(LivingEntity entity, Map<Integer, Double> variables,
                                Set<Integer> assigned) {
@@ -45,6 +65,9 @@ final class EntityAnimationEnvironment implements ExpressionEngine.Environment {
         this.deltaTime = deltaTime;
         lifeTime = (entity.tickCount + partialTick) / 20.0D;
         roamingVariables = OfficialRoamingVariables.view(entity);
+        cachedActorCount = -1;
+        cameraPositionResolved = false;
+        cachedCameraPosition = null;
     }
 
     void clipTime(double animationTime) {
@@ -108,6 +131,7 @@ final class EntityAnimationEnvironment implements ExpressionEngine.Environment {
         return switch (name) {
             case "math.pi" -> Math.PI;
             case "math.e" -> Math.E;
+            case "query.actor_count" -> actorCount();
             case "query.anim_time" -> animationTime;
             case "query.life_time" -> lifeTime;
             case "query.delta_time" -> deltaTime;
@@ -115,22 +139,31 @@ final class EntityAnimationEnvironment implements ExpressionEngine.Environment {
             case "query.max_health" -> entity.getMaxHealth();
             case "query.head_x_rotation", "ysm.head_yaw" -> relativeHeadYaw;
             case "query.head_y_rotation", "ysm.head_pitch" -> headPitch;
+            case "query.eye_target_x_rotation" -> entity.getViewXRot(partialTick);
+            case "query.eye_target_y_rotation" ->
+                    Mth.wrapDegrees(entity.getViewYRot(partialTick));
+            case "query.body_x_rotation" ->
+                    Mth.lerp(partialTick, entity.xRotO, entity.getXRot());
             case "query.body_y_rotation" -> Mth.wrapDegrees(bodyYaw);
             case "query.yaw_speed" -> yawSpeed(entity.getYRot(), entity.yRotO);
             case "query.ground_speed" -> horizontalSpeed;
             case "query.vertical_speed" -> entity.getDeltaMovement().y * 20.0D;
+            case "query.walk_distance" -> entity.moveDist;
+            case "query.modified_distance_moved" -> entity.walkDist;
             case "query.hurt_time" -> entity.hurtTime;
             case "query.is_on_ground" -> flag(entity.onGround());
             case "query.is_alive" -> flag(entity.isAlive());
             case "query.is_in_water" -> flag(entity.isInWater());
             case "query.is_in_water_or_rain" -> flag(entity.isInWaterOrRain());
             case "query.is_on_fire" -> flag(entity.isOnFire());
-            case "query.is_riding", "query.has_rider", "ysm.is_passenger" ->
+            case "query.is_riding", "ysm.is_passenger" ->
                     flag(entity.isPassenger());
+            case "query.has_rider" -> flag(entity.isVehicle());
             case "query.is_sneaking", "ysm.is_sneak" -> flag(entity.isShiftKeyDown());
             case "query.is_sprinting" -> flag(entity.isSprinting());
             case "query.is_swimming" -> flag(entity.isSwimming());
             case "query.is_sleeping", "ysm.is_sleep" -> flag(entity.isSleeping());
+            case "query.is_playing_dead" -> flag(entity.isDeadOrDying());
             case "query.is_using_item" -> flag(entity.isUsingItem());
             case "query.is_jumping" -> flag(!entity.onGround()
                     && entity.getDeltaMovement().y > 0.0D);
@@ -145,11 +178,15 @@ final class EntityAnimationEnvironment implements ExpressionEngine.Environment {
             case "query.item_remaining_use_duration" ->
                     entity.getUseItemRemainingTicks() / 20.0D;
             case "query.equipment_count" -> equipmentCount(entity);
+            case "query.has_cape" -> flag(hasCape(entity));
+            case "query.cape_flap_amount" -> capeFlapAmount(entity, partialTick);
             case "query.player_level" -> entity instanceof Player player
                     ? player.experienceLevel : 0.0D;
             case "query.time_stamp" -> entity.level().getGameTime() / 20.0D;
-            case "query.time_of_day" ->
-                    Math.floorMod(entity.level().getDayTime(), 24000L) / 24000.0D;
+            case "query.time_of_day" -> timeOfDay(entity.level().getDayTime());
+            case "query.moon_phase" -> entity.level().getMoonPhase();
+            case "query.cardinal_facing_2d" -> cardinalFacing2d(entity.getDirection());
+            case "query.distance_from_camera" -> distanceFromCamera();
             case "query.is_eating" -> flag(entity.isUsingItem()
                     && entity.getUseItem().getUseAnimation() == UseAnim.EAT);
             case "query.armor_value", "ysm.armor_value" -> entity.getArmorValue();
@@ -211,21 +248,26 @@ final class EntityAnimationEnvironment implements ExpressionEngine.Environment {
             case "math.clamp" -> clamp(arg(arguments, 0), arg(arguments, 1), arg(arguments, 2));
             case "math.lerp" -> arg(arguments, 0)
                     + (arg(arguments, 1) - arg(arguments, 0)) * arg(arguments, 2);
+            case "math.lerprotate", "math.lerprotatee" -> lerpRotate(
+                    arg(arguments, 0), arg(arguments, 1), arg(arguments, 2));
             case "math.hermite", "math.hermite_blend" -> {
                 double value = arg(arguments, 0);
                 yield 3.0D * value * value - 2.0D * value * value * value;
             }
-            case "math.min_angle" -> Math.floorMod((int) Math.round(arg(arguments, 0)) + 180,
-                    360) - 180.0D;
+            case "math.min_angle" -> minimumAngle(arg(arguments, 0));
             case "math.random" -> random(arg(arguments, 0), arg(arguments, 1), false);
             case "math.randomi", "math.random_integer" ->
                     random(arg(arguments, 0), arg(arguments, 1), true);
+            case "math.die_roll", "math.roll" -> dieRoll(random, arguments, false);
+            case "math.die_roll_integer", "math.rolli" ->
+                    dieRoll(random, arguments, true);
             case "query.position" -> coordinate(arg(arguments, 0),
                     entity.getX(), entity.getY(), entity.getZ());
             case "query.position_delta" -> coordinate(arg(arguments, 0),
                     entity.getX() - entity.xOld,
                     entity.getY() - entity.yOld,
                     entity.getZ() - entity.zOld);
+            case "query.rotation_to_camera" -> rotationToCamera(arg(arguments, 0));
             case "ysm.perlin_noise" -> AuxiliaryPhysicsRuntime.perlinNoise(arguments);
             default -> 0.0D;
         };
@@ -235,31 +277,337 @@ final class EntityAnimationEnvironment implements ExpressionEngine.Environment {
     public double invokeWithMixedArguments(String name, String[] textArguments,
                                            double[] numericArguments) {
         String function = name.toLowerCase(Locale.ROOT);
-        String key = textArgument(textArguments, 0);
-        if (key == null || numericArguments.length < 2) {
-            return 0.0D;
-        }
         return switch (function) {
-            case "ysm.first_order" -> physics.firstOrder(key,
-                    arg(numericArguments, 1), numericArguments.length > 2
-                            ? arg(numericArguments, 2) : 1.0D);
-            case "ysm.second_order" -> physics.secondOrder(key,
-                    arg(numericArguments, 1), numericArguments.length > 2
-                            ? arg(numericArguments, 2) : 1.0D,
-                    numericArguments.length > 3 ? arg(numericArguments, 3) : 1.0D,
-                    numericArguments.length > 4 ? arg(numericArguments, 4) : 1.0D);
-            default -> invokeWithText(name, textArguments);
+            case "ysm.first_order" -> firstOrder(textArguments, numericArguments);
+            case "ysm.second_order" -> secondOrder(textArguments, numericArguments);
+            case "query.biome_has_all_tags" -> biomeHasTags(textArguments, true);
+            case "query.biome_has_any_tag", "query.biome_has_any_tags" ->
+                    biomeHasTags(textArguments, false);
+            case "query.relative_block_has_all_tags" -> relativeBlockHasTags(
+                    textArguments, numericArguments, true);
+            case "query.relative_block_has_any_tag", "query.relative_block_has_any_tags" ->
+                    relativeBlockHasTags(textArguments, numericArguments, false);
+            case "query.is_item_name_any" -> itemNameAny(textArguments);
+            case "query.equipped_item_all_tags" -> equippedItemHasTags(textArguments, true);
+            case "query.equipped_item_any_tag", "query.equipped_item_any_tags" ->
+                    equippedItemHasTags(textArguments, false);
+            case "query.max_durability" -> durability(textArguments, false);
+            case "query.remaining_durability" -> durability(textArguments, true);
+            default -> 0.0D;
         };
     }
 
     @Override
     public double invokeWithText(String name, String[] arguments) {
-        return 0.0D;
+        return invokeWithMixedArguments(name, arguments, new double[arguments.length]);
     }
 
     private double random(double low, double high, boolean integer) {
-        double value = low + random.nextDouble() * Math.max(0.0D, high - low);
-        return integer ? Math.floor(value) : value;
+        return random(random, low, high, integer);
+    }
+
+    private double firstOrder(String[] textArguments, double[] numericArguments) {
+        String key = textArgument(textArguments, 0);
+        return key == null || numericArguments.length < 2 ? 0.0D
+                : physics.firstOrder(key, arg(numericArguments, 1),
+                numericArguments.length > 2 ? arg(numericArguments, 2) : 1.0D);
+    }
+
+    private double secondOrder(String[] textArguments, double[] numericArguments) {
+        String key = textArgument(textArguments, 0);
+        return key == null || numericArguments.length < 2 ? 0.0D
+                : physics.secondOrder(key, arg(numericArguments, 1),
+                numericArguments.length > 2 ? arg(numericArguments, 2) : 1.0D,
+                numericArguments.length > 3 ? arg(numericArguments, 3) : 1.0D,
+                numericArguments.length > 4 ? arg(numericArguments, 4) : 1.0D);
+    }
+
+    private double biomeHasTags(String[] arguments, boolean requireAll) {
+        int tagCount = textCount(arguments, 0);
+        if (tagCount == 0) {
+            return 0.0D;
+        }
+        var biome = entity.level().getBiome(entity.blockPosition());
+        boolean matched = requireAll;
+        for (String argument : arguments) {
+            if (argument == null) {
+                continue;
+            }
+            ResourceLocation id = resourceLocation(argument, '#');
+            boolean present = id != null
+                    && biome.is(TagKey.create(Registries.BIOME, id));
+            if (requireAll && !present) {
+                return 0.0D;
+            }
+            if (!requireAll && present) {
+                return 1.0D;
+            }
+            matched = present;
+        }
+        return flag(matched);
+    }
+
+    private double relativeBlockHasTags(String[] textArguments, double[] numericArguments,
+                                        boolean requireAll) {
+        Integer x = relativeOffset(arg(numericArguments, 0));
+        Integer y = relativeOffset(arg(numericArguments, 1));
+        Integer z = relativeOffset(arg(numericArguments, 2));
+        if (x == null || y == null || z == null || textCount(textArguments, 3) == 0) {
+            return 0.0D;
+        }
+        BlockPos position = entity.blockPosition().offset(x, y, z);
+        BlockState state = entity.level().getBlockState(position);
+        return flag(blockHasTags(state, textArguments, 3, requireAll));
+    }
+
+    private double itemNameAny(String[] arguments) {
+        ItemStack stack = itemBySlot(textArgument(arguments, 0));
+        if (stack.isEmpty()) {
+            return 0.0D;
+        }
+        ResourceLocation actual = BuiltInRegistries.ITEM.getKey(stack.getItem());
+        for (int index = 1; index < arguments.length; index++) {
+            ResourceLocation expected = resourceLocation(arguments[index], '$');
+            if (expected != null && expected.equals(actual)) {
+                return 1.0D;
+            }
+        }
+        return 0.0D;
+    }
+
+    private double equippedItemHasTags(String[] arguments, boolean requireAll) {
+        ItemStack stack = itemBySlot(textArgument(arguments, 0));
+        if (stack.isEmpty() || textCount(arguments, 1) == 0) {
+            return 0.0D;
+        }
+        boolean matched = requireAll;
+        for (int index = 1; index < arguments.length; index++) {
+            String argument = arguments[index];
+            if (argument == null) {
+                continue;
+            }
+            ResourceLocation id = resourceLocation(argument, '#');
+            boolean present = id != null && stack.is(TagKey.create(Registries.ITEM, id));
+            if (requireAll && !present) {
+                return 0.0D;
+            }
+            if (!requireAll && present) {
+                return 1.0D;
+            }
+            matched = present;
+        }
+        return flag(matched);
+    }
+
+    private double durability(String[] arguments, boolean remaining) {
+        ItemStack stack = itemBySlot(textArgument(arguments, 0));
+        if (stack.isEmpty() || !stack.isDamageableItem()) {
+            return 0.0D;
+        }
+        return remaining ? Math.max(0, stack.getMaxDamage() - stack.getDamageValue())
+                : stack.getMaxDamage();
+    }
+
+    private ItemStack itemBySlot(String name) {
+        if (name == null) {
+            return ItemStack.EMPTY;
+        }
+        return switch (name.toLowerCase(Locale.ROOT)) {
+            case "head" -> entity.getItemBySlot(EquipmentSlot.HEAD);
+            case "chest" -> entity.getItemBySlot(EquipmentSlot.CHEST);
+            case "legs" -> entity.getItemBySlot(EquipmentSlot.LEGS);
+            case "feet" -> entity.getItemBySlot(EquipmentSlot.FEET);
+            case "mainhand", "main_hand" -> entity.getMainHandItem();
+            case "offhand", "off_hand" -> entity.getOffhandItem();
+            default -> ItemStack.EMPTY;
+        };
+    }
+
+    private double actorCount() {
+        if (cachedActorCount >= 0) {
+            return cachedActorCount;
+        }
+        ClientLevel level = Minecraft.getInstance().level;
+        if (level == null || level != entity.level()) {
+            return 0.0D;
+        }
+        int count = 0;
+        for (Entity ignored : level.entitiesForRendering()) {
+            count++;
+        }
+        cachedActorCount = count;
+        return cachedActorCount;
+    }
+
+    private double distanceFromCamera() {
+        Vec3 camera = cameraPosition();
+        return camera == null ? 0.0D : interpolatedPosition().distanceTo(camera);
+    }
+
+    private double rotationToCamera(double axis) {
+        Minecraft minecraft = Minecraft.getInstance();
+        if (minecraft.level == null || minecraft.level != entity.level()) {
+            return 0.0D;
+        }
+        Camera camera = minecraft.gameRenderer.getMainCamera();
+        Vec3 origin = interpolatedPosition().add(0.0D, entity.getEyeHeight(), 0.0D);
+        return rotationToCamera(origin, camera.getPosition(), camera.getXRot(),
+                camera.getYRot(), (int) axis);
+    }
+
+    private Vec3 cameraPosition() {
+        if (cameraPositionResolved) {
+            return cachedCameraPosition;
+        }
+        cameraPositionResolved = true;
+        Minecraft minecraft = Minecraft.getInstance();
+        cachedCameraPosition = minecraft.level == null || minecraft.level != entity.level()
+                ? null : minecraft.gameRenderer.getMainCamera().getPosition();
+        return cachedCameraPosition;
+    }
+
+    private Vec3 interpolatedPosition() {
+        return new Vec3(Mth.lerp(partialTick, entity.xOld, entity.getX()),
+                Mth.lerp(partialTick, entity.yOld, entity.getY()),
+                Mth.lerp(partialTick, entity.zOld, entity.getZ()));
+    }
+
+    private static boolean blockHasTags(BlockState state, String[] arguments,
+                                        int firstTag, boolean requireAll) {
+        boolean matched = requireAll;
+        for (int index = firstTag; index < arguments.length; index++) {
+            String argument = arguments[index];
+            if (argument == null) {
+                continue;
+            }
+            ResourceLocation id = resourceLocation(argument, '#');
+            boolean present = id != null && state.is(TagKey.create(Registries.BLOCK, id));
+            if (requireAll && !present) {
+                return false;
+            }
+            if (!requireAll && present) {
+                return true;
+            }
+            matched = present;
+        }
+        return matched;
+    }
+
+    private static ResourceLocation resourceLocation(String value, char optionalPrefix) {
+        if (value == null || value.isBlank()) {
+            return null;
+        }
+        String normalized = value.charAt(0) == optionalPrefix ? value.substring(1) : value;
+        return ResourceLocation.tryParse(normalized);
+    }
+
+    private static int textCount(String[] arguments, int first) {
+        if (arguments == null) {
+            return 0;
+        }
+        int count = 0;
+        for (int index = first; index < arguments.length; index++) {
+            if (arguments[index] != null) {
+                count++;
+            }
+        }
+        return count;
+    }
+
+    static Integer relativeOffset(double value) {
+        return Double.isFinite(value) && Math.abs(value) <= MAX_RELATIVE_BLOCK_OFFSET
+                ? (int) value : null;
+    }
+
+    static double minimumAngle(double value) {
+        if (!Double.isFinite(value)) {
+            return 0.0D;
+        }
+        double wrapped = value % 360.0D;
+        if (wrapped >= 180.0D) {
+            wrapped -= 360.0D;
+        } else if (wrapped < -180.0D) {
+            wrapped += 360.0D;
+        }
+        return wrapped == -0.0D ? 0.0D : wrapped;
+    }
+
+    static double lerpRotate(double start, double end, double amount) {
+        return start + minimumAngle(end - start) * amount;
+    }
+
+    static double dieRoll(Random random, double[] arguments, boolean integer) {
+        int count = (int) clamp(Math.floor(arg(arguments, 0)), 0.0D, MAX_DIE_ROLLS);
+        double total = 0.0D;
+        for (int roll = 0; roll < count; roll++) {
+            total += random(random, arg(arguments, 1), arg(arguments, 2), integer);
+        }
+        return Double.isFinite(total) ? total : 0.0D;
+    }
+
+    private static double random(Random random, double low, double high, boolean integer) {
+        if (!Double.isFinite(low) || !Double.isFinite(high)) {
+            return 0.0D;
+        }
+        double minimum = Math.min(low, high);
+        double maximum = Math.max(low, high);
+        if (!integer) {
+            return minimum + random.nextDouble() * (maximum - minimum);
+        }
+        minimum = Math.ceil(minimum);
+        maximum = Math.floor(maximum);
+        if (maximum < minimum) {
+            return 0.0D;
+        }
+        double span = maximum - minimum + 1.0D;
+        return minimum + Math.floor(random.nextDouble() * span);
+    }
+
+    static double timeOfDay(long dayTime) {
+        return Math.floorMod(dayTime + 6000L, 24000L) / 24000.0D;
+    }
+
+    static double cardinalFacing2d(Direction direction) {
+        return direction.get3DDataValue();
+    }
+
+    static double rotationToCamera(Vec3 origin, Vec3 camera, float fallbackPitch,
+                                   float fallbackYaw, int axis) {
+        Vec3 delta = camera.subtract(origin);
+        double horizontal = Math.sqrt(delta.x * delta.x + delta.z * delta.z);
+        if (delta.lengthSqr() <= 1.0E-12D) {
+            return axis == 1 ? Mth.wrapDegrees(fallbackYaw) : fallbackPitch;
+        }
+        return axis == 1
+                ? Mth.wrapDegrees(Math.toDegrees(Math.atan2(-delta.x, delta.z)))
+                : -Math.toDegrees(Math.atan2(delta.y, horizontal));
+    }
+
+    private static boolean hasCape(LivingEntity entity) {
+        return entity instanceof AbstractClientPlayer player
+                && player.isModelPartShown(PlayerModelPart.CAPE)
+                && player.getCloakTextureLocation() != null;
+    }
+
+    private static double capeFlapAmount(LivingEntity entity, float partialTick) {
+        if (!(entity instanceof AbstractClientPlayer player)) {
+            return 0.0D;
+        }
+        double dx = Mth.lerp(partialTick, player.xCloakO, player.xCloak)
+                - Mth.lerp(partialTick, player.xOld, player.getX());
+        double dy = Mth.lerp(partialTick, player.yCloakO, player.yCloak)
+                - Mth.lerp(partialTick, player.yOld, player.getY());
+        double dz = Mth.lerp(partialTick, player.zCloakO, player.zCloak)
+                - Mth.lerp(partialTick, player.zOld, player.getZ());
+        float bodyYaw = Mth.rotLerp(partialTick, player.yBodyRotO, player.yBodyRot);
+        double sine = Math.sin(Math.toRadians(bodyYaw));
+        double negativeCosine = -Math.cos(Math.toRadians(bodyYaw));
+        double vertical = clamp(dy * 10.0D, -6.0D, 32.0D);
+        double forward = clamp((dx * sine + dz * negativeCosine) * 100.0D,
+                0.0D, 150.0D);
+        double crouchLift = player.isCrouching() ? 25.0D : 0.0D;
+        return clamp((forward * 0.5D + vertical + crouchLift) / 107.0D,
+                0.0D, 1.0D);
     }
 
     private static int equipmentCount(LivingEntity entity) {
