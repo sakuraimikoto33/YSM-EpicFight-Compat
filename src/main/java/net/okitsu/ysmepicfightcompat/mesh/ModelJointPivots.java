@@ -10,7 +10,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
-/** Estimates upper-limb bind pivots from the model's rendered geometry. */
+/** Estimates humanoid bind pivots from model geometry and authored bone controls. */
 final class ModelJointPivots {
     private static final float TOP_RING_EPSILON = 0.05F;
 
@@ -23,6 +23,7 @@ final class ModelJointPivots {
     static Map<Integer, Vector3f> estimate(GeometryDocument geometry,
                                           float horizontalScale, float verticalScale) {
         Map<Integer, List<Vector3f>> geometryByJoint = new HashMap<>();
+        Map<Integer, Vector3f> authoredPivots = new HashMap<>();
         ArrayDeque<Visit> pending = new ArrayDeque<>();
         List<GeometryDocument.Bone> roots = geometry.roots();
         for (int index = roots.size() - 1; index >= 0; index--) {
@@ -32,6 +33,12 @@ final class ModelJointPivots {
             Visit visit = pending.pop();
             GeometryDocument.Bone bone = visit.bone();
             Matrix4f transform = bindTransform(visit.parentTransform(), bone);
+            if (isLowerLimbSegmentRoot(bone) && !hasTrailingDigit(bone.name())) {
+                authoredPivots.putIfAbsent(HumanoidRig.jointFor(bone),
+                        new Vector3f(bone.pivotX(), bone.pivotY(), bone.pivotZ())
+                                .mulPosition(visit.parentTransform())
+                                .mul(horizontalScale, verticalScale, horizontalScale));
+            }
             if (isUpperLimbSegment(bone) && !hasTrailingDigit(bone.name())) {
                 List<Vector3f> vertices = geometryByJoint.computeIfAbsent(
                         HumanoidRig.jointFor(bone), ignored -> new ArrayList<>());
@@ -57,6 +64,10 @@ final class ModelJointPivots {
                 topOf(geometryByJoint.get(HumanoidRig.RIGHT_HAND)));
         putPair(result, HumanoidRig.LEFT_HAND, HumanoidRig.LEFT_ELBOW,
                 topOf(geometryByJoint.get(HumanoidRig.LEFT_HAND)));
+        put(result, HumanoidRig.RIGHT_THIGH, authoredPivots.get(HumanoidRig.RIGHT_THIGH));
+        put(result, HumanoidRig.RIGHT_LEG, authoredPivots.get(HumanoidRig.RIGHT_LEG));
+        put(result, HumanoidRig.LEFT_THIGH, authoredPivots.get(HumanoidRig.LEFT_THIGH));
+        put(result, HumanoidRig.LEFT_LEG, authoredPivots.get(HumanoidRig.LEFT_LEG));
         return result;
     }
 
@@ -67,6 +78,19 @@ final class ModelJointPivots {
         int joint = HumanoidRig.jointFor(bone);
         return joint == HumanoidRig.RIGHT_ARM || joint == HumanoidRig.LEFT_ARM
                 || joint == HumanoidRig.RIGHT_HAND || joint == HumanoidRig.LEFT_HAND;
+    }
+
+    private static boolean isLowerLimbSegmentRoot(GeometryDocument.Bone bone) {
+        if (!HumanoidRig.isMajorBone(bone)) {
+            return false;
+        }
+        int joint = HumanoidRig.jointFor(bone);
+        if (joint != HumanoidRig.RIGHT_THIGH && joint != HumanoidRig.RIGHT_LEG
+                && joint != HumanoidRig.LEFT_THIGH && joint != HumanoidRig.LEFT_LEG) {
+            return false;
+        }
+        GeometryDocument.Bone parent = bone.parent();
+        return parent == null || HumanoidRig.jointFor(parent) != joint;
     }
 
     private static boolean hasTrailingDigit(String name) {
@@ -106,5 +130,11 @@ final class ModelJointPivots {
         }
         target.put(first, new Vector3f(pivot));
         target.put(second, new Vector3f(pivot));
+    }
+
+    private static void put(Map<Integer, Vector3f> target, int joint, Vector3f pivot) {
+        if (pivot != null) {
+            target.put(joint, new Vector3f(pivot));
+        }
     }
 }

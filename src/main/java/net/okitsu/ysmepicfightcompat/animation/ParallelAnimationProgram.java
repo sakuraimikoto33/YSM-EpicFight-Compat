@@ -22,14 +22,16 @@ import java.util.Map;
 import java.util.Set;
 import java.util.WeakHashMap;
 
-/** Evaluates YSM parallel and roulette clips without mutating Epic Fight's animator. */
+/** Evaluates YSM auxiliary and whole-model clips without mutating Epic Fight's animator. */
 public final class ParallelAnimationProgram {
     private static final float HIDDEN_SCALE = 0.01F;
     private static final float EPSILON = 0.0001F;
+    private static final Set<String> WHOLE_MODEL_MOUNTED_STATES = Set.of(
+            "boat", "ride_pig", "ride", "sit");
 
     /** Values are reused and remain valid only until this program's next sample. */
-    public record Frame(OpenMatrix4f[] parallelDeltas, OpenMatrix4f[] rouletteDeltas,
-                        Set<String> hiddenBones) {
+    public record Frame(OpenMatrix4f[] parallelDeltas, OpenMatrix4f[] wholeModelDeltas,
+                        boolean replaceEpicFightPose, Set<String> hiddenBones) {
     }
 
     private record VisibilityBone(GeometryDocument.Bone bone, int parentIndex) {
@@ -44,6 +46,11 @@ public final class ParallelAnimationProgram {
 
     private record ClipProgram(AnimationClip clip, float duration,
                                List<BoneProgram> bones) {
+    }
+
+    private enum ApplyMode {
+        OVERRIDE,
+        PARALLEL
     }
 
     private static final class PoseScratch {
@@ -90,7 +97,9 @@ public final class ParallelAnimationProgram {
     private final AuxiliaryBoneLayout layout;
     private final List<VisibilityBone> visibilityBones;
     private final List<ClipProgram> parallelClips;
+    private final Map<String, ClipProgram> automaticClips;
     private final Map<String, ClipProgram> rouletteClips;
+    private final AutomaticAnimationSelector automaticSelector;
     private final float horizontalScale;
     private final float verticalScale;
     private final Map<LivingEntity, RuntimeState> states = new WeakHashMap<>();
@@ -99,7 +108,7 @@ public final class ParallelAnimationProgram {
     private final boolean[] hasVisibilityScale;
     private final float[] effectiveScale;
     private final PoseScratch parallelPose;
-    private final PoseScratch roulettePose;
+    private final PoseScratch wholeModelPose;
     private final Matrix4f scaledDelta = new Matrix4f();
     private final Set<String> hiddenBones = new LinkedHashSet<>();
     private final Set<String> hiddenView = Collections.unmodifiableSet(hiddenBones);
@@ -108,6 +117,7 @@ public final class ParallelAnimationProgram {
     private final double[] p1 = new double[3];
     private final double[] p2 = new double[3];
     private final double[] p3 = new double[3];
+    private boolean replaceEpicFightPose;
 
     public ParallelAnimationProgram(GeometryDocument geometry,
                                     Map<String, AnimationClip> animations,
@@ -122,18 +132,23 @@ public final class ParallelAnimationProgram {
             visibilityByName.putIfAbsent(normalize(visibilityBones.get(index).bone().name()), index);
         }
         parallelClips = compileParallelClips(animations, visibilityByName);
+        automaticClips = compileAutomaticClips(animations, visibilityByName);
         rouletteClips = compileRouletteClips(animations, visibilityByName);
+        Map<String, AutomaticAnimationSelector.ClipInfo> automaticInfo = new HashMap<>();
+        automaticClips.forEach((name, program) -> automaticInfo.put(name,
+                new AutomaticAnimationSelector.ClipInfo(program.duration())));
+        automaticSelector = new AutomaticAnimationSelector(automaticInfo);
 
         int auxiliaryCount = layout.entries().size();
         visibilityScales = new float[visibilityBones.size()][3];
         hasVisibilityScale = new boolean[visibilityBones.size()];
         effectiveScale = new float[visibilityBones.size()];
         parallelPose = new PoseScratch(auxiliaryCount);
-        roulettePose = new PoseScratch(auxiliaryCount);
+        wholeModelPose = new PoseScratch(auxiliaryCount);
     }
 
     public boolean isEmpty() {
-        return parallelClips.isEmpty() && rouletteClips.isEmpty();
+        return parallelClips.isEmpty() && automaticClips.isEmpty() && rouletteClips.isEmpty();
     }
 
     public Frame sample(LivingEntity entity, float partialTick, boolean firstPerson) {
@@ -154,7 +169,11 @@ public final class ParallelAnimationProgram {
                 ? rouletteClip(roulette.animationName()) : null;
         state.selectRouletteClip(rouletteClip);
         state.reportRoulette(entity, roulette, rouletteClip != null);
-        evaluate(elapsed, rouletteClip, rouletteElapsed, state.environment, state);
+        List<AutomaticAnimationSelector.ActiveClip> automatic =
+                automaticSelector.select(entity, now, state.automaticState);
+        state.prepareAutomaticTimelines(automatic, automaticSelector.names());
+        evaluate(elapsed, automatic, rouletteClip, rouletteElapsed,
+                state.environment, state);
         if (rouletteClip != null
                 && state.shouldStopRoulette(rouletteClip, rouletteElapsed)) {
             OfficialRoamingVariables.stopLocalRouletteAnimation(entity);
@@ -163,52 +182,83 @@ public final class ParallelAnimationProgram {
     }
 
     Frame sampleAt(double elapsed, ExpressionEngine.Environment environment) {
-        evaluate(elapsed, null, 0.0D, environment, null);
+        evaluate(elapsed, List.of(), null, 0.0D, environment, null);
         return frame();
     }
 
     Frame sampleAt(double elapsed, String rouletteAnimation, double rouletteElapsed,
                    ExpressionEngine.Environment environment) {
-        evaluate(elapsed, rouletteClip(rouletteAnimation), rouletteElapsed,
+        evaluate(elapsed, List.of(), rouletteClip(rouletteAnimation), rouletteElapsed,
                 environment, null);
         return frame();
     }
 
-    private Frame frame() {
-        return new Frame(parallelPose.output, roulettePose.output, hiddenView);
+    Frame sampleAutomaticAt(double elapsed, List<String> animationNames,
+                            ExpressionEngine.Environment environment) {
+        List<AutomaticAnimationSelector.ActiveClip> active = animationNames.stream()
+                .map(ParallelAnimationProgram::normalize)
+                .map(name -> new AutomaticAnimationSelector.ActiveClip(name, elapsed, false))
+                .toList();
+        evaluate(elapsed, active, null, 0.0D, environment, null);
+        return frame();
     }
 
-    private void evaluate(double elapsed, ClipProgram rouletteClip, double rouletteElapsed,
+    private Frame frame() {
+        return new Frame(parallelPose.output, wholeModelPose.output,
+                replaceEpicFightPose, hiddenView);
+    }
+
+    private void evaluate(double elapsed,
+                          List<AutomaticAnimationSelector.ActiveClip> automatic,
+                          ClipProgram rouletteClip, double rouletteElapsed,
                           ExpressionEngine.Environment environment,
                           RuntimeState runtimeState) {
         resetScratch();
         for (ClipProgram program : parallelClips) {
             if (program.clip().name().startsWith("pre_parallel")) {
                 evaluateProgram(program, localTime(program, elapsed), environment,
-                        runtimeState, parallelPose);
+                        runtimeState, parallelPose, ApplyMode.PARALLEL);
+            }
+        }
+        for (AutomaticAnimationSelector.ActiveClip active : automatic) {
+            ClipProgram program = automaticClips.get(active.name());
+            if (program == null) {
+                continue;
+            }
+            if (active.restarted() && runtimeState != null) {
+                runtimeState.lastLocalTime.remove(program.clip().name());
+            }
+            float localTime = automaticTime(program, active.elapsed());
+            if (localTime >= 0.0F) {
+                boolean mounted = isWholeModelMountedClip(active.name());
+                PoseScratch target = mounted ? wholeModelPose : parallelPose;
+                boolean applied = evaluateProgram(program, localTime, environment,
+                        runtimeState, target, ApplyMode.OVERRIDE);
+                replaceEpicFightPose |= mounted && applied;
             }
         }
         if (rouletteClip != null && rouletteElapsed >= 0.0D) {
             float localTime = rouletteTime(rouletteClip, rouletteElapsed);
             if (localTime >= 0.0F) {
                 evaluateProgram(rouletteClip, localTime, environment, runtimeState,
-                        roulettePose);
+                        wholeModelPose, ApplyMode.PARALLEL);
             }
         }
         for (ClipProgram program : parallelClips) {
             if (!program.clip().name().startsWith("pre_parallel")) {
                 evaluateProgram(program, localTime(program, elapsed), environment,
-                        runtimeState, parallelPose);
+                        runtimeState, parallelPose, ApplyMode.PARALLEL);
             }
         }
         composeVisibility();
         composeAuxiliaryMatrices(parallelPose);
-        composeAuxiliaryMatrices(roulettePose);
+        composeAuxiliaryMatrices(wholeModelPose);
     }
 
-    private void evaluateProgram(ClipProgram program, float localTime,
-                                 ExpressionEngine.Environment environment,
-                                 RuntimeState runtimeState, PoseScratch pose) {
+    private boolean evaluateProgram(ClipProgram program, float localTime,
+                                    ExpressionEngine.Environment environment,
+                                    RuntimeState runtimeState, PoseScratch pose,
+                                    ApplyMode applyMode) {
         if (environment instanceof EntityAnimationEnvironment entityEnvironment) {
             entityEnvironment.clipTime(localTime);
         }
@@ -218,42 +268,65 @@ public final class ParallelAnimationProgram {
         }
         float blendWeight = finite(evaluate(program.clip().blendWeight(), environment), 1.0F);
         if (Math.abs(blendWeight) <= EPSILON) {
-            return;
+            return false;
         }
+        boolean appliedPose = false;
         for (BoneProgram bone : program.bones()) {
             AnimationClip.BoneTracks tracks = bone.tracks();
             if (tracks.rotation() != null) {
                 sample(tracks.rotation(), localTime, environment, sample);
                 if (bone.auxiliaryIndex() >= 0) {
-                    pose.rotations[bone.auxiliaryIndex()][0] +=
-                            radians(-finite(sample[0] * blendWeight, 0.0F));
-                    pose.rotations[bone.auxiliaryIndex()][1] +=
-                            radians(-finite(sample[1] * blendWeight, 0.0F));
-                    pose.rotations[bone.auxiliaryIndex()][2] +=
-                            radians(finite(sample[2] * blendWeight, 0.0F));
+                    appliedPose = true;
+                    int auxiliary = bone.auxiliaryIndex();
+                    float[] target = new float[]{
+                            radians(-finite(sample[0], 0.0F)),
+                            radians(-finite(sample[1], 0.0F)),
+                            radians(finite(sample[2], 0.0F))};
+                    for (int axis = 0; axis < 3; axis++) {
+                        if (applyMode == ApplyMode.PARALLEL) {
+                            pose.rotations[auxiliary][axis] += target[axis] * blendWeight;
+                        } else {
+                            float previous = pose.hasRotation[auxiliary]
+                                    ? pose.rotations[auxiliary][axis] : 0.0F;
+                            pose.rotations[auxiliary][axis] = previous
+                                    + (target[axis] - previous) * blendWeight;
+                        }
+                    }
                     pose.hasRotation[bone.auxiliaryIndex()] = true;
                 }
             }
             if (tracks.position() != null) {
                 sample(tracks.position(), localTime, environment, sample);
                 if (bone.auxiliaryIndex() >= 0) {
-                    pose.positions[bone.auxiliaryIndex()][0] =
-                            -finite(sample[0] * blendWeight, 0.0F) / 16.0F;
-                    pose.positions[bone.auxiliaryIndex()][1] =
-                            finite(sample[1] * blendWeight, 0.0F) / 16.0F;
-                    pose.positions[bone.auxiliaryIndex()][2] =
-                            finite(sample[2] * blendWeight, 0.0F) / 16.0F;
-                    pose.hasPosition[bone.auxiliaryIndex()] = true;
+                    appliedPose = true;
+                    int auxiliary = bone.auxiliaryIndex();
+                    float[] target = new float[]{
+                            -finite(sample[0], 0.0F) / 16.0F,
+                            finite(sample[1], 0.0F) / 16.0F,
+                            finite(sample[2], 0.0F) / 16.0F};
+                    for (int axis = 0; axis < 3; axis++) {
+                        float previous = applyMode == ApplyMode.OVERRIDE
+                                && pose.hasPosition[auxiliary]
+                                ? pose.positions[auxiliary][axis] : 0.0F;
+                        pose.positions[auxiliary][axis] = previous
+                                + (target[axis] - previous) * blendWeight;
+                    }
+                    pose.hasPosition[auxiliary] = true;
                 }
             }
             if (tracks.scale() != null) {
                 sample(tracks.scale(), localTime, environment, sample);
                 if (bone.visibilityIndex() >= 0) {
                     for (int axis = 0; axis < 3; axis++) {
-                        float value = finite(
-                                1.0D + (sample[axis] - 1.0D) * blendWeight, 1.0F);
+                        float previous = applyMode == ApplyMode.OVERRIDE
+                                && hasVisibilityScale[bone.visibilityIndex()]
+                                ? visibilityScales[bone.visibilityIndex()][axis] : 1.0F;
+                        float target = finite(sample[axis], 1.0F);
+                        float value = finite(previous
+                                + (target - previous) * blendWeight, 1.0F);
                         visibilityScales[bone.visibilityIndex()][axis] = value;
                         if (bone.auxiliaryIndex() >= 0) {
+                            appliedPose = true;
                             pose.scales[bone.auxiliaryIndex()][axis] = value;
                         }
                     }
@@ -264,11 +337,13 @@ public final class ParallelAnimationProgram {
                 }
             }
         }
+        return appliedPose;
     }
 
     private void resetScratch() {
         parallelPose.reset();
-        roulettePose.reset();
+        wholeModelPose.reset();
+        replaceEpicFightPose = false;
         Arrays.fill(hasVisibilityScale, false);
         for (float[] scale : visibilityScales) {
             Arrays.fill(scale, 1.0F);
@@ -388,6 +463,25 @@ public final class ParallelAnimationProgram {
         return List.copyOf(result);
     }
 
+    private Map<String, ClipProgram> compileAutomaticClips(
+            Map<String, AnimationClip> animations, Map<String, Integer> visibilityByName) {
+        Map<String, ClipProgram> result = new HashMap<>();
+        for (AnimationClip clip : animations.values()) {
+            String name = normalize(clip.name());
+            if (!BedrockAnimationParser.isAutomatic(name)
+                    || name.startsWith("pre_parallel") || name.startsWith("parallel")
+                    || BedrockAnimationParser.isHandItemAnimation(name)) {
+                continue;
+            }
+            ClipProgram program = compileClip(
+                    clip, visibilityByName, !isWholeModelMountedClip(name));
+            if (program != null) {
+                result.putIfAbsent(name, program);
+            }
+        }
+        return Map.copyOf(result);
+    }
+
     private Map<String, ClipProgram> compileRouletteClips(
             Map<String, AnimationClip> animations, Map<String, Integer> visibilityByName) {
         Map<String, ClipProgram> result = new HashMap<>();
@@ -395,19 +489,27 @@ public final class ParallelAnimationProgram {
             if (BedrockAnimationParser.isAutomatic(clip.name())) {
                 continue;
             }
-            List<BoneProgram> bones = new ArrayList<>();
-            clip.boneTracks().forEach((name, tracks) -> {
-                Integer visibility = visibilityByName.get(normalize(name));
-                AuxiliaryBoneLayout.Entry pose = layout.entryForBoneName(name);
-                bones.add(new BoneProgram(visibility == null ? -1 : visibility,
-                        pose == null ? -1 : pose.auxiliaryIndex(), tracks));
-            });
-            if (!bones.isEmpty() || !clip.timeline().isEmpty()) {
-                result.putIfAbsent(normalize(clip.name()),
-                        new ClipProgram(clip, duration(clip), List.copyOf(bones)));
+            ClipProgram program = compileClip(clip, visibilityByName, false);
+            if (program != null) {
+                result.putIfAbsent(normalize(clip.name()), program);
             }
         }
         return Map.copyOf(result);
+    }
+
+    private ClipProgram compileClip(AnimationClip clip,
+                                    Map<String, Integer> visibilityByName,
+                                    boolean auxiliaryOnly) {
+        List<BoneProgram> bones = new ArrayList<>();
+        clip.boneTracks().forEach((name, tracks) -> {
+            Integer visibility = visibilityByName.get(normalize(name));
+            AuxiliaryBoneLayout.Entry pose = layout.entryForBoneName(name);
+            boolean major = pose != null && HumanoidRig.isMajorBone(pose.bone());
+            bones.add(new BoneProgram(visibility == null ? -1 : visibility,
+                    pose == null || auxiliaryOnly && major ? -1 : pose.auxiliaryIndex(), tracks));
+        });
+        return bones.isEmpty() && clip.timeline().isEmpty() ? null
+                : new ClipProgram(clip, duration(clip), List.copyOf(bones));
     }
 
     private ClipProgram rouletteClip(String name) {
@@ -449,6 +551,17 @@ public final class ParallelAnimationProgram {
     private static float rouletteTime(ClipProgram program, double elapsed) {
         if (program.duration() <= EPSILON) {
             return (float) elapsed;
+        }
+        return switch (program.clip().playback()) {
+            case REPEAT -> (float) (elapsed % program.duration());
+            case ONCE -> elapsed <= program.duration() ? (float) elapsed : -1.0F;
+            case HOLD_LAST_FRAME -> (float) Math.min(elapsed, program.duration());
+        };
+    }
+
+    private static float automaticTime(ClipProgram program, double elapsed) {
+        if (program.duration() <= EPSILON) {
+            return 0.0F;
         }
         return switch (program.clip().playback()) {
             case REPEAT -> (float) (elapsed % program.duration());
@@ -588,11 +701,24 @@ public final class ParallelAnimationProgram {
         return name.toLowerCase(Locale.ROOT);
     }
 
+    static boolean isWholeModelMountedClip(String name) {
+        if (name == null || name.isEmpty()) {
+            return false;
+        }
+        String normalized = normalize(name);
+        return WHOLE_MODEL_MOUNTED_STATES.contains(normalized)
+                || normalized.startsWith("vehicle:")
+                || normalized.startsWith("vehicle$")
+                || normalized.startsWith("vehicle#");
+    }
+
     private static final class RuntimeState {
         private final Map<Integer, Double> variables = new HashMap<>();
         private final Set<Integer> assigned = new java.util.HashSet<>();
         private final Map<String, Float> lastLocalTime = new HashMap<>();
         private final EntityAnimationEnvironment environment;
+        private final AutomaticAnimationSelector.State automaticState =
+                new AutomaticAnimationSelector.State();
         private double startedAt;
         private double lastNow = -1.0D;
         private String rouletteAnimation = "";
@@ -610,6 +736,7 @@ public final class ParallelAnimationProgram {
             variables.clear();
             assigned.clear();
             environment.reset();
+            automaticState.reset();
             lastLocalTime.clear();
             startedAt = now;
             lastNow = -1.0D;
@@ -618,6 +745,17 @@ public final class ParallelAnimationProgram {
             reportedRoulette = "";
             rouletteStartedAt = now;
             rouletteStopSent = false;
+        }
+
+        private void prepareAutomaticTimelines(
+                List<AutomaticAnimationSelector.ActiveClip> active,
+                Set<String> automaticNames) {
+            Set<String> activeNames = new java.util.HashSet<>();
+            for (AutomaticAnimationSelector.ActiveClip clip : active) {
+                activeNames.add(clip.name());
+            }
+            lastLocalTime.keySet().removeIf(name -> automaticNames.contains(normalize(name))
+                    && !activeNames.contains(normalize(name)));
         }
 
         private void reportRoulette(LivingEntity entity,

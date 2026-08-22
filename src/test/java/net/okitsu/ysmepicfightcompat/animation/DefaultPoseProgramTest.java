@@ -86,7 +86,25 @@ class DefaultPoseProgramTest {
     void parserKeepsOnlyAutomaticallyPlayedAnimationNames() {
         assertTrue(BedrockAnimationParser.isAutomatic("pre_parallel.forms"));
         assertTrue(BedrockAnimationParser.isAutomatic("hold_mainhand:minecraft:bow"));
+        assertTrue(BedrockAnimationParser.isAutomatic("hold_offhand$minecraft:shield"));
+        assertTrue(BedrockAnimationParser.isAutomatic("swing#minecraft:swords"));
+        assertTrue(BedrockAnimationParser.isAutomatic("passenger#minecraft:raiders"));
+        assertTrue(BedrockAnimationParser.isAutomatic("head:default"));
+        assertTrue(BedrockAnimationParser.isAutomatic("attacked"));
+        assertTrue(BedrockAnimationParser.isAutomatic("swing_offhand"));
         assertFalse(BedrockAnimationParser.isAutomatic("manual.wave"));
+        assertFalse(BedrockAnimationParser.isAutomatic("vehicle_preview"));
+
+        assertTrue(BedrockAnimationParser.isHandItemAnimation(
+                "hold_mainhand:minecraft:bow"));
+        assertTrue(BedrockAnimationParser.isHandItemAnimation(
+                "hold_offhand$minecraft:shield"));
+        assertTrue(BedrockAnimationParser.isHandItemAnimation(
+                "swing#minecraft:swords"));
+        assertTrue(BedrockAnimationParser.isHandItemAnimation("use_mainhand"));
+        assertFalse(BedrockAnimationParser.isHandItemAnimation("head:default"));
+        assertFalse(BedrockAnimationParser.isHandItemAnimation(
+                "vehicle$minecraft:boat"));
     }
 
     @Test

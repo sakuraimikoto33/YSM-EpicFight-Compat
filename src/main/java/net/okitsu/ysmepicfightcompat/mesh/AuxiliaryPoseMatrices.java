@@ -8,6 +8,8 @@ import javax.annotation.Nullable;
 
 /** Builds complete skin matrices without adding joints to Epic Fight's armature. */
 public final class AuxiliaryPoseMatrices {
+    private static final OpenMatrix4f IDENTITY = new OpenMatrix4f();
+
     private final AuxiliaryBoneLayout layout;
     private final ModelPoseRetargeter retargeter;
     private final OpenMatrix4f[] output;
@@ -23,7 +25,8 @@ public final class AuxiliaryPoseMatrices {
     @Nullable
     public OpenMatrix4f[] compose(@Nullable Armature armature, @Nullable OpenMatrix4f[] poses,
                                   @Nullable OpenMatrix4f[] parallelDeltas,
-                                  @Nullable OpenMatrix4f[] rouletteDeltas) {
+                                  @Nullable OpenMatrix4f[] wholeModelDeltas,
+                                  boolean replaceEpicFightPose) {
         if (armature == null || poses == null
                 || armature.getJointNumber() < HumanoidRig.EPIC_JOINT_COUNT
                 || poses.length < HumanoidRig.EPIC_JOINT_COUNT) {
@@ -42,23 +45,42 @@ public final class AuxiliaryPoseMatrices {
         }
         OpenMatrix4f[] retargetedAnchors = poses == armature.getPoseMatrices()
                 ? retargeter.retarget(armature, poses) : null;
-        return compose(poses, toOrigin, layout, output, parallelDeltas, rouletteDeltas,
-                retargetedAnchors);
+        return compose(poses, toOrigin, layout, output, parallelDeltas, wholeModelDeltas,
+                retargetedAnchors, replaceEpicFightPose);
     }
 
     static OpenMatrix4f[] compose(OpenMatrix4f[] poses, OpenMatrix4f[] toOrigin,
                                   AuxiliaryBoneLayout layout, OpenMatrix4f[] destination,
                                   @Nullable OpenMatrix4f[] parallelDeltas,
-                                  @Nullable OpenMatrix4f[] rouletteDeltas) {
-        return compose(poses, toOrigin, layout, destination, parallelDeltas, rouletteDeltas,
-                null);
+                                  @Nullable OpenMatrix4f[] wholeModelDeltas) {
+        return compose(poses, toOrigin, layout, destination, parallelDeltas, wholeModelDeltas,
+                null, false);
     }
 
     static OpenMatrix4f[] compose(OpenMatrix4f[] poses, OpenMatrix4f[] toOrigin,
                                   AuxiliaryBoneLayout layout, OpenMatrix4f[] destination,
                                   @Nullable OpenMatrix4f[] parallelDeltas,
-                                  @Nullable OpenMatrix4f[] rouletteDeltas,
+                                  @Nullable OpenMatrix4f[] wholeModelDeltas,
+                                  boolean replaceEpicFightPose) {
+        return compose(poses, toOrigin, layout, destination, parallelDeltas, wholeModelDeltas,
+                null, replaceEpicFightPose);
+    }
+
+    static OpenMatrix4f[] compose(OpenMatrix4f[] poses, OpenMatrix4f[] toOrigin,
+                                  AuxiliaryBoneLayout layout, OpenMatrix4f[] destination,
+                                  @Nullable OpenMatrix4f[] parallelDeltas,
+                                  @Nullable OpenMatrix4f[] wholeModelDeltas,
                                   @Nullable OpenMatrix4f[] retargetedAnchors) {
+        return compose(poses, toOrigin, layout, destination, parallelDeltas, wholeModelDeltas,
+                retargetedAnchors, false);
+    }
+
+    static OpenMatrix4f[] compose(OpenMatrix4f[] poses, OpenMatrix4f[] toOrigin,
+                                  AuxiliaryBoneLayout layout, OpenMatrix4f[] destination,
+                                  @Nullable OpenMatrix4f[] parallelDeltas,
+                                  @Nullable OpenMatrix4f[] wholeModelDeltas,
+                                  @Nullable OpenMatrix4f[] retargetedAnchors,
+                                  boolean replaceEpicFightPose) {
         if (poses.length < HumanoidRig.EPIC_JOINT_COUNT
                 || toOrigin.length < HumanoidRig.EPIC_JOINT_COUNT
                 || destination.length != layout.totalPoseCount()) {
@@ -73,17 +95,19 @@ public final class AuxiliaryPoseMatrices {
                     && retargetedAnchors[entry.anchorJoint()] != null
                     ? retargetedAnchors[entry.anchorJoint()]
                     : destination[entry.anchorJoint()];
-            destination[entry.poseIndex()].load(anchor);
+            // A mounted YSM state is already a complete pose. Starting from the bind skin
+            // matrix prevents Epic Fight's own riding pose from moving the limbs a second time.
+            destination[entry.poseIndex()].load(replaceEpicFightPose ? IDENTITY : anchor);
             int auxiliary = entry.auxiliaryIndex();
             if (parallelDeltas != null && auxiliary < parallelDeltas.length) {
                 // Hair, tails, and other secondary bones are authored inside their YSM
                 // anchor. Apply those deltas before Epic Fight moves the anchor.
                 destination[entry.poseIndex()].mulBack(parallelDeltas[auxiliary]);
             }
-            if (rouletteDeltas != null && auxiliary < rouletteDeltas.length) {
-                // Roulette clips can move the whole model. Apply their chained model-space
-                // delta outside the Epic Fight pose so falling motions keep the head attached.
-                destination[entry.poseIndex()].mulFront(rouletteDeltas[auxiliary]);
+            if (wholeModelDeltas != null && auxiliary < wholeModelDeltas.length) {
+                // Mounted states and roulette clips can move the whole model. Apply their
+                // chained model-space delta outside the Epic Fight pose so all parts stay joined.
+                destination[entry.poseIndex()].mulFront(wholeModelDeltas[auxiliary]);
             }
         }
         return destination;

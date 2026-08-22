@@ -36,6 +36,30 @@ class AuxiliaryPoseMatricesTest {
     }
 
     @Test
+    void replacesTheEpicFightAnchorForAWholeModelMountedPose() {
+        GeometryDocument geometry = new GeometryDocument();
+        GeometryDocument.Bone head = new GeometryDocument.Bone("head");
+        geometry.add(head);
+        geometry.linkHierarchy();
+        AuxiliaryBoneLayout layout = AuxiliaryBoneLayout.create(geometry);
+        OpenMatrix4f[] poses = AuxiliaryPoseMatrices.allocate(HumanoidRig.EPIC_JOINT_COUNT);
+        OpenMatrix4f[] toOrigin = AuxiliaryPoseMatrices.allocate(HumanoidRig.EPIC_JOINT_COUNT);
+        poses[HumanoidRig.HEAD].translate(0.0F, -1.5F, 0.0F)
+                .rotateDeg(35.0F, Vec3f.X_AXIS);
+        OpenMatrix4f[] output = AuxiliaryPoseMatrices.allocate(layout.totalPoseCount());
+        OpenMatrix4f[] mountedDeltas = AuxiliaryPoseMatrices.allocate(1);
+        mountedDeltas[0].translate(0.0F, -0.25F, 0.0F)
+                .rotateDeg(70.0F, Vec3f.X_AXIS);
+
+        AuxiliaryPoseMatrices.compose(poses, toOrigin, layout, output,
+                null, mountedDeltas, true);
+
+        assertMatrixEquals(poses[HumanoidRig.HEAD], output[HumanoidRig.HEAD]);
+        assertMatrixEquals(mountedDeltas[0],
+                output[layout.entries().get(0).poseIndex()]);
+    }
+
+    @Test
     void appliesHairParallelDeltaInsideTheEpicHeadPose() {
         GeometryDocument geometry = new GeometryDocument();
         GeometryDocument.Bone head = new GeometryDocument.Bone("head");

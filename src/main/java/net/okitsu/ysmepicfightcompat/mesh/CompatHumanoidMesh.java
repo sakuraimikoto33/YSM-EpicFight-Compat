@@ -83,7 +83,8 @@ public final class CompatHumanoidMesh extends HumanoidMesh {
         if (auxiliaryPoses != null) {
             OpenMatrix4f[] complete = auxiliaryPoses.compose(armature, poses,
                     animationFrame == null ? null : animationFrame.parallelDeltas(),
-                    animationFrame == null ? null : animationFrame.rouletteDeltas());
+                    animationFrame == null ? null : animationFrame.wholeModelDeltas(),
+                    animationFrame != null && animationFrame.replaceEpicFightPose());
             if (complete != null) {
                 poses = complete;
                 armature = null;

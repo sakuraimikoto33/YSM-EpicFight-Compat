@@ -36,8 +36,9 @@ class ParallelAnimationProgramTest {
                 .rotateZ((float) Math.toRadians(90.0D));
         assertIdentity(frame.parallelDeltas()[0]);
         assertMatrix(parallelEar, frame.parallelDeltas()[1]);
-        assertMatrix(rouletteHead, frame.rouletteDeltas()[0]);
-        assertMatrix(rouletteHead, frame.rouletteDeltas()[1]);
+        assertMatrix(rouletteHead, frame.wholeModelDeltas()[0]);
+        assertMatrix(rouletteHead, frame.wholeModelDeltas()[1]);
+        assertFalse(frame.replaceEpicFightPose());
     }
 
     @Test
@@ -51,8 +52,8 @@ class ParallelAnimationProgramTest {
                 0.0D, "extra0", 0.0D, new NeutralEnvironment());
 
         Matrix4f expected = new Matrix4f().rotateZ((float) Math.toRadians(90.0D));
-        assertMatrix(expected, frame.rouletteDeltas()[0]);
-        assertMatrix(expected, frame.rouletteDeltas()[1]);
+        assertMatrix(expected, frame.wholeModelDeltas()[0]);
+        assertMatrix(expected, frame.wholeModelDeltas()[1]);
         assertIdentity(frame.parallelDeltas()[0]);
         assertIdentity(frame.parallelDeltas()[1]);
     }
@@ -67,8 +68,8 @@ class ParallelAnimationProgramTest {
         ParallelAnimationProgram.Frame frame = program.sampleAt(
                 0.0D, "missing", 0.0D, new NeutralEnvironment());
 
-        assertIdentity(frame.rouletteDeltas()[0]);
-        assertIdentity(frame.rouletteDeltas()[1]);
+        assertIdentity(frame.wholeModelDeltas()[0]);
+        assertIdentity(frame.wholeModelDeltas()[1]);
     }
 
     @Test
@@ -82,8 +83,8 @@ class ParallelAnimationProgramTest {
         ParallelAnimationProgram.Frame frame = program.sampleAt(
                 0.0D, "extra0", 1.1D, new NeutralEnvironment());
 
-        assertIdentity(frame.rouletteDeltas()[0]);
-        assertIdentity(frame.rouletteDeltas()[1]);
+        assertIdentity(frame.wholeModelDeltas()[0]);
+        assertIdentity(frame.wholeModelDeltas()[1]);
     }
 
     @Test
@@ -98,8 +99,119 @@ class ParallelAnimationProgramTest {
         ParallelAnimationProgram.Frame frame = program.sampleAt(
                 0.0D, "extra0", 1.1D, new NeutralEnvironment());
 
-        assertFalse(isIdentity(frame.rouletteDeltas()[0]));
-        assertFalse(isIdentity(frame.rouletteDeltas()[1]));
+        assertFalse(isIdentity(frame.wholeModelDeltas()[0]));
+        assertFalse(isIdentity(frame.wholeModelDeltas()[1]));
+    }
+
+    @Test
+    void appliesNonMountedAutomaticAnimationsOnlyToAuxiliaryBones() {
+        GeometryDocument geometry = headAndEar();
+        AnimationClip idle = new AnimationClip("idle");
+        idle.playback(AnimationClip.Playback.REPEAT);
+        idle.boneTracks().put("head", rotation(0.0D, 0.0D, 90.0D));
+        idle.boneTracks().put("ear", rotation(0.0D, 0.0D, 20.0D));
+        ParallelAnimationProgram program = program(geometry, idle);
+
+        ParallelAnimationProgram.Frame frame = program.sampleAutomaticAt(
+                0.0D, List.of("idle"), new NeutralEnvironment());
+
+        assertIdentity(frame.parallelDeltas()[0]);
+        Matrix4f animated = new Matrix4f().translation(0.0F, 1.0F, 0.0F)
+                .rotateZ((float) Math.toRadians(20.0D)).translate(0.0F, -1.0F, 0.0F);
+        assertMatrix(animated, frame.parallelDeltas()[1]);
+        assertFalse(frame.replaceEpicFightPose());
+    }
+
+    @Test
+    void appliesMountedStatesToMajorBonesAndTheirChildrenInWholeModelSpace() {
+        GeometryDocument geometry = headAndEar();
+        AnimationClip boat = new AnimationClip("boat");
+        boat.playback(AnimationClip.Playback.REPEAT);
+        boat.boneTracks().put("head", rotation(0.0D, 0.0D, 90.0D));
+        ParallelAnimationProgram program = program(geometry, boat);
+
+        ParallelAnimationProgram.Frame frame = program.sampleAutomaticAt(
+                0.0D, List.of("boat"), new NeutralEnvironment());
+
+        Matrix4f expected = new Matrix4f().rotateZ((float) Math.toRadians(90.0D));
+        assertMatrix(expected, frame.wholeModelDeltas()[0]);
+        assertMatrix(expected, frame.wholeModelDeltas()[1]);
+        assertIdentity(frame.parallelDeltas()[0]);
+        assertIdentity(frame.parallelDeltas()[1]);
+        assertTrue(frame.replaceEpicFightPose());
+    }
+
+    @Test
+    void recognizesEveryMountedStateAndVehicleConditionAsWholeModelAnimation() {
+        assertTrue(ParallelAnimationProgram.isWholeModelMountedClip("boat"));
+        assertTrue(ParallelAnimationProgram.isWholeModelMountedClip("ride_pig"));
+        assertTrue(ParallelAnimationProgram.isWholeModelMountedClip("ride"));
+        assertTrue(ParallelAnimationProgram.isWholeModelMountedClip("sit"));
+        assertTrue(ParallelAnimationProgram.isWholeModelMountedClip(
+                "vehicle$minecraft:boat"));
+        assertTrue(ParallelAnimationProgram.isWholeModelMountedClip(
+                "vehicle#minecraft:boats"));
+        assertFalse(ParallelAnimationProgram.isWholeModelMountedClip("passenger:minecraft:pig"));
+        assertFalse(ParallelAnimationProgram.isWholeModelMountedClip("idle"));
+    }
+
+    @Test
+    void composesAutomaticPriorityBetweenPreParallelAndParallel() {
+        GeometryDocument geometry = headAndEar();
+        AnimationClip pre = new AnimationClip("pre_parallel0");
+        pre.boneTracks().put("ear", rotation(0.0D, 0.0D, 10.0D));
+        AnimationClip idle = new AnimationClip("idle");
+        idle.boneTracks().put("ear", rotation(0.0D, 0.0D, 20.0D));
+        AnimationClip equipment = new AnimationClip("head:default");
+        equipment.boneTracks().put("ear", rotation(0.0D, 0.0D, 30.0D));
+        AnimationClip parallel = new AnimationClip("parallel0");
+        parallel.boneTracks().put("ear", rotation(0.0D, 0.0D, 5.0D));
+        ParallelAnimationProgram program = new ParallelAnimationProgram(
+                geometry, Map.of(pre.name(), pre, idle.name(), idle,
+                equipment.name(), equipment, parallel.name(), parallel),
+                AuxiliaryBoneLayout.create(geometry), 1.0F, 1.0F);
+
+        ParallelAnimationProgram.Frame frame = program.sampleAutomaticAt(
+                0.0D, List.of("idle", "head:default"),
+                new NeutralEnvironment());
+
+        Matrix4f animated = new Matrix4f().translation(0.0F, 1.0F, 0.0F)
+                .rotateZ((float) Math.toRadians(35.0D)).translate(0.0F, -1.0F, 0.0F);
+        assertMatrix(animated, frame.parallelDeltas()[1]);
+    }
+
+    @Test
+    void neverRetainsHandItemAnimationsForAutomaticOrRoulettePlayback() {
+        GeometryDocument geometry = headAndEar();
+        AnimationClip condition = new AnimationClip("hold_mainhand:sword");
+        condition.boneTracks().put("ear", rotation(0.0D, 0.0D, 90.0D));
+        ParallelAnimationProgram program = program(geometry, condition);
+
+        assertTrue(program.isEmpty());
+
+        ParallelAnimationProgram.Frame automatic = program.sampleAutomaticAt(
+                0.0D, List.of(condition.name()), new NeutralEnvironment());
+        assertIdentity(automatic.parallelDeltas()[0]);
+        assertIdentity(automatic.parallelDeltas()[1]);
+
+        ParallelAnimationProgram.Frame roulette = program.sampleAt(
+                0.0D, condition.name(), 0.0D, new NeutralEnvironment());
+        assertIdentity(roulette.wholeModelDeltas()[0]);
+        assertIdentity(roulette.wholeModelDeltas()[1]);
+    }
+
+    @Test
+    void neverRetainsAutomaticAnimationsAsRouletteClips() {
+        GeometryDocument geometry = headAndEar();
+        AnimationClip condition = new AnimationClip("vehicle$minecraft:pig");
+        condition.boneTracks().put("ear", rotation(0.0D, 0.0D, 90.0D));
+        ParallelAnimationProgram program = program(geometry, condition);
+
+        ParallelAnimationProgram.Frame frame = program.sampleAt(
+                0.0D, condition.name(), 0.0D, new NeutralEnvironment());
+
+        assertIdentity(frame.wholeModelDeltas()[0]);
+        assertIdentity(frame.wholeModelDeltas()[1]);
     }
 
     @Test

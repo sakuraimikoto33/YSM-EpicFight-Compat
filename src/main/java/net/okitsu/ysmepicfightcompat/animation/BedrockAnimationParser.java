@@ -8,20 +8,28 @@ import com.google.gson.JsonPrimitive;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 
 /** Decodes Bedrock/YSM animation JSON used by automatic, parallel, and roulette playback. */
 public final class BedrockAnimationParser {
     private static final Set<String> STATES = Set.of(
-            "idle", "new_idle_empty", "walk", "run", "sneak", "sneaking",
+            "empty", "idle", "new_idle_empty", "walk", "run", "sneak", "sneaking",
             "swim", "swim_stand", "fly", "elytra_fly", "climb", "climbing",
             "ladder_up", "ladder_down", "ladder_stillness", "sit", "ride",
             "ride_pig", "boat", "sleep", "death", "use_mainhand", "use_offhand",
-            "swing_hand");
-    private static final List<String> CONDITIONAL_PREFIXES = List.of(
-            "hold_mainhand:", "hold_offhand:", "use_mainhand:",
-            "use_offhand:", "vehicle$");
+            "swing_hand", "swing_offhand", "attacked", "jump", "riptide");
+    private static final Set<String> CONDITIONAL_ROOTS = Set.of(
+            "hold_mainhand", "hold_offhand", "use_mainhand", "use_offhand",
+            "swing", "swing_offhand", "head", "chest", "legs", "feet",
+            "vehicle", "passenger");
+    private static final Set<String> HAND_ITEM_STATES = Set.of(
+            "hold_mainhand", "hold_offhand", "use_mainhand", "use_offhand",
+            "swing", "swing_hand", "swing_offhand");
+    private static final Set<String> HAND_ITEM_CONDITIONAL_ROOTS = Set.of(
+            "hold_mainhand", "hold_offhand", "use_mainhand", "use_offhand",
+            "swing", "swing_offhand");
 
     private BedrockAnimationParser() {
     }
@@ -30,10 +38,42 @@ public final class BedrockAnimationParser {
         if (name == null || name.isEmpty()) {
             return false;
         }
-        if (name.startsWith("pre_parallel") || name.startsWith("parallel") || STATES.contains(name)) {
+        String normalized = name.toLowerCase(Locale.ROOT);
+        if (normalized.startsWith("pre_parallel") || normalized.startsWith("parallel")
+                || STATES.contains(normalized)) {
             return true;
         }
-        return CONDITIONAL_PREFIXES.stream().anyMatch(name::startsWith);
+        int separator = firstConditionSeparator(normalized);
+        return separator > 0 && CONDITIONAL_ROOTS.contains(normalized.substring(0, separator));
+    }
+
+    /**
+     * Returns whether a clip is driven by a held item. These names stay reserved as automatic
+     * clips so they cannot become roulette animations, but the Epic Fight renderer does not
+     * compile or play them because Epic Fight owns held-item poses and rendering.
+     */
+    static boolean isHandItemAnimation(String name) {
+        if (name == null || name.isEmpty()) {
+            return false;
+        }
+        String normalized = name.toLowerCase(Locale.ROOT);
+        if (HAND_ITEM_STATES.contains(normalized)) {
+            return true;
+        }
+        int separator = firstConditionSeparator(normalized);
+        return separator > 0
+                && HAND_ITEM_CONDITIONAL_ROOTS.contains(normalized.substring(0, separator));
+    }
+
+    private static int firstConditionSeparator(String name) {
+        int result = -1;
+        for (char separator : new char[]{':', '$', '#'}) {
+            int candidate = name.indexOf(separator);
+            if (candidate >= 0 && (result < 0 || candidate < result)) {
+                result = candidate;
+            }
+        }
+        return result;
     }
 
     public static AnimationClip parse(String name, JsonObject source) {

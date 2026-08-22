@@ -14,6 +14,7 @@ import net.minecraft.util.Mth;
 import net.minecraft.world.entity.EquipmentSlot;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.LivingEntity;
+import net.minecraft.world.entity.Pose;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.entity.player.PlayerModelPart;
 import net.minecraft.world.item.ItemStack;
@@ -206,11 +207,23 @@ final class EntityAnimationEnvironment implements ExpressionEngine.Environment {
             case "ysm.air_supply" -> entity.getAirSupply();
             case "ysm.frozen_ticks" -> entity.getTicksFrozen();
             case "ctrl.death" -> flag(entity.isDeadOrDying());
+            case "ctrl.riptide" -> flag(entity.isAutoSpinAttack());
             case "ctrl.sleep" -> flag(entity.isSleeping());
             case "ctrl.swim" -> flag(entity.isSwimming());
+            case "ctrl.climb" -> flag(isCrawling() && horizontalSpeed > 0.01D);
+            case "ctrl.climbing" -> flag(isCrawling() && horizontalSpeed <= 0.01D);
+            case "ctrl.ladder_up" -> flag(entity.onClimbable()
+                    && entity.getDeltaMovement().y > 0.01D);
+            case "ctrl.ladder_stillness" -> flag(entity.onClimbable()
+                    && Math.abs(entity.getDeltaMovement().y) <= 0.01D);
+            case "ctrl.ladder_down" -> flag(entity.onClimbable()
+                    && entity.getDeltaMovement().y < -0.01D);
             case "ctrl.fly" -> flag(entity instanceof Player player
                     && player.getAbilities().flying);
             case "ctrl.elytra_fly" -> flag(entity.isFallFlying());
+            case "ctrl.swim_stand" -> flag(entity.isInWaterOrBubble()
+                    && !entity.isSwimming());
+            case "ctrl.attacked" -> flag(entity.hurtTime > 0);
             case "ctrl.jump" -> flag(!entity.onGround() && entity.getDeltaMovement().y > 0.0D);
             case "ctrl.sneak" -> flag(entity.isShiftKeyDown() && horizontalSpeed > 0.01D);
             case "ctrl.sneaking" -> flag(entity.isShiftKeyDown() && horizontalSpeed <= 0.01D);
@@ -293,6 +306,16 @@ final class EntityAnimationEnvironment implements ExpressionEngine.Environment {
                     equippedItemHasTags(textArguments, false);
             case "query.max_durability" -> durability(textArguments, false);
             case "query.remaining_durability" -> durability(textArguments, true);
+            case "ctrl.hold" -> flag(AnimationConditionMatcher.hold(entity,
+                    textArgument(textArguments, 0), textArgument(textArguments, 1)));
+            case "ctrl.swing" -> flag(AnimationConditionMatcher.swing(entity,
+                    textArgument(textArguments, 0), textArgument(textArguments, 1)));
+            case "ctrl.use" -> flag(AnimationConditionMatcher.use(entity,
+                    textArgument(textArguments, 0), textArgument(textArguments, 1)));
+            case "ctrl.armor" -> flag(AnimationConditionMatcher.armor(entity,
+                    textArgument(textArguments, 0), textArgument(textArguments, 1)));
+            case "ctrl.ride" -> flag(AnimationConditionMatcher.ride(entity,
+                    textArgument(textArguments, 0), textArgument(textArguments, 1)));
             default -> 0.0D;
         };
     }
@@ -421,6 +444,11 @@ final class EntityAnimationEnvironment implements ExpressionEngine.Environment {
             case "offhand", "off_hand" -> entity.getOffhandItem();
             default -> ItemStack.EMPTY;
         };
+    }
+
+    private boolean isCrawling() {
+        return entity.getPose() == Pose.SWIMMING && !entity.isInWaterOrBubble()
+                && !entity.isFallFlying();
     }
 
     private double actorCount() {

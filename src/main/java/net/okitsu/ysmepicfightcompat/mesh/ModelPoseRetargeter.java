@@ -8,7 +8,7 @@ import yesman.epicfight.api.utils.math.OpenMatrix4f;
 import javax.annotation.Nullable;
 import java.util.Arrays;
 
-/** Re-evaluates Epic Fight pose deltas around model-specific upper-limb bind pivots. */
+/** Re-evaluates Epic Fight pose deltas around model-specific humanoid bind pivots. */
 final class ModelPoseRetargeter {
     private static final int JOINT_COUNT = HumanoidRig.EPIC_JOINT_COUNT;
 
