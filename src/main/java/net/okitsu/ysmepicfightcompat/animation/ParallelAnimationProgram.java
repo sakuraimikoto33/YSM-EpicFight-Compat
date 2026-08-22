@@ -98,8 +98,10 @@ public final class ParallelAnimationProgram {
     private final List<VisibilityBone> visibilityBones;
     private final List<ClipProgram> parallelClips;
     private final Map<String, ClipProgram> automaticClips;
+    private final Map<String, ClipProgram> controllerClips;
     private final Map<String, ClipProgram> rouletteClips;
     private final AutomaticAnimationSelector automaticSelector;
+    private final AnimationControllerProgram controllerProgram;
     private final float horizontalScale;
     private final float verticalScale;
     private final Map<LivingEntity, RuntimeState> states = new WeakHashMap<>();
@@ -123,6 +125,14 @@ public final class ParallelAnimationProgram {
                                     Map<String, AnimationClip> animations,
                                     AuxiliaryBoneLayout layout,
                                     float horizontalScale, float verticalScale) {
+        this(geometry, animations, Map.of(), layout, horizontalScale, verticalScale);
+    }
+
+    public ParallelAnimationProgram(GeometryDocument geometry,
+                                    Map<String, AnimationClip> animations,
+                                    Map<String, AnimationController> controllers,
+                                    AuxiliaryBoneLayout layout,
+                                    float horizontalScale, float verticalScale) {
         this.layout = layout;
         this.horizontalScale = positiveScale(horizontalScale);
         this.verticalScale = positiveScale(verticalScale);
@@ -133,11 +143,20 @@ public final class ParallelAnimationProgram {
         }
         parallelClips = compileParallelClips(animations, visibilityByName);
         automaticClips = compileAutomaticClips(animations, visibilityByName);
+        controllerClips = compileControllerClips(animations, visibilityByName);
         rouletteClips = compileRouletteClips(animations, visibilityByName);
         Map<String, AutomaticAnimationSelector.ClipInfo> automaticInfo = new HashMap<>();
         automaticClips.forEach((name, program) -> automaticInfo.put(name,
                 new AutomaticAnimationSelector.ClipInfo(program.duration())));
         automaticSelector = new AutomaticAnimationSelector(automaticInfo);
+        Map<String, AnimationControllerProgram.ClipInfo> controllerInfo = new HashMap<>();
+        animations.values().forEach(clip -> {
+            String name = normalize(clip.name());
+            controllerInfo.putIfAbsent(name, new AnimationControllerProgram.ClipInfo(
+                    duration(clip), clip.playback(),
+                    controllerClips.containsKey(name)));
+        });
+        controllerProgram = new AnimationControllerProgram(controllers, controllerInfo);
 
         int auxiliaryCount = layout.entries().size();
         visibilityScales = new float[visibilityBones.size()][3];
@@ -148,7 +167,8 @@ public final class ParallelAnimationProgram {
     }
 
     public boolean isEmpty() {
-        return parallelClips.isEmpty() && automaticClips.isEmpty() && rouletteClips.isEmpty();
+        return parallelClips.isEmpty() && automaticClips.isEmpty()
+                && controllerProgram.isEmpty() && rouletteClips.isEmpty();
     }
 
     public Frame sample(LivingEntity entity, float partialTick, boolean firstPerson) {
@@ -172,7 +192,10 @@ public final class ParallelAnimationProgram {
         List<AutomaticAnimationSelector.ActiveClip> automatic =
                 automaticSelector.select(entity, now, state.automaticState);
         state.prepareAutomaticTimelines(automatic, automaticSelector.names());
-        evaluate(elapsed, automatic, rouletteClip, rouletteElapsed,
+        List<AnimationControllerProgram.ActiveAnimation> controlled =
+                controllerProgram.select(now, state.environment, state.controllerState);
+        state.prepareControllerTimelines(controllerProgram.activeKeys(controlled));
+        evaluate(elapsed, automatic, controlled, rouletteClip, rouletteElapsed,
                 state.environment, state);
         if (rouletteClip != null
                 && state.shouldStopRoulette(rouletteClip, rouletteElapsed)) {
@@ -182,13 +205,13 @@ public final class ParallelAnimationProgram {
     }
 
     Frame sampleAt(double elapsed, ExpressionEngine.Environment environment) {
-        evaluate(elapsed, List.of(), null, 0.0D, environment, null);
+        evaluate(elapsed, List.of(), List.of(), null, 0.0D, environment, null);
         return frame();
     }
 
     Frame sampleAt(double elapsed, String rouletteAnimation, double rouletteElapsed,
                    ExpressionEngine.Environment environment) {
-        evaluate(elapsed, List.of(), rouletteClip(rouletteAnimation), rouletteElapsed,
+        evaluate(elapsed, List.of(), List.of(), rouletteClip(rouletteAnimation), rouletteElapsed,
                 environment, null);
         return frame();
     }
@@ -199,7 +222,15 @@ public final class ParallelAnimationProgram {
                 .map(ParallelAnimationProgram::normalize)
                 .map(name -> new AutomaticAnimationSelector.ActiveClip(name, elapsed, false))
                 .toList();
-        evaluate(elapsed, active, null, 0.0D, environment, null);
+        evaluate(elapsed, active, List.of(), null, 0.0D, environment, null);
+        return frame();
+    }
+
+    Frame sampleControllersAt(double now, ExpressionEngine.Environment environment,
+                              AnimationControllerProgram.RuntimeState controllerState) {
+        List<AnimationControllerProgram.ActiveAnimation> controlled =
+                controllerProgram.select(now, environment, controllerState);
+        evaluate(now, List.of(), controlled, null, 0.0D, environment, null);
         return frame();
     }
 
@@ -210,6 +241,7 @@ public final class ParallelAnimationProgram {
 
     private void evaluate(double elapsed,
                           List<AutomaticAnimationSelector.ActiveClip> automatic,
+                          List<AnimationControllerProgram.ActiveAnimation> controlled,
                           ClipProgram rouletteClip, double rouletteElapsed,
                           ExpressionEngine.Environment environment,
                           RuntimeState runtimeState) {
@@ -237,6 +269,15 @@ public final class ParallelAnimationProgram {
                 replaceEpicFightPose |= mounted && applied;
             }
         }
+        for (AnimationControllerProgram.ActiveAnimation active : controlled) {
+            ClipProgram program = controllerClips.get(active.name());
+            if (program == null) {
+                continue;
+            }
+            evaluateProgram(program, controllerTime(program, active.elapsed()),
+                    environment, runtimeState, parallelPose, ApplyMode.OVERRIDE,
+                    active.weight(), active.blendViaShortestPath(), active.instanceKey());
+        }
         if (rouletteClip != null && rouletteElapsed >= 0.0D) {
             float localTime = rouletteTime(rouletteClip, rouletteElapsed);
             if (localTime >= 0.0F) {
@@ -259,14 +300,24 @@ public final class ParallelAnimationProgram {
                                     ExpressionEngine.Environment environment,
                                     RuntimeState runtimeState, PoseScratch pose,
                                     ApplyMode applyMode) {
+        return evaluateProgram(program, localTime, environment, runtimeState, pose,
+                applyMode, 1.0F, false, program.clip().name());
+    }
+
+    private boolean evaluateProgram(ClipProgram program, float localTime,
+                                    ExpressionEngine.Environment environment,
+                                    RuntimeState runtimeState, PoseScratch pose,
+                                    ApplyMode applyMode, float externalWeight,
+                                    boolean shortestPath, String timelineKey) {
         if (environment instanceof EntityAnimationEnvironment entityEnvironment) {
             entityEnvironment.clipTime(localTime);
         }
         if (runtimeState != null) {
-            fireTimeline(program.clip(), localTime, environment,
+            fireTimeline(program.clip(), timelineKey, localTime, environment,
                     runtimeState.lastLocalTime);
         }
-        float blendWeight = finite(evaluate(program.clip().blendWeight(), environment), 1.0F);
+        float clipWeight = finite(evaluate(program.clip().blendWeight(), environment), 1.0F);
+        float blendWeight = finite(clipWeight * finite(externalWeight, 0.0F), 0.0F);
         if (Math.abs(blendWeight) <= EPSILON) {
             return false;
         }
@@ -288,8 +339,12 @@ public final class ParallelAnimationProgram {
                         } else {
                             float previous = pose.hasRotation[auxiliary]
                                     ? pose.rotations[auxiliary][axis] : 0.0F;
+                            float difference = target[axis] - previous;
+                            if (shortestPath) {
+                                difference = shortestRadians(difference);
+                            }
                             pose.rotations[auxiliary][axis] = previous
-                                    + (target[axis] - previous) * blendWeight;
+                                    + difference * blendWeight;
                         }
                     }
                     pose.hasRotation[bone.auxiliaryIndex()] = true;
@@ -411,7 +466,13 @@ public final class ParallelAnimationProgram {
     static void fireTimeline(AnimationClip clip, float localTime,
                              ExpressionEngine.Environment environment,
                              Map<String, Float> lastLocalTime) {
-        Float previous = lastLocalTime.put(clip.name(), localTime);
+        fireTimeline(clip, clip.name(), localTime, environment, lastLocalTime);
+    }
+
+    private static void fireTimeline(AnimationClip clip, String timelineKey, float localTime,
+                                     ExpressionEngine.Environment environment,
+                                     Map<String, Float> lastLocalTime) {
+        Float previous = lastLocalTime.put(timelineKey, localTime);
         if (previous == null) {
             fireTimelineRange(clip, Float.NEGATIVE_INFINITY, localTime, environment);
         } else if (localTime >= previous) {
@@ -497,6 +558,23 @@ public final class ParallelAnimationProgram {
         return Map.copyOf(result);
     }
 
+    private Map<String, ClipProgram> compileControllerClips(
+            Map<String, AnimationClip> animations, Map<String, Integer> visibilityByName) {
+        Map<String, ClipProgram> result = new HashMap<>();
+        for (AnimationClip clip : animations.values()) {
+            String name = normalize(clip.name());
+            if (name.startsWith("pre_parallel") || name.startsWith("parallel")
+                    || BedrockAnimationParser.isHandItemAnimation(name)) {
+                continue;
+            }
+            ClipProgram program = compileClip(clip, visibilityByName, true);
+            if (program != null) {
+                result.putIfAbsent(name, program);
+            }
+        }
+        return Map.copyOf(result);
+    }
+
     private ClipProgram compileClip(AnimationClip clip,
                                     Map<String, Integer> visibilityByName,
                                     boolean auxiliaryOnly) {
@@ -568,6 +646,15 @@ public final class ParallelAnimationProgram {
             case ONCE -> elapsed <= program.duration() ? (float) elapsed : -1.0F;
             case HOLD_LAST_FRAME -> (float) Math.min(elapsed, program.duration());
         };
+    }
+
+    private static float controllerTime(ClipProgram program, double elapsed) {
+        if (program.duration() <= EPSILON) {
+            return 0.0F;
+        }
+        return program.clip().playback() == AnimationClip.Playback.REPEAT
+                ? (float) (elapsed % program.duration())
+                : (float) Math.min(elapsed, program.duration());
     }
 
     private void sample(AnimationClip.Track track, float time,
@@ -693,6 +780,17 @@ public final class ParallelAnimationProgram {
         return (float) Math.toRadians(degrees);
     }
 
+    private static float shortestRadians(float value) {
+        float full = (float) (Math.PI * 2.0D);
+        float wrapped = value % full;
+        if (wrapped > Math.PI) {
+            wrapped -= full;
+        } else if (wrapped < -Math.PI) {
+            wrapped += full;
+        }
+        return wrapped;
+    }
+
     private static float positiveScale(float value) {
         return Float.isFinite(value) && value > EPSILON ? value : 1.0F;
     }
@@ -719,6 +817,8 @@ public final class ParallelAnimationProgram {
         private final EntityAnimationEnvironment environment;
         private final AutomaticAnimationSelector.State automaticState =
                 new AutomaticAnimationSelector.State();
+        private final AnimationControllerProgram.RuntimeState controllerState =
+                new AnimationControllerProgram.RuntimeState();
         private double startedAt;
         private double lastNow = -1.0D;
         private String rouletteAnimation = "";
@@ -737,6 +837,7 @@ public final class ParallelAnimationProgram {
             assigned.clear();
             environment.reset();
             automaticState.reset();
+            controllerState.reset();
             lastLocalTime.clear();
             startedAt = now;
             lastNow = -1.0D;
@@ -756,6 +857,11 @@ public final class ParallelAnimationProgram {
             }
             lastLocalTime.keySet().removeIf(name -> automaticNames.contains(normalize(name))
                     && !activeNames.contains(normalize(name)));
+        }
+
+        private void prepareControllerTimelines(Set<String> activeKeys) {
+            lastLocalTime.keySet().removeIf(name -> name.startsWith("controller/")
+                    && !activeKeys.contains(name));
         }
 
         private void reportRoulette(LivingEntity entity,

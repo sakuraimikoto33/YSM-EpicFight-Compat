@@ -1,6 +1,7 @@
 package net.okitsu.ysmepicfightcompat.network.geometry;
 
 import net.okitsu.ysmepicfightcompat.animation.AnimationClip;
+import net.okitsu.ysmepicfightcompat.animation.AnimationController;
 import net.okitsu.ysmepicfightcompat.assets.ModelBundle;
 import net.okitsu.ysmepicfightcompat.geometry.GeometryDocument;
 import net.okitsu.ysmepicfightcompat.network.CompatNetwork;
@@ -70,9 +71,26 @@ class GeometryTransferCodecTest {
         endless.playback(AnimationClip.Playback.REPEAT);
         endless.duration(Float.POSITIVE_INFINITY);
 
+        AnimationController.State controllerState = new AnimationController.State(
+                "default", java.util.List.of(
+                new AnimationController.AnimationReference("parallel.test", "v.enabled")),
+                java.util.List.of(new AnimationController.Transition(
+                        "hidden", "q.all_animations_finished")),
+                java.util.List.of("v.entered=1;"), java.util.List.of("v.exited=1;"),
+                new AnimationController.BlendTransition(0.0F, java.util.List.of(
+                new AnimationController.BlendPoint(0.0F, 1.0F),
+                new AnimationController.BlendPoint(0.2F, 0.0F))), true);
+        AnimationController.State hidden = new AnimationController.State(
+                "hidden", java.util.List.of(), java.util.List.of(), java.util.List.of(),
+                java.util.List.of(),
+                new AnimationController.BlendTransition(0.0F, java.util.List.of()), false);
+        AnimationController controller = new AnimationController(
+                "player.parallel_4", "default",
+                Map.of("default", controllerState, "hidden", hidden));
+
         ModelBundle source = ModelBundle.remote("server/model", geometry,
                 Map.of(clip.name(), clip, endless.name(), endless),
-                0.75F, 0.8F, "default");
+                Map.of(controller.name(), controller), 0.75F, 0.8F, "default");
         byte[] payload = GeometryTransferCodec.encode(source);
         ModelBundle decoded = GeometryTransferCodec.decode("server/model", payload);
 
@@ -93,6 +111,16 @@ class GeometryTransferCodecTest {
         assertEquals("variable.scale", restored.boneTracks().get("head")
                 .scale().keyframes().get(0).value().expression(2));
         assertEquals(0.0F, decoded.animations().get("parallel.endless").duration());
+        AnimationController restoredController = decoded.animationControllers()
+                .get("player.parallel_4");
+        assertEquals("default", restoredController.initialState());
+        assertEquals("v.enabled", restoredController.states().get("default")
+                .animations().get(0).weightExpression());
+        assertEquals("q.all_animations_finished", restoredController.states().get("default")
+                .transitions().get(0).conditionExpression());
+        assertEquals(0.5F, restoredController.states().get("default")
+                .blendTransition().progress(0.1D), 0.0001F);
+        assertTrue(restoredController.states().get("default").blendViaShortestPath());
     }
 
     @Test

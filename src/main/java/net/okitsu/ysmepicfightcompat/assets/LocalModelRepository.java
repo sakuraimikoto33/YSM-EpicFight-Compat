@@ -4,6 +4,8 @@ import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import net.okitsu.ysmepicfightcompat.animation.AnimationClip;
+import net.okitsu.ysmepicfightcompat.animation.AnimationController;
+import net.okitsu.ysmepicfightcompat.animation.BedrockAnimationControllerParser;
 import net.okitsu.ysmepicfightcompat.animation.BedrockAnimationParser;
 import net.okitsu.ysmepicfightcompat.assets.binary.BinaryPackageParser;
 import net.okitsu.ysmepicfightcompat.assets.binary.PackageEnvelopeDecoder;
@@ -195,6 +197,7 @@ public final class LocalModelRepository {
                 }
             }
         }
+        readControllerDeclarations(directory, player.get("animation_controllers"), bundle);
         readTextures(directory, player.get("texture"), bundle);
         return bundle.geometry() == null ? null : bundle;
     }
@@ -258,6 +261,34 @@ public final class LocalModelRepository {
                             entry.getKey(), entry.getValue().getAsJsonObject()));
                 }
             }
+        } catch (Exception ignored) {
+        }
+    }
+
+    private static void readControllerDeclarations(Path directory, JsonElement declaration,
+                                                   ModelBundle target) throws IOException {
+        if (declaration == null || declaration.isJsonNull()) {
+            return;
+        }
+        Iterable<JsonElement> entries = declaration.isJsonArray()
+                ? declaration.getAsJsonArray() : List.of(declaration);
+        for (JsonElement entry : entries) {
+            if (!entry.isJsonPrimitive()) {
+                continue;
+            }
+            Path file = confine(directory, entry.getAsString());
+            if (Files.isRegularFile(file, LinkOption.NOFOLLOW_LINKS)) {
+                readControllerFile(file, target.animationControllers());
+            }
+        }
+    }
+
+    private static void readControllerFile(Path file,
+                                           Map<String, AnimationController> target) {
+        try {
+            JsonObject root = JsonParser.parseString(
+                    textBounded(file, MAX_ANIMATION)).getAsJsonObject();
+            BedrockAnimationControllerParser.parse(root).forEach(target::putIfAbsent);
         } catch (Exception ignored) {
         }
     }

@@ -1,6 +1,7 @@
 package net.okitsu.ysmepicfightcompat.network.geometry;
 
 import net.okitsu.ysmepicfightcompat.animation.AnimationClip;
+import net.okitsu.ysmepicfightcompat.animation.AnimationController;
 import net.okitsu.ysmepicfightcompat.assets.ModelBundle;
 import net.okitsu.ysmepicfightcompat.geometry.GeometryDocument;
 import org.joml.Vector3f;
@@ -18,6 +19,7 @@ import java.nio.charset.StandardCharsets;
 import java.util.ArrayDeque;
 import java.util.IdentityHashMap;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.zip.GZIPInputStream;
 import java.util.zip.GZIPOutputStream;
@@ -33,6 +35,9 @@ public final class GeometryTransferCodec {
     private static final int MAX_ANIMATIONS = 65_536;
     private static final int MAX_KEYFRAMES = 2_000_000;
     private static final int MAX_TIMELINE_STATEMENTS = 1_000_000;
+    private static final int MAX_CONTROLLERS = 4_096;
+    private static final int MAX_CONTROLLER_STATES = 65_536;
+    private static final int MAX_CONTROLLER_ENTRIES = 1_000_000;
     private static final int MAX_STRING_BYTES = 16 * 1024;
 
     private GeometryTransferCodec() {
@@ -55,6 +60,7 @@ public final class GeometryTransferCodec {
             output.writeInt(model.geometry().textureHeight());
             writeGeometry(output, model.geometry());
             writeAnimations(output, model.animations());
+            writeControllers(output, model.animationControllers());
         }
         byte[] payload = target.toByteArray();
         if (payload.length > MAX_COMPRESSED_BYTES) {
@@ -80,10 +86,11 @@ public final class GeometryTransferCodec {
             int textureHeight = positive(input.readInt(), 65_536, "texture height");
             GeometryDocument geometry = readGeometry(input, textureWidth, textureHeight);
             Map<String, AnimationClip> animations = readAnimations(input);
+            Map<String, AnimationController> controllers = readControllers(input);
             if (input.read() != -1) {
                 throw new IOException("Trailing bytes in model transfer");
             }
-            return ModelBundle.remote(modelId, geometry, animations,
+            return ModelBundle.remote(modelId, geometry, animations, controllers,
                     widthScale, heightScale, defaultTexture);
         } catch (RuntimeException exception) {
             throw new IOException("Invalid model transfer", exception);
@@ -303,6 +310,161 @@ public final class GeometryTransferCodec {
             }
             if (result.putIfAbsent(name, clip) != null) {
                 throw new IOException("Duplicate animation name");
+            }
+        }
+        return result;
+    }
+
+    private static void writeControllers(DataOutputStream output,
+                                         Map<String, AnimationController> controllers)
+            throws IOException {
+        bounded(controllers.size(), MAX_CONTROLLERS, "animation controller");
+        output.writeInt(controllers.size());
+        long states = 0;
+        long entries = 0;
+        for (AnimationController controller : controllers.values()) {
+            string(output, controller.name());
+            string(output, controller.initialState());
+            states += controller.states().size();
+            if (states > MAX_CONTROLLER_STATES) {
+                throw new IOException("Model has too many animation controller states");
+            }
+            output.writeInt(controller.states().size());
+            for (AnimationController.State state : controller.states().values()) {
+                string(output, state.name());
+                output.writeInt(state.animations().size());
+                entries += state.animations().size();
+                for (AnimationController.AnimationReference animation : state.animations()) {
+                    string(output, animation.name());
+                    string(output, animation.weightExpression());
+                }
+                output.writeInt(state.transitions().size());
+                entries += state.transitions().size();
+                for (AnimationController.Transition transition : state.transitions()) {
+                    string(output, transition.targetState());
+                    string(output, transition.conditionExpression());
+                }
+                output.writeInt(state.onEntry().size());
+                entries += state.onEntry().size();
+                for (String action : state.onEntry()) {
+                    string(output, action);
+                }
+                output.writeInt(state.onExit().size());
+                entries += state.onExit().size();
+                for (String action : state.onExit()) {
+                    string(output, action);
+                }
+                if (entries > MAX_CONTROLLER_ENTRIES) {
+                    throw new IOException("Model has too many animation controller entries");
+                }
+                List<AnimationController.BlendPoint> curve =
+                        state.blendTransition().curve();
+                output.writeBoolean(!curve.isEmpty());
+                if (curve.isEmpty()) {
+                    finite(output, state.blendTransition().fixedDuration());
+                } else {
+                    entries += curve.size();
+                    if (entries > MAX_CONTROLLER_ENTRIES) {
+                        throw new IOException("Model has too many animation controller entries");
+                    }
+                    output.writeInt(curve.size());
+                    for (AnimationController.BlendPoint point : curve) {
+                        finite(output, point.time());
+                        finite(output, point.value());
+                    }
+                }
+                output.writeBoolean(state.blendViaShortestPath());
+            }
+        }
+    }
+
+    private static Map<String, AnimationController> readControllers(DataInputStream input)
+            throws IOException {
+        int controllerCount = bounded(input.readInt(), MAX_CONTROLLERS,
+                "animation controller");
+        Map<String, AnimationController> result = new LinkedHashMap<>();
+        long states = 0;
+        long entries = 0;
+        for (int controllerIndex = 0; controllerIndex < controllerCount; controllerIndex++) {
+            String name = string(input);
+            String initialState = string(input);
+            int stateCount = bounded(input.readInt(), MAX_CONTROLLER_STATES,
+                    "animation controller state");
+            states += stateCount;
+            if (states > MAX_CONTROLLER_STATES) {
+                throw new IOException("Model has too many animation controller states");
+            }
+            Map<String, AnimationController.State> controllerStates = new LinkedHashMap<>();
+            for (int stateIndex = 0; stateIndex < stateCount; stateIndex++) {
+                String stateName = string(input);
+                int animationCount = bounded(input.readInt(), MAX_CONTROLLER_ENTRIES,
+                        "controller animation");
+                entries += animationCount;
+                List<AnimationController.AnimationReference> animations =
+                        new java.util.ArrayList<>(animationCount);
+                for (int animation = 0; animation < animationCount; animation++) {
+                    animations.add(new AnimationController.AnimationReference(
+                            string(input), string(input)));
+                }
+                int transitionCount = bounded(input.readInt(), MAX_CONTROLLER_ENTRIES,
+                        "controller transition");
+                entries += transitionCount;
+                List<AnimationController.Transition> transitions =
+                        new java.util.ArrayList<>(transitionCount);
+                for (int transition = 0; transition < transitionCount; transition++) {
+                    transitions.add(new AnimationController.Transition(
+                            string(input), string(input)));
+                }
+                int entryCount = bounded(input.readInt(), MAX_CONTROLLER_ENTRIES,
+                        "controller entry action");
+                entries += entryCount;
+                List<String> onEntry = new java.util.ArrayList<>(entryCount);
+                for (int action = 0; action < entryCount; action++) {
+                    onEntry.add(string(input));
+                }
+                int exitCount = bounded(input.readInt(), MAX_CONTROLLER_ENTRIES,
+                        "controller exit action");
+                entries += exitCount;
+                List<String> onExit = new java.util.ArrayList<>(exitCount);
+                for (int action = 0; action < exitCount; action++) {
+                    onExit.add(string(input));
+                }
+                if (entries > MAX_CONTROLLER_ENTRIES) {
+                    throw new IOException("Model has too many animation controller entries");
+                }
+                List<AnimationController.BlendPoint> curve = List.of();
+                float duration = 0.0F;
+                if (input.readBoolean()) {
+                    int pointCount = bounded(input.readInt(), MAX_CONTROLLER_ENTRIES,
+                            "controller blend point");
+                    entries += pointCount;
+                    if (entries > MAX_CONTROLLER_ENTRIES) {
+                        throw new IOException("Model has too many animation controller entries");
+                    }
+                    java.util.ArrayList<AnimationController.BlendPoint> points =
+                            new java.util.ArrayList<>(pointCount);
+                    for (int point = 0; point < pointCount; point++) {
+                        points.add(new AnimationController.BlendPoint(
+                                finite(input), finite(input)));
+                    }
+                    points.sort(java.util.Comparator.comparing(
+                            AnimationController.BlendPoint::time));
+                    curve = List.copyOf(points);
+                } else {
+                    duration = finite(input);
+                }
+                boolean shortestPath = input.readBoolean();
+                AnimationController.State state = new AnimationController.State(
+                        stateName, animations, transitions, onEntry, onExit,
+                        new AnimationController.BlendTransition(duration, curve), shortestPath);
+                if (controllerStates.putIfAbsent(stateName, state) != null) {
+                    throw new IOException("Duplicate animation controller state");
+                }
+            }
+            AnimationController controller = new AnimationController(
+                    name, initialState, controllerStates);
+            if (result.putIfAbsent(name, controller) != null) {
+                throw new IOException("Duplicate animation controller name");
             }
         }
         return result;

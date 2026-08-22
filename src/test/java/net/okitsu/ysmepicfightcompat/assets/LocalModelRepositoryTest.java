@@ -72,6 +72,7 @@ class LocalModelRepositoryTest {
         Path model = root.resolve("custom/layered/outfit");
         Files.createDirectories(model.resolve("models"));
         Files.createDirectories(model.resolve("animations"));
+        Files.createDirectories(model.resolve("controller"));
         Files.writeString(model.resolve("ysm.json"), """
                 {
                   "files":{"player":{
@@ -79,7 +80,8 @@ class LocalModelRepositoryTest {
                     "animation":{
                       "main":"animations/main.animation.json",
                       "fp_arm":"animations/fp.arm.animation.json"
-                    }
+                    },
+                    "animation_controllers":["controller/main.animation_controllers.json"]
                   }}
                 }
                 """);
@@ -103,6 +105,16 @@ class LocalModelRepositoryTest {
                   "FirstPersonArm":{"scale":[1,1,1]}
                 }}}}
                 """);
+        Files.writeString(model.resolve("controller/main.animation_controllers.json"), """
+                {"format_version":"1.19.0","animation_controllers":{
+                  "player.parallel_4":{"initial_state":"default","states":{
+                    "default":{"animations":["extra0"],"transitions":[
+                      {"hidden":"v.roaming.jacket==0"}
+                    ]},
+                    "hidden":{"on_entry":["v.hidden=1;"]}
+                  }}
+                }}
+                """);
 
         ModelBundle loaded = LocalModelRepository.load(root, "layered/outfit");
 
@@ -111,5 +123,9 @@ class LocalModelRepositoryTest {
                 loaded.animations().get("parallel0").boneTracks().keySet());
         assertEquals(Set.of("Jacket"),
                 loaded.animations().get("extra0").boneTracks().keySet());
+        assertEquals("default", loaded.animationControllers().get("player.parallel_4")
+                .initialState());
+        assertEquals("hidden", loaded.animationControllers().get("player.parallel_4")
+                .states().get("default").transitions().get(0).targetState());
     }
 }

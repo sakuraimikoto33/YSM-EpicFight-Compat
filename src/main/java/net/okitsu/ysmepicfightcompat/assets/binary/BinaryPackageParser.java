@@ -1,18 +1,27 @@
 package net.okitsu.ysmepicfightcompat.assets.binary;
 
 import net.okitsu.ysmepicfightcompat.animation.AnimationClip;
+import net.okitsu.ysmepicfightcompat.animation.AnimationController;
 import net.okitsu.ysmepicfightcompat.animation.BedrockAnimationParser;
 import net.okitsu.ysmepicfightcompat.assets.ModelBundle;
 import net.okitsu.ysmepicfightcompat.geometry.GeometryDocument;
 import org.joml.Vector3f;
 
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
 
 /** Boundary-checked decoder for decrypted YSM binary model payloads. */
 public final class BinaryPackageParser {
     private static final int MAX_ITEMS = 1_000_000;
     private static final int MAX_TEXT_BYTES = 4 * 1024 * 1024;
     private static final int MAX_BLOB_BYTES = 128 * 1024 * 1024;
+    private static final int MAX_CONTROLLERS = 4_096;
+    private static final int MAX_CONTROLLER_STATES = 65_536;
+    private static final int MAX_CONTROLLER_ENTRIES = 1_000_000;
 
     private BinaryPackageParser() {
     }
@@ -88,7 +97,7 @@ public final class BinaryPackageParser {
             readAnimations(input, format, result);
         });
         if (format > 9) {
-            skipControllers(input, format);
+            readControllers(input, format, result);
             repeat(input.count("controller lookup"), ignored -> {
                 input.text();
                 input.text();
@@ -157,7 +166,7 @@ public final class BinaryPackageParser {
             input.text();
             readAnimations(input, format, result);
         });
-        skipControllers(input, format);
+        readControllers(input, format, result);
         repeat(input.count("texture"), ignored -> readModernTexture(input, result));
         repeat(input.count("model"), ignored -> {
             int type = input.varUInt("model type");
@@ -536,6 +545,105 @@ public final class BinaryPackageParser {
                 });
             });
         });
+    }
+
+    private static void readControllers(Cursor input, int format, ModelBundle result) {
+        int controllerFiles = input.count("animation controller");
+        require(controllerFiles <= MAX_CONTROLLERS, "Too many animation controller files");
+        long controllerTotal = 0;
+        long stateTotal = 0;
+        long entryTotal = 0;
+        for (int fileIndex = 0; fileIndex < controllerFiles; fileIndex++) {
+            if (format <= 15) {
+                input.varUInt("controller id");
+            } else {
+                input.text();
+                input.text();
+            }
+            int controllerCount = input.count("controller animation");
+            controllerTotal += controllerCount;
+            require(controllerTotal <= MAX_CONTROLLERS, "Too many animation controllers");
+            for (int controllerIndex = 0; controllerIndex < controllerCount; controllerIndex++) {
+                String name = input.text();
+                String initialState = input.text();
+                Map<String, AnimationController.State> states = new LinkedHashMap<>();
+                int stateCount = input.count("controller state");
+                stateTotal += stateCount;
+                require(stateTotal <= MAX_CONTROLLER_STATES,
+                        "Too many animation controller states");
+                for (int stateIndex = 0; stateIndex < stateCount; stateIndex++) {
+                    String stateName = input.text();
+                    int animationCount = input.count("state animation");
+                    entryTotal += animationCount;
+                    require(entryTotal <= MAX_CONTROLLER_ENTRIES,
+                            "Too many animation controller entries");
+                    List<AnimationController.AnimationReference> animations =
+                            new ArrayList<>(animationCount);
+                    for (int item = 0; item < animationCount; item++) {
+                        animations.add(new AnimationController.AnimationReference(
+                                input.text(), input.text()));
+                    }
+                    int transitionCount = input.count("state transition");
+                    entryTotal += transitionCount;
+                    require(entryTotal <= MAX_CONTROLLER_ENTRIES,
+                            "Too many animation controller entries");
+                    List<AnimationController.Transition> transitions =
+                            new ArrayList<>(transitionCount);
+                    for (int item = 0; item < transitionCount; item++) {
+                        transitions.add(new AnimationController.Transition(
+                                input.text(), input.text()));
+                    }
+                    int onEntryCount = input.count("state entry action");
+                    entryTotal += onEntryCount;
+                    require(entryTotal <= MAX_CONTROLLER_ENTRIES,
+                            "Too many animation controller entries");
+                    List<String> onEntry = new ArrayList<>(onEntryCount);
+                    for (int item = 0; item < onEntryCount; item++) {
+                        onEntry.add(input.text());
+                    }
+                    int onExitCount = input.count("state exit action");
+                    entryTotal += onExitCount;
+                    require(entryTotal <= MAX_CONTROLLER_ENTRIES,
+                            "Too many animation controller entries");
+                    List<String> onExit = new ArrayList<>(onExitCount);
+                    for (int item = 0; item < onExitCount; item++) {
+                        onExit.add(input.text());
+                    }
+                    float duration = 0.0F;
+                    List<AnimationController.BlendPoint> curve = new ArrayList<>();
+                    if (input.varUInt("blend transition mode") != 0) {
+                        duration = input.number();
+                    } else {
+                        int pointCount = input.count("blend transition");
+                        entryTotal += pointCount;
+                        require(entryTotal <= MAX_CONTROLLER_ENTRIES,
+                                "Too many animation controller entries");
+                        for (int item = 0; item < pointCount; item++) {
+                            float time = input.number();
+                            float value = input.number();
+                            if (Float.isFinite(time) && time >= 0.0F
+                                    && Float.isFinite(value)) {
+                                curve.add(new AnimationController.BlendPoint(time, value));
+                            }
+                        }
+                        curve.sort(Comparator.comparing(AnimationController.BlendPoint::time));
+                    }
+                    boolean shortestPath = input.varUInt("controller state flag") != 0;
+                    if (format > 26) {
+                        int sounds = input.count("controller sound");
+                        for (int item = 0; item < sounds; item++) {
+                            input.text();
+                        }
+                    }
+                    states.putIfAbsent(stateName, new AnimationController.State(
+                            stateName, animations, transitions, onEntry, onExit,
+                            new AnimationController.BlendTransition(duration, curve),
+                            shortestPath));
+                }
+                result.animationControllers().putIfAbsent(name,
+                        new AnimationController(name, initialState, states));
+            }
+        }
     }
 
     private static void skipSounds(Cursor input, int format) {

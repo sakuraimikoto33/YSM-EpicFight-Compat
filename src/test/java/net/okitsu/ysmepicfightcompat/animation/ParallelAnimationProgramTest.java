@@ -123,6 +123,35 @@ class ParallelAnimationProgramTest {
     }
 
     @Test
+    void appliesControllerAnimationsOnlyToAuxiliaryBones() {
+        GeometryDocument geometry = headAndEar();
+        AnimationClip controlled = new AnimationClip("custom.pose");
+        controlled.playback(AnimationClip.Playback.REPEAT);
+        controlled.boneTracks().put("head", rotation(0.0D, 0.0D, 90.0D));
+        controlled.boneTracks().put("ear", rotation(0.0D, 0.0D, 20.0D));
+        AnimationController.State state = new AnimationController.State(
+                "default", List.of(new AnimationController.AnimationReference(
+                controlled.name(), "1")), List.of(), List.of(), List.of(),
+                new AnimationController.BlendTransition(0.0F, List.of()), false);
+        AnimationController controller = new AnimationController(
+                "player.parallel_4", "default", Map.of("default", state));
+        ParallelAnimationProgram program = new ParallelAnimationProgram(
+                geometry, Map.of(controlled.name(), controlled),
+                Map.of(controller.name(), controller), AuxiliaryBoneLayout.create(geometry),
+                1.0F, 1.0F);
+
+        ParallelAnimationProgram.Frame frame = program.sampleControllersAt(
+                0.0D, new NeutralEnvironment(),
+                new AnimationControllerProgram.RuntimeState());
+
+        assertIdentity(frame.parallelDeltas()[0]);
+        Matrix4f animated = new Matrix4f().translation(0.0F, 1.0F, 0.0F)
+                .rotateZ((float) Math.toRadians(20.0D)).translate(0.0F, -1.0F, 0.0F);
+        assertMatrix(animated, frame.parallelDeltas()[1]);
+        assertFalse(frame.replaceEpicFightPose());
+    }
+
+    @Test
     void appliesMountedStatesToMajorBonesAndTheirChildrenInWholeModelSpace() {
         GeometryDocument geometry = headAndEar();
         AnimationClip boat = new AnimationClip("boat");

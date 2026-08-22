@@ -317,7 +317,8 @@ public final class CombatMeshCache {
                 .transparency(false).build();
         DefaultPoseProgram pose = new DefaultPoseProgram(source.geometry(), source.animations());
         ParallelAnimationProgram parallel = new ParallelAnimationProgram(
-                source.geometry(), source.animations(), baked.auxiliaryBones(),
+                source.geometry(), source.animations(), source.animationControllers(),
+                baked.auxiliaryBones(),
                 source.widthScale(), source.heightScale());
         CompatHumanoidMesh mesh = new CompatHumanoidMesh(source.modelId(), pose, parallel,
                 baked.auxiliaryBones(),
