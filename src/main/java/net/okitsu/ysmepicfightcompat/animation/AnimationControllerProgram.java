@@ -9,7 +9,7 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 
-/** Per-entity state-machine evaluator for the side-effect-safe YSM controller subset. */
+/** Per-entity state-machine evaluator for the supported YSM controller subset. */
 final class AnimationControllerProgram {
     private static final double EPSILON = 0.0001D;
     private static final int ANY_FINISHED = ExpressionEngine.querySlot(
@@ -59,12 +59,14 @@ final class AnimationControllerProgram {
             lastStepAt = now;
             environment.completion(Completion.NONE);
             execute(current == null ? List.of() : current.onEntry(), environment);
+            environment.playSounds(current == null ? List.of() : current.soundEffects());
         }
     }
 
     private static final class ControllerEnvironment implements ExpressionEngine.Environment {
         private final ExpressionEngine.Environment delegate;
         private Completion completion = Completion.NONE;
+        private String soundScope = "controller";
 
         private ControllerEnvironment(ExpressionEngine.Environment delegate) {
             this.delegate = delegate;
@@ -72,6 +74,25 @@ final class AnimationControllerProgram {
 
         private void completion(Completion value) {
             completion = value == null ? Completion.NONE : value;
+        }
+
+        private void soundScope(String scope) {
+            soundScope = scope;
+            if (delegate instanceof EntityAnimationEnvironment entityEnvironment) {
+                entityEnvironment.soundScope(scope);
+            }
+        }
+
+        private void stopSoundScope() {
+            if (delegate instanceof EntityAnimationEnvironment entityEnvironment) {
+                entityEnvironment.stopSoundScope(soundScope);
+            }
+        }
+
+        private void playSounds(List<String> effects) {
+            if (delegate instanceof EntityAnimationEnvironment entityEnvironment) {
+                effects.forEach(entityEnvironment::playSoundEffect);
+            }
         }
 
         @Override
@@ -150,6 +171,7 @@ final class AnimationControllerProgram {
         for (Map.Entry<String, AnimationController> entry : controllers.entrySet()) {
             String controllerName = entry.getKey();
             AnimationController controller = entry.getValue();
+            controllerEnvironment.soundScope("controller/" + controllerName);
             ControllerRuntime runtime = runtimeState.controllers.computeIfAbsent(
                     controllerName, ignored -> new ControllerRuntime());
             if (runtime.current == null) {
@@ -185,6 +207,7 @@ final class AnimationControllerProgram {
                     transition.conditionExpression()).evaluate(environment))) {
                 continue;
             }
+            environment.stopSoundScope();
             execute(runtime.current.onExit(), environment);
             AnimationController.BlendTransition blend = target.blendTransition();
             runtime.previous = blend.duration() > EPSILON
@@ -195,6 +218,7 @@ final class AnimationControllerProgram {
             runtime.generation++;
             environment.completion(Completion.NONE);
             execute(target.onEntry(), environment);
+            environment.playSounds(target.soundEffects());
             break;
         }
     }

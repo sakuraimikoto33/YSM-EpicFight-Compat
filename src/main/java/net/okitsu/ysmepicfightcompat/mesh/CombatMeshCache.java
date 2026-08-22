@@ -264,6 +264,7 @@ public final class CombatMeshCache {
             RECENCY.clear();
         }
         OfficialTextureResolver.clear();
+        ParallelAnimationProgram.clearSoundOutput();
     }
 
     private static void convert(String modelId, ModelBundle remote, boolean local,
@@ -317,7 +318,8 @@ public final class CombatMeshCache {
                 .transparency(false).build();
         DefaultPoseProgram pose = new DefaultPoseProgram(source.geometry(), source.animations());
         ParallelAnimationProgram parallel = new ParallelAnimationProgram(
-                source.geometry(), source.animations(), source.animationControllers(),
+                source.modelId(), source.geometry(), source.animations(),
+                source.animationControllers(),
                 baked.auxiliaryBones(),
                 source.widthScale(), source.heightScale());
         CompatHumanoidMesh mesh = new CompatHumanoidMesh(source.modelId(), pose, parallel,
@@ -371,6 +373,7 @@ public final class CombatMeshCache {
         }
         discardFallbacks(modelId);
         OfficialTextureResolver.release(modelId);
+        ParallelAnimationProgram.releaseSoundOutput(modelId);
     }
 
     private static void discardFallbacks(String modelId) {

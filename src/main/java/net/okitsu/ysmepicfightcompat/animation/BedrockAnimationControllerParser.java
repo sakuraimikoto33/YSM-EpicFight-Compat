@@ -10,7 +10,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
-/** Boundary-checked parser for the visual subset of Bedrock animation controllers used by YSM. */
+/** Boundary-checked parser for the supported Bedrock animation controller data used by YSM. */
 public final class BedrockAnimationControllerParser {
     private static final int MAX_CONTROLLERS = 4_096;
     private static final int MAX_STATES = 65_536;
@@ -52,13 +52,14 @@ public final class BedrockAnimationControllerParser {
                             transitions(state.get("transitions"));
                     List<String> onEntry = actions(state.get("on_entry"));
                     List<String> onExit = actions(state.get("on_exit"));
+                    List<String> soundEffects = soundEffects(state.get("sound_effects"));
                     entries += animations.size() + transitions.size()
-                            + onEntry.size() + onExit.size();
+                            + onEntry.size() + onExit.size() + soundEffects.size();
                     require(entries <= MAX_STATE_ENTRIES,
                             "Too many animation controller entries");
                     String stateName = text(stateEntry.getKey());
                     controllerStates.put(stateName, new AnimationController.State(
-                            stateName, animations, transitions, onEntry, onExit,
+                            stateName, animations, transitions, onEntry, onExit, soundEffects,
                             blend(state.get("blend_transition")),
                             bool(state.get("blend_via_shortest_path"))));
                 }
@@ -113,6 +114,24 @@ public final class BedrockAnimationControllerParser {
             source.getAsJsonArray().forEach(value -> result.add(string(value, "")));
         } else if (source.isJsonPrimitive()) {
             result.add(string(source, ""));
+        }
+        return result.stream().filter(value -> !value.isBlank()).toList();
+    }
+
+    private static List<String> soundEffects(JsonElement source) {
+        if (source == null || !source.isJsonArray()) {
+            return List.of();
+        }
+        List<String> result = new ArrayList<>();
+        for (JsonElement entry : source.getAsJsonArray()) {
+            if (entry.isJsonObject()) {
+                JsonElement effect = entry.getAsJsonObject().get("effect");
+                if (effect != null && effect.isJsonPrimitive()) {
+                    result.add(text(effect.getAsString()));
+                }
+            } else if (entry.isJsonPrimitive()) {
+                result.add(text(entry.getAsString()));
+            }
         }
         return result.stream().filter(value -> !value.isBlank()).toList();
     }

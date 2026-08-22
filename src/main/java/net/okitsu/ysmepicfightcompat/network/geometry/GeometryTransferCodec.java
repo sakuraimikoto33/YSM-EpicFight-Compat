@@ -24,7 +24,7 @@ import java.util.Map;
 import java.util.zip.GZIPInputStream;
 import java.util.zip.GZIPOutputStream;
 
-/** Texture-free, size-limited transfer format used for server-only model geometry. */
+/** Texture- and audio-payload-free, size-limited transfer for server-only model data. */
 public final class GeometryTransferCodec {
     private static final int MAGIC = 0x59454632;
     private static final int VERSION = 1;
@@ -35,6 +35,7 @@ public final class GeometryTransferCodec {
     private static final int MAX_ANIMATIONS = 65_536;
     private static final int MAX_KEYFRAMES = 2_000_000;
     private static final int MAX_TIMELINE_STATEMENTS = 1_000_000;
+    private static final int MAX_SOUND_EVENTS = 1_000_000;
     private static final int MAX_CONTROLLERS = 4_096;
     private static final int MAX_CONTROLLER_STATES = 65_536;
     private static final int MAX_CONTROLLER_ENTRIES = 1_000_000;
@@ -178,6 +179,7 @@ public final class GeometryTransferCodec {
         output.writeInt(animations.size());
         long keyframes = 0;
         long statements = 0;
+        long sounds = 0;
         for (AnimationClip clip : animations.values()) {
             string(output, clip.name());
             output.writeByte(clip.playback().wireValue());
@@ -208,6 +210,15 @@ public final class GeometryTransferCodec {
                 for (String statement : event.statements()) {
                     string(output, statement);
                 }
+            }
+            output.writeInt(clip.soundEffects().size());
+            sounds += clip.soundEffects().size();
+            if (sounds > MAX_SOUND_EVENTS) {
+                throw new IOException("Model has too many animation sound events");
+            }
+            for (AnimationClip.SoundEvent event : clip.soundEffects()) {
+                finite(output, event.time());
+                string(output, event.effect());
             }
         }
     }
@@ -269,6 +280,7 @@ public final class GeometryTransferCodec {
         Map<String, AnimationClip> result = new LinkedHashMap<>();
         long keyframes = 0;
         long statements = 0;
+        long sounds = 0;
         for (int animationIndex = 0; animationIndex < animationCount; animationIndex++) {
             String name = string(input);
             AnimationClip clip = new AnimationClip(name);
@@ -307,6 +319,16 @@ public final class GeometryTransferCodec {
                     code.add(string(input));
                 }
                 clip.timeline().add(new AnimationClip.TimelineEvent(time, code));
+            }
+            int soundCount = bounded(input.readInt(), MAX_SOUND_EVENTS,
+                    "animation sound event");
+            sounds += soundCount;
+            if (sounds > MAX_SOUND_EVENTS) {
+                throw new IOException("Model has too many animation sound events");
+            }
+            for (int sound = 0; sound < soundCount; sound++) {
+                clip.soundEffects().add(new AnimationClip.SoundEvent(
+                        finite(input), string(input)));
             }
             if (result.putIfAbsent(name, clip) != null) {
                 throw new IOException("Duplicate animation name");
@@ -374,6 +396,14 @@ public final class GeometryTransferCodec {
                     }
                 }
                 output.writeBoolean(state.blendViaShortestPath());
+                output.writeInt(state.soundEffects().size());
+                entries += state.soundEffects().size();
+                if (entries > MAX_CONTROLLER_ENTRIES) {
+                    throw new IOException("Model has too many animation controller entries");
+                }
+                for (String effect : state.soundEffects()) {
+                    string(output, effect);
+                }
             }
         }
     }
@@ -454,8 +484,18 @@ public final class GeometryTransferCodec {
                     duration = finite(input);
                 }
                 boolean shortestPath = input.readBoolean();
+                int soundCount = bounded(input.readInt(), MAX_CONTROLLER_ENTRIES,
+                        "controller sound effect");
+                entries += soundCount;
+                if (entries > MAX_CONTROLLER_ENTRIES) {
+                    throw new IOException("Model has too many animation controller entries");
+                }
+                List<String> soundEffects = new java.util.ArrayList<>(soundCount);
+                for (int sound = 0; sound < soundCount; sound++) {
+                    soundEffects.add(string(input));
+                }
                 AnimationController.State state = new AnimationController.State(
-                        stateName, animations, transitions, onEntry, onExit,
+                        stateName, animations, transitions, onEntry, onExit, soundEffects,
                         new AnimationController.BlendTransition(duration, curve), shortestPath);
                 if (controllerStates.putIfAbsent(stateName, state) != null) {
                     throw new IOException("Duplicate animation controller state");

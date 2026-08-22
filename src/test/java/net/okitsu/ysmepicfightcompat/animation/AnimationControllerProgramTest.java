@@ -24,6 +24,7 @@ class AnimationControllerProgramTest {
                               "transitions":[{"alert":"q.is_sneaking"}],
                               "on_entry":["v.entered=1;"],
                               "on_exit":["v.entered=0;"],
+                              "sound_effects":[{"effect":"model.enter"},"model.bell"],
                               "blend_transition":{"0.0":1.0,"0.2":0.0},
                               "blend_via_shortest_path":true
                             },
@@ -42,6 +43,7 @@ class AnimationControllerProgramTest {
         assertEquals("alert", idle.transitions().get(0).targetState());
         assertEquals("v.entered=1;", idle.onEntry().get(0));
         assertEquals("v.entered=0;", idle.onExit().get(0));
+        assertEquals(List.of("model.enter", "model.bell"), idle.soundEffects());
         assertEquals(0.0F, idle.blendTransition().progress(0.0D), 0.0001F);
         assertEquals(0.5F, idle.blendTransition().progress(0.1D), 0.0001F);
         assertEquals(1.0F, idle.blendTransition().progress(0.2D), 0.0001F);

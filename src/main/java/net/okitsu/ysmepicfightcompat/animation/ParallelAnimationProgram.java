@@ -95,6 +95,7 @@ public final class ParallelAnimationProgram {
     }
 
     private final AuxiliaryBoneLayout layout;
+    private final String modelId;
     private final List<VisibilityBone> visibilityBones;
     private final List<ClipProgram> parallelClips;
     private final Map<String, ClipProgram> automaticClips;
@@ -125,7 +126,7 @@ public final class ParallelAnimationProgram {
                                     Map<String, AnimationClip> animations,
                                     AuxiliaryBoneLayout layout,
                                     float horizontalScale, float verticalScale) {
-        this(geometry, animations, Map.of(), layout, horizontalScale, verticalScale);
+        this("", geometry, animations, Map.of(), layout, horizontalScale, verticalScale);
     }
 
     public ParallelAnimationProgram(GeometryDocument geometry,
@@ -133,6 +134,15 @@ public final class ParallelAnimationProgram {
                                     Map<String, AnimationController> controllers,
                                     AuxiliaryBoneLayout layout,
                                     float horizontalScale, float verticalScale) {
+        this("", geometry, animations, controllers, layout, horizontalScale, verticalScale);
+    }
+
+    public ParallelAnimationProgram(String modelId, GeometryDocument geometry,
+                                    Map<String, AnimationClip> animations,
+                                    Map<String, AnimationController> controllers,
+                                    AuxiliaryBoneLayout layout,
+                                    float horizontalScale, float verticalScale) {
+        this.modelId = modelId == null ? "" : modelId;
         this.layout = layout;
         this.horizontalScale = positiveScale(horizontalScale);
         this.verticalScale = positiveScale(verticalScale);
@@ -172,16 +182,25 @@ public final class ParallelAnimationProgram {
     }
 
     public Frame sample(LivingEntity entity, float partialTick, boolean firstPerson) {
-        RuntimeState state = states.computeIfAbsent(entity, RuntimeState::new);
-        double now = (entity.tickCount + partialTick) / 20.0D;
-        if (now + 1.0E-6D < state.lastNow) {
-            state.reset(now);
+        RuntimeState state = states.computeIfAbsent(entity,
+                value -> new RuntimeState(value, modelId));
+        double sampledNow = (entity.tickCount + partialTick) / 20.0D;
+        if (entity.tickCount < state.lastTickCount) {
+            state.reset(sampledNow);
         }
+        // Minecraft may restore a smaller partial tick after closing a single-player
+        // pause screen. Keep the sampled clock monotonic unless the entity tick itself
+        // rewound, which indicates a real lifecycle reset.
+        double now = stableSampleTime(entity.tickCount, sampledNow,
+                state.lastTickCount, state.lastNow);
+        float stablePartialTick = (float) Math.max(0.0D,
+                Math.min(1.0D, now * 20.0D - entity.tickCount));
         double elapsed = Math.max(0.0D, now - state.startedAt);
         double deltaTime = state.lastNow < 0.0D ? 0.0D
                 : Math.min(0.25D, Math.max(0.0D, now - state.lastNow));
+        state.lastTickCount = entity.tickCount;
         state.lastNow = now;
-        state.environment.update(partialTick, firstPerson, deltaTime);
+        state.environment.update(stablePartialTick, firstPerson, deltaTime);
         OfficialRoamingVariables.RouletteState roulette =
                 OfficialRoamingVariables.rouletteState(entity);
         double rouletteElapsed = state.rouletteElapsed(roulette, now);
@@ -258,6 +277,7 @@ public final class ParallelAnimationProgram {
                 continue;
             }
             if (active.restarted() && runtimeState != null) {
+                runtimeState.environment.stopSoundScope(program.clip().name());
                 runtimeState.lastLocalTime.remove(program.clip().name());
             }
             float localTime = automaticTime(program, active.elapsed());
@@ -276,13 +296,16 @@ public final class ParallelAnimationProgram {
             }
             evaluateProgram(program, controllerTime(program, active.elapsed()),
                     environment, runtimeState, parallelPose, ApplyMode.OVERRIDE,
-                    active.weight(), active.blendViaShortestPath(), active.instanceKey());
+                    active.weight(), active.blendViaShortestPath(), active.instanceKey(), true);
         }
         if (rouletteClip != null && rouletteElapsed >= 0.0D) {
             float localTime = rouletteTime(rouletteClip, rouletteElapsed);
             if (localTime >= 0.0F) {
+                // Official YSM owns roulette audio even while Epic Fight owns the pose.
+                // Replaying the retained sound outputs here creates a second stream.
                 evaluateProgram(rouletteClip, localTime, environment, runtimeState,
-                        wholeModelPose, ApplyMode.PARALLEL);
+                        wholeModelPose, ApplyMode.PARALLEL, 1.0F, false,
+                        rouletteClip.clip().name(), false);
             }
         }
         for (ClipProgram program : parallelClips) {
@@ -301,20 +324,35 @@ public final class ParallelAnimationProgram {
                                     RuntimeState runtimeState, PoseScratch pose,
                                     ApplyMode applyMode) {
         return evaluateProgram(program, localTime, environment, runtimeState, pose,
-                applyMode, 1.0F, false, program.clip().name());
+                applyMode, 1.0F, false, program.clip().name(), true);
     }
 
     private boolean evaluateProgram(ClipProgram program, float localTime,
                                     ExpressionEngine.Environment environment,
                                     RuntimeState runtimeState, PoseScratch pose,
                                     ApplyMode applyMode, float externalWeight,
-                                    boolean shortestPath, String timelineKey) {
-        if (environment instanceof EntityAnimationEnvironment entityEnvironment) {
+                                    boolean shortestPath, String timelineKey,
+                                    boolean soundOutputEnabled) {
+        EntityAnimationEnvironment entityEnvironment =
+                environment instanceof EntityAnimationEnvironment value ? value : null;
+        if (entityEnvironment != null) {
             entityEnvironment.clipTime(localTime);
+            entityEnvironment.soundScope(timelineKey);
         }
         if (runtimeState != null) {
-            fireTimeline(program.clip(), timelineKey, localTime, environment,
-                    runtimeState.lastLocalTime);
+            boolean previousSoundOutput = entityEnvironment == null
+                    || entityEnvironment.soundOutputEnabled();
+            if (entityEnvironment != null) {
+                entityEnvironment.soundOutputEnabled(soundOutputEnabled);
+            }
+            try {
+                fireTimeline(program.clip(), timelineKey, localTime, environment,
+                        runtimeState.lastLocalTime);
+            } finally {
+                if (entityEnvironment != null) {
+                    entityEnvironment.soundOutputEnabled(previousSoundOutput);
+                }
+            }
         }
         float clipWeight = finite(evaluate(program.clip().blendWeight(), environment), 1.0F);
         float blendWeight = finite(clipWeight * finite(externalWeight, 0.0F), 0.0F);
@@ -393,6 +431,12 @@ public final class ParallelAnimationProgram {
             }
         }
         return appliedPose;
+    }
+
+    static double stableSampleTime(int tickCount, double sampledNow,
+                                   int previousTickCount, double previousNow) {
+        return previousNow >= 0.0D && tickCount >= previousTickCount
+                && sampledNow < previousNow ? previousNow : sampledNow;
     }
 
     private void resetScratch() {
@@ -482,6 +526,9 @@ public final class ParallelAnimationProgram {
             // order because official physics timelines commit at the tail and calculate
             // the next step at the head.
             fireTimelineRange(clip, previous, Float.POSITIVE_INFINITY, environment);
+            if (environment instanceof EntityAnimationEnvironment entityEnvironment) {
+                entityEnvironment.stopSoundScope(timelineKey);
+            }
             fireTimelineRange(clip, Float.NEGATIVE_INFINITY, localTime, environment);
         }
     }
@@ -492,6 +539,13 @@ public final class ParallelAnimationProgram {
             if (event.time() > after && event.time() <= through) {
                 event.statements().forEach(statement ->
                         ExpressionEngine.compile(statement).evaluate(environment));
+            }
+        }
+        if (environment instanceof EntityAnimationEnvironment entityEnvironment) {
+            for (AnimationClip.SoundEvent event : clip.soundEffects()) {
+                if (event.time() > after && event.time() <= through) {
+                    entityEnvironment.playSoundEffect(event.effect());
+                }
             }
         }
     }
@@ -517,7 +571,8 @@ public final class ParallelAnimationProgram {
                         auxiliary == null || HumanoidRig.isMajorBone(auxiliary.bone())
                                 ? -1 : auxiliary.auxiliaryIndex(), tracks));
             });
-            if (!bones.isEmpty() || !clip.timeline().isEmpty()) {
+            if (!bones.isEmpty() || !clip.timeline().isEmpty()
+                    || !clip.soundEffects().isEmpty()) {
                 result.add(new ClipProgram(clip, duration(clip), List.copyOf(bones)));
             }
         }
@@ -586,7 +641,8 @@ public final class ParallelAnimationProgram {
             bones.add(new BoneProgram(visibility == null ? -1 : visibility,
                     pose == null || auxiliaryOnly && major ? -1 : pose.auxiliaryIndex(), tracks));
         });
-        return bones.isEmpty() && clip.timeline().isEmpty() ? null
+        return bones.isEmpty() && clip.timeline().isEmpty() && clip.soundEffects().isEmpty()
+                ? null
                 : new ClipProgram(clip, duration(clip), List.copyOf(bones));
     }
 
@@ -611,6 +667,9 @@ public final class ParallelAnimationProgram {
             result = Math.max(result, lastTime(tracks.scale()));
         }
         for (AnimationClip.TimelineEvent event : clip.timeline()) {
+            result = Math.max(result, event.time());
+        }
+        for (AnimationClip.SoundEvent event : clip.soundEffects()) {
             result = Math.max(result, event.time());
         }
         return result;
@@ -821,14 +880,15 @@ public final class ParallelAnimationProgram {
                 new AnimationControllerProgram.RuntimeState();
         private double startedAt;
         private double lastNow = -1.0D;
+        private int lastTickCount = Integer.MIN_VALUE;
         private String rouletteAnimation = "";
         private String rouletteClip = "";
         private String reportedRoulette = "";
         private double rouletteStartedAt;
         private boolean rouletteStopSent;
 
-        private RuntimeState(LivingEntity entity) {
-            environment = new EntityAnimationEnvironment(entity, variables, assigned);
+        private RuntimeState(LivingEntity entity, String modelId) {
+            environment = new EntityAnimationEnvironment(entity, variables, assigned, modelId);
             startedAt = (entity.tickCount + Minecraft.getInstance().getFrameTime()) / 20.0D;
         }
 
@@ -841,6 +901,7 @@ public final class ParallelAnimationProgram {
             lastLocalTime.clear();
             startedAt = now;
             lastNow = -1.0D;
+            lastTickCount = Integer.MIN_VALUE;
             rouletteAnimation = "";
             rouletteClip = "";
             reportedRoulette = "";
@@ -855,13 +916,25 @@ public final class ParallelAnimationProgram {
             for (AutomaticAnimationSelector.ActiveClip clip : active) {
                 activeNames.add(clip.name());
             }
-            lastLocalTime.keySet().removeIf(name -> automaticNames.contains(normalize(name))
-                    && !activeNames.contains(normalize(name)));
+            lastLocalTime.keySet().removeIf(name -> {
+                boolean removed = automaticNames.contains(normalize(name))
+                        && !activeNames.contains(normalize(name));
+                if (removed) {
+                    environment.stopSoundScope(name);
+                }
+                return removed;
+            });
         }
 
         private void prepareControllerTimelines(Set<String> activeKeys) {
-            lastLocalTime.keySet().removeIf(name -> name.startsWith("controller/")
-                    && !activeKeys.contains(name));
+            lastLocalTime.keySet().removeIf(name -> {
+                boolean removed = name.startsWith("controller/")
+                        && !activeKeys.contains(name);
+                if (removed) {
+                    environment.stopSoundScope(name);
+                }
+                return removed;
+            });
         }
 
         private void reportRoulette(LivingEntity entity,
@@ -927,9 +1000,18 @@ public final class ParallelAnimationProgram {
 
         private void clearRouletteTimeline() {
             if (!rouletteClip.isEmpty()) {
+                environment.stopSoundScope(rouletteClip);
                 lastLocalTime.remove(rouletteClip);
                 rouletteClip = "";
             }
         }
+    }
+
+    public static void clearSoundOutput() {
+        ClientSoundOutput.clear();
+    }
+
+    public static void releaseSoundOutput(String modelId) {
+        ClientSoundOutput.stopModel(modelId);
     }
 }

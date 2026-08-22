@@ -149,12 +149,19 @@ public final class AnimationClip {
         }
     }
 
+    public record SoundEvent(float time, String effect) {
+        public SoundEvent {
+            effect = effect == null ? "" : effect;
+        }
+    }
+
     private final String name;
     private Playback playback = Playback.ONCE;
     private float duration;
     private final ScalarValue blendWeight = new ScalarValue();
     private final Map<String, BoneTracks> boneTracks = new LinkedHashMap<>();
     private final List<TimelineEvent> timeline = new ArrayList<>();
+    private final List<SoundEvent> soundEffects = new ArrayList<>();
 
     public AnimationClip(String name) {
         this.name = name;
@@ -190,5 +197,9 @@ public final class AnimationClip {
 
     public List<TimelineEvent> timeline() {
         return timeline;
+    }
+
+    public List<SoundEvent> soundEffects() {
+        return soundEffects;
     }
 }

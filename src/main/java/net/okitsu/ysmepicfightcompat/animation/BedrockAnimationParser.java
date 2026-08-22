@@ -94,6 +94,7 @@ public final class BedrockAnimationParser {
         readScalar(source.get("blend_weight"), clip.blendWeight());
         readBones(source.getAsJsonObject("bones"), clip);
         readTimeline(source.getAsJsonObject("timeline"), clip);
+        readSoundEffects(source.getAsJsonObject("sound_effects"), clip);
         return clip;
     }
 
@@ -226,6 +227,34 @@ public final class BedrockAnimationParser {
         }
         events.sort(Comparator.comparing(AnimationClip.TimelineEvent::time));
         clip.timeline().addAll(events);
+    }
+
+    private static void readSoundEffects(JsonObject source, AnimationClip clip) {
+        if (source == null) {
+            return;
+        }
+        List<AnimationClip.SoundEvent> events = new ArrayList<>();
+        for (Map.Entry<String, JsonElement> entry : source.entrySet()) {
+            Float time = parseTime(entry.getKey());
+            if (time == null || !Float.isFinite(time) || time < 0.0F) {
+                continue;
+            }
+            JsonElement value = entry.getValue();
+            String effect = "";
+            if (value.isJsonObject()) {
+                JsonElement named = value.getAsJsonObject().get("effect");
+                if (named != null && named.isJsonPrimitive()) {
+                    effect = named.getAsString();
+                }
+            } else if (value.isJsonPrimitive()) {
+                effect = value.getAsString();
+            }
+            if (!effect.isBlank()) {
+                events.add(new AnimationClip.SoundEvent(time, effect));
+            }
+        }
+        events.sort(Comparator.comparing(AnimationClip.SoundEvent::time));
+        clip.soundEffects().addAll(events);
     }
 
     private static Float parseTime(String value) {

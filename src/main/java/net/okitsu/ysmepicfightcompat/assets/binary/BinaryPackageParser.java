@@ -312,8 +312,11 @@ public final class BinaryPackageParser {
             });
             if (format > 9) {
                 repeat(input.count("animation sound"), sound -> {
-                    input.text();
-                    input.number();
+                    String effect = input.text();
+                    float time = input.number() / 20.0F;
+                    if (retain && !effect.isBlank() && Float.isFinite(time) && time >= 0.0F) {
+                        clip.soundEffects().add(new AnimationClip.SoundEvent(time, effect));
+                    }
                 });
             }
             if (retain) {
@@ -629,14 +632,21 @@ public final class BinaryPackageParser {
                         curve.sort(Comparator.comparing(AnimationController.BlendPoint::time));
                     }
                     boolean shortestPath = input.varUInt("controller state flag") != 0;
+                    List<String> soundEffects = new ArrayList<>();
                     if (format > 26) {
                         int sounds = input.count("controller sound");
+                        entryTotal += sounds;
+                        require(entryTotal <= MAX_CONTROLLER_ENTRIES,
+                                "Too many animation controller entries");
                         for (int item = 0; item < sounds; item++) {
-                            input.text();
+                            String effect = input.text();
+                            if (!effect.isBlank()) {
+                                soundEffects.add(effect);
+                            }
                         }
                     }
                     states.putIfAbsent(stateName, new AnimationController.State(
-                            stateName, animations, transitions, onEntry, onExit,
+                            stateName, animations, transitions, onEntry, onExit, soundEffects,
                             new AnimationController.BlendTransition(duration, curve),
                             shortestPath));
                 }

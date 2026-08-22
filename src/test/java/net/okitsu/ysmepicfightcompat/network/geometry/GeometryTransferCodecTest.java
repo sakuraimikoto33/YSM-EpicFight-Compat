@@ -40,7 +40,7 @@ class GeometryTransferCodecTest {
     }
 
     @Test
-    void roundTripsOnlyGeometryAndTheDefaultFormProgram() throws IOException {
+    void roundTripsGeometryAndBoundedAnimationMetadataWithoutAssets() throws IOException {
         GeometryDocument geometry = new GeometryDocument();
         geometry.textureSize(128, 64);
         GeometryDocument.Bone root = bone("root", "");
@@ -66,6 +66,7 @@ class GeometryTransferCodecTest {
         clip.boneTracks().put("head", tracks);
         clip.timeline().add(new AnimationClip.TimelineEvent(
                 0.0F, java.util.List.of("variable.scale=1")));
+        clip.soundEffects().add(new AnimationClip.SoundEvent(0.25F, "model.chime"));
 
         AnimationClip endless = new AnimationClip("parallel.endless");
         endless.playback(AnimationClip.Playback.REPEAT);
@@ -77,6 +78,7 @@ class GeometryTransferCodecTest {
                 java.util.List.of(new AnimationController.Transition(
                         "hidden", "q.all_animations_finished")),
                 java.util.List.of("v.entered=1;"), java.util.List.of("v.exited=1;"),
+                java.util.List.of("model.enter"),
                 new AnimationController.BlendTransition(0.0F, java.util.List.of(
                 new AnimationController.BlendPoint(0.0F, 1.0F),
                 new AnimationController.BlendPoint(0.2F, 0.0F))), true);
@@ -108,6 +110,8 @@ class GeometryTransferCodecTest {
         assertEquals(1.25F, restored.duration());
         assertEquals("variable.tail_weight", restored.blendWeight().expression());
         assertEquals("variable.scale=1", restored.timeline().get(0).statements().get(0));
+        assertEquals(new AnimationClip.SoundEvent(0.25F, "model.chime"),
+                restored.soundEffects().get(0));
         assertEquals("variable.scale", restored.boneTracks().get("head")
                 .scale().keyframes().get(0).value().expression(2));
         assertEquals(0.0F, decoded.animations().get("parallel.endless").duration());
@@ -121,6 +125,8 @@ class GeometryTransferCodecTest {
         assertEquals(0.5F, restoredController.states().get("default")
                 .blendTransition().progress(0.1D), 0.0001F);
         assertTrue(restoredController.states().get("default").blendViaShortestPath());
+        assertEquals(java.util.List.of("model.enter"), restoredController.states()
+                .get("default").soundEffects());
     }
 
     @Test

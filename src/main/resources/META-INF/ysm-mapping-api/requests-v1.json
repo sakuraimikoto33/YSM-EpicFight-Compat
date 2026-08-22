@@ -12,6 +12,26 @@
       "required": true
     },
     {
+      "key": "ysm.client.model_container.resources_getter.method",
+      "kind": "METHOD",
+      "required": true
+    },
+    {
+      "key": "ysm.client.model_resources.sounds_getter.method",
+      "kind": "METHOD",
+      "required": true
+    },
+    {
+      "key": "ysm.client.audio_stream_cache.acquire.method",
+      "kind": "METHOD",
+      "required": true
+    },
+    {
+      "key": "ysm.client.audio_stream_provider.open.method",
+      "kind": "METHOD",
+      "required": true
+    },
+    {
       "key": "ysm.client.model_data.textures_getter.method",
       "kind": "METHOD",
       "required": true

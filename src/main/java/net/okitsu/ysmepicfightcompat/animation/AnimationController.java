@@ -92,6 +92,7 @@ public final class AnimationController {
         private final List<Transition> transitions;
         private final List<String> onEntry;
         private final List<String> onExit;
+        private final List<String> soundEffects;
         private final BlendTransition blendTransition;
         private final boolean blendViaShortestPath;
 
@@ -99,11 +100,21 @@ public final class AnimationController {
                      List<Transition> transitions, List<String> onEntry,
                      List<String> onExit, BlendTransition blendTransition,
                      boolean blendViaShortestPath) {
+            this(name, animations, transitions, onEntry, onExit, List.of(),
+                    blendTransition, blendViaShortestPath);
+        }
+
+        public State(String name, List<AnimationReference> animations,
+                     List<Transition> transitions, List<String> onEntry,
+                     List<String> onExit, List<String> soundEffects,
+                     BlendTransition blendTransition,
+                     boolean blendViaShortestPath) {
             this.name = name == null ? "" : name;
             this.animations = animations == null ? List.of() : List.copyOf(animations);
             this.transitions = transitions == null ? List.of() : List.copyOf(transitions);
             this.onEntry = onEntry == null ? List.of() : List.copyOf(onEntry);
             this.onExit = onExit == null ? List.of() : List.copyOf(onExit);
+            this.soundEffects = soundEffects == null ? List.of() : List.copyOf(soundEffects);
             this.blendTransition = blendTransition == null
                     ? new BlendTransition(0.0F, List.of()) : blendTransition;
             this.blendViaShortestPath = blendViaShortestPath;
@@ -127,6 +138,10 @@ public final class AnimationController {
 
         public List<String> onExit() {
             return onExit;
+        }
+
+        public List<String> soundEffects() {
+            return soundEffects;
         }
 
         public BlendTransition blendTransition() {

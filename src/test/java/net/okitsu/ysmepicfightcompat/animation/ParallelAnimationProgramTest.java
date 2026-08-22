@@ -12,10 +12,19 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class ParallelAnimationProgramTest {
+    @Test
+    void keepsAnimationTimeMonotonicWhenPartialTickRewindsWithinTheSameTick() {
+        assertEquals(5.04D, ParallelAnimationProgram.stableSampleTime(
+                100, 5.0D, 100, 5.04D));
+        assertEquals(1.0D, ParallelAnimationProgram.stableSampleTime(
+                20, 1.0D, 100, 5.04D));
+    }
+
     @Test
     void keepsParallelAndRouletteTransformsInSeparateSpaces() {
         GeometryDocument geometry = headAndEar();

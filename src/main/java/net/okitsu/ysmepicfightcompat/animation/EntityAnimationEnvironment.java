@@ -35,6 +35,7 @@ final class EntityAnimationEnvironment implements ExpressionEngine.Environment {
     private static final int MAX_RELATIVE_BLOCK_OFFSET = 8;
 
     private final LivingEntity entity;
+    private final String modelId;
     private final Map<Integer, Double> variables;
     private final Set<Integer> assigned;
     private final Random random;
@@ -48,10 +49,18 @@ final class EntityAnimationEnvironment implements ExpressionEngine.Environment {
     private int cachedActorCount = -1;
     private boolean cameraPositionResolved;
     private Vec3 cachedCameraPosition;
+    private String soundScope = "model";
+    private boolean soundOutputEnabled = true;
 
     EntityAnimationEnvironment(LivingEntity entity, Map<Integer, Double> variables,
                                Set<Integer> assigned) {
+        this(entity, variables, assigned, "");
+    }
+
+    EntityAnimationEnvironment(LivingEntity entity, Map<Integer, Double> variables,
+                               Set<Integer> assigned, String modelId) {
         this.entity = entity;
+        this.modelId = modelId == null ? "" : modelId;
         this.variables = variables;
         this.assigned = assigned;
         random = new Random(entity.getUUID().getMostSignificantBits()
@@ -75,8 +84,31 @@ final class EntityAnimationEnvironment implements ExpressionEngine.Environment {
         this.animationTime = animationTime;
     }
 
+    void soundScope(String soundScope) {
+        this.soundScope = soundScope == null || soundScope.isBlank() ? "model" : soundScope;
+    }
+
+    boolean soundOutputEnabled() {
+        return soundOutputEnabled;
+    }
+
+    void soundOutputEnabled(boolean soundOutputEnabled) {
+        this.soundOutputEnabled = soundOutputEnabled;
+    }
+
+    void playSoundEffect(String effect) {
+        if (soundOutputEnabled && effect != null && !effect.isBlank()) {
+            ClientSoundOutput.playEffect(entity, modelId, soundScope, effect);
+        }
+    }
+
+    void stopSoundScope(String scope) {
+        ClientSoundOutput.stopScope(entity, scope);
+    }
+
     void reset() {
         physics.reset();
+        ClientSoundOutput.stopAll(entity);
     }
 
     @Override
@@ -282,6 +314,8 @@ final class EntityAnimationEnvironment implements ExpressionEngine.Environment {
                     entity.getZ() - entity.zOld);
             case "query.rotation_to_camera" -> rotationToCamera(arg(arguments, 0));
             case "ysm.perlin_noise" -> AuxiliaryPhysicsRuntime.perlinNoise(arguments);
+            case "ysm.stop_sound" -> stopSound(null, arguments);
+            case "ysm.stop_all_sounds" -> stopAllSounds(null, arguments);
             default -> 0.0D;
         };
     }
@@ -295,6 +329,9 @@ final class EntityAnimationEnvironment implements ExpressionEngine.Environment {
             case "ysm.second_order" -> secondOrder(textArguments, numericArguments);
             case "ysm.particle" -> particle(textArguments, numericArguments, false);
             case "ysm.abs_particle" -> particle(textArguments, numericArguments, true);
+            case "ysm.play_sound" -> playSound(textArguments, numericArguments);
+            case "ysm.stop_sound" -> stopSound(textArguments, numericArguments);
+            case "ysm.stop_all_sounds" -> stopAllSounds(textArguments, numericArguments);
             case "query.biome_has_all_tags" -> biomeHasTags(textArguments, true);
             case "query.biome_has_any_tag", "query.biome_has_any_tags" ->
                     biomeHasTags(textArguments, false);
@@ -329,6 +366,49 @@ final class EntityAnimationEnvironment implements ExpressionEngine.Environment {
 
     private double random(double low, double high, boolean integer) {
         return random(random, low, high, integer);
+    }
+
+    private double playSound(String[] textArguments, double[] numericArguments) {
+        if (!soundOutputEnabled) {
+            return 0.0D;
+        }
+        ClientSoundOutput.PlayRequest request = ClientSoundOutput.request(
+                textArguments, numericArguments);
+        return flag(ClientSoundOutput.play(entity, modelId, soundScope, request));
+    }
+
+    private double stopSound(String[] textArguments, double[] numericArguments) {
+        if (!soundOutputEnabled) {
+            return 0.0D;
+        }
+        int size = Math.max(textArguments == null ? 0 : textArguments.length,
+                numericArguments == null ? 0 : numericArguments.length);
+        if (size < 1 || size > 2) {
+            return 0.0D;
+        }
+        if (size > 1 && textArgument(textArguments, 1) != null) {
+            return 0.0D;
+        }
+        String id = ClientSoundOutput.identifier(textArguments, numericArguments, 0);
+        boolean global = size > 1 && arg(numericArguments, 1) != 0.0D;
+        return flag(ClientSoundOutput.stop(entity, soundScope, id, global));
+    }
+
+    private double stopAllSounds(String[] textArguments, double[] numericArguments) {
+        if (!soundOutputEnabled) {
+            return 0.0D;
+        }
+        if (numericArguments != null && numericArguments.length > 1) {
+            return 0.0D;
+        }
+        if (textArguments != null && java.util.Arrays.stream(textArguments)
+                .anyMatch(java.util.Objects::nonNull)) {
+            return 0.0D;
+        }
+        boolean global = numericArguments != null && numericArguments.length == 1
+                && arg(numericArguments, 0) != 0.0D;
+        ClientSoundOutput.stopAll(entity, soundScope, global);
+        return 1.0D;
     }
 
     private double firstOrder(String[] textArguments, double[] numericArguments) {

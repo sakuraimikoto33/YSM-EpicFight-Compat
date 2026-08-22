@@ -5,6 +5,7 @@ import net.okitsu.ysmepicfightcompat.geometry.GeometryDocument;
 import net.okitsu.ysmepicfightcompat.mesh.HumanoidRig;
 import org.junit.jupiter.api.Test;
 
+import java.util.List;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -12,6 +13,22 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class DefaultPoseProgramTest {
+    @Test
+    void retainsOrderedBedrockSoundEffects() {
+        AnimationClip clip = BedrockAnimationParser.parse("parallel.sound",
+                JsonParser.parseString("""
+                        {"sound_effects":{
+                          "0.5":{"effect":"model.second"},
+                          "0.1":"model.first"
+                        }}
+                        """).getAsJsonObject());
+
+        assertEquals(List.of(
+                new AnimationClip.SoundEvent(0.1F, "model.first"),
+                new AnimationClip.SoundEvent(0.5F, "model.second")),
+                clip.soundEffects());
+    }
+
     @Test
     void zeroScaleOnAParentHidesItsDescendantsInTheDefaultForm() {
         GeometryDocument geometry = new GeometryDocument();
