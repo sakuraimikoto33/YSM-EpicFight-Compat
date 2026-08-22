@@ -21,6 +21,11 @@ public final class ExpressionEngine {
         double invoke(String name, double[] arguments);
 
         double invokeWithText(String name, String[] arguments);
+
+        default double invokeWithMixedArguments(String name, String[] textArguments,
+                                                double[] numericArguments) {
+            return invokeWithText(name, textArguments);
+        }
     }
 
     @FunctionalInterface
@@ -312,11 +317,29 @@ public final class ExpressionEngine {
             }
             if (containsText) {
                 String[] strings = new String[arguments.size()];
+                Node[] numbers = new Node[arguments.size()];
                 for (int i = 0; i < arguments.size(); i++) {
                     Object argument = arguments.get(i);
-                    strings[i] = argument instanceof TextArgument text ? text.value() : null;
+                    if (argument instanceof TextArgument text) {
+                        strings[i] = text.value();
+                    } else {
+                        numbers[i] = (Node) argument;
+                    }
                 }
-                return environment -> clean(environment.invokeWithText(name, strings));
+                return environment -> {
+                    InvocationArguments argumentsStack = NUMBER_ARGUMENTS.get();
+                    double[] values = argumentsStack.acquire(numbers.length);
+                    try {
+                        for (int i = 0; i < numbers.length; i++) {
+                            values[i] = numbers[i] == null
+                                    ? 0.0D : numbers[i].evaluate(environment);
+                        }
+                        return clean(environment.invokeWithMixedArguments(
+                                name, strings, values));
+                    } finally {
+                        argumentsStack.release();
+                    }
+                };
             }
             Node[] numbers = arguments.toArray(Node[]::new);
             return environment -> {

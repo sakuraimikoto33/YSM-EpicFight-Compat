@@ -609,6 +609,7 @@ public final class ParallelAnimationProgram {
         private void reset(double now) {
             variables.clear();
             assigned.clear();
+            environment.reset();
             lastLocalTime.clear();
             startedAt = now;
             lastNow = -1.0D;

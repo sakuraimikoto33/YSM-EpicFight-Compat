@@ -20,6 +20,7 @@ final class EntityAnimationEnvironment implements ExpressionEngine.Environment {
     private final Map<Integer, Double> variables;
     private final Set<Integer> assigned;
     private final Random random;
+    private final AuxiliaryPhysicsRuntime physics = new AuxiliaryPhysicsRuntime();
     private boolean firstPerson;
     private float partialTick;
     private double deltaTime;
@@ -38,6 +39,7 @@ final class EntityAnimationEnvironment implements ExpressionEngine.Environment {
     }
 
     void update(float partialTick, boolean firstPerson, double deltaTime) {
+        physics.update(deltaTime);
         this.partialTick = partialTick;
         this.firstPerson = firstPerson;
         this.deltaTime = deltaTime;
@@ -47,6 +49,10 @@ final class EntityAnimationEnvironment implements ExpressionEngine.Environment {
 
     void clipTime(double animationTime) {
         this.animationTime = animationTime;
+    }
+
+    void reset() {
+        physics.reset();
     }
 
     @Override
@@ -110,6 +116,7 @@ final class EntityAnimationEnvironment implements ExpressionEngine.Environment {
             case "query.head_x_rotation", "ysm.head_yaw" -> relativeHeadYaw;
             case "query.head_y_rotation", "ysm.head_pitch" -> headPitch;
             case "query.body_y_rotation" -> Mth.wrapDegrees(bodyYaw);
+            case "query.yaw_speed" -> yawSpeed(entity.getYRot(), entity.yRotO);
             case "query.ground_speed" -> horizontalSpeed;
             case "query.vertical_speed" -> entity.getDeltaMovement().y * 20.0D;
             case "query.hurt_time" -> entity.hurtTime;
@@ -219,7 +226,29 @@ final class EntityAnimationEnvironment implements ExpressionEngine.Environment {
                     entity.getX() - entity.xOld,
                     entity.getY() - entity.yOld,
                     entity.getZ() - entity.zOld);
+            case "ysm.perlin_noise" -> AuxiliaryPhysicsRuntime.perlinNoise(arguments);
             default -> 0.0D;
+        };
+    }
+
+    @Override
+    public double invokeWithMixedArguments(String name, String[] textArguments,
+                                           double[] numericArguments) {
+        String function = name.toLowerCase(Locale.ROOT);
+        String key = textArgument(textArguments, 0);
+        if (key == null || numericArguments.length < 2) {
+            return 0.0D;
+        }
+        return switch (function) {
+            case "ysm.first_order" -> physics.firstOrder(key,
+                    arg(numericArguments, 1), numericArguments.length > 2
+                            ? arg(numericArguments, 2) : 1.0D);
+            case "ysm.second_order" -> physics.secondOrder(key,
+                    arg(numericArguments, 1), numericArguments.length > 2
+                            ? arg(numericArguments, 2) : 1.0D,
+                    numericArguments.length > 3 ? arg(numericArguments, 3) : 1.0D,
+                    numericArguments.length > 4 ? arg(numericArguments, 4) : 1.0D);
+            default -> invokeWithText(name, textArguments);
         };
     }
 
@@ -266,8 +295,16 @@ final class EntityAnimationEnvironment implements ExpressionEngine.Environment {
         return -headPitch;
     }
 
+    static float yawSpeed(float currentYaw, float previousYaw) {
+        return Mth.wrapDegrees(currentYaw - previousYaw) * 20.0F;
+    }
+
     private static double arg(double[] values, int index) {
         return index < values.length ? values[index] : 0.0D;
+    }
+
+    private static String textArgument(String[] values, int index) {
+        return values != null && index < values.length ? values[index] : null;
     }
 
     private static double clamp(double value, double minimum, double maximum) {

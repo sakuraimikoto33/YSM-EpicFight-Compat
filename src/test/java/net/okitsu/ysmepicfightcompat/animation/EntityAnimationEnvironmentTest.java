@@ -14,4 +14,10 @@ class EntityAnimationEnvironmentTest {
         assertEquals(-85.0F,
                 EntityAnimationEnvironment.officialHeadYaw(170.0F, 0.0F));
     }
+
+    @Test
+    void yawSpeedUsesTheShortestWrappedTickDelta() {
+        assertEquals(200.0F, EntityAnimationEnvironment.yawSpeed(10.0F, 0.0F));
+        assertEquals(400.0F, EntityAnimationEnvironment.yawSpeed(-170.0F, 170.0F));
+    }
 }

@@ -109,5 +109,12 @@ final class ConfigurationVariableOverrides {
         public double invokeWithText(String name, String[] arguments) {
             return fallback.invokeWithText(name, arguments);
         }
+
+        @Override
+        public double invokeWithMixedArguments(String name, String[] textArguments,
+                                               double[] numericArguments) {
+            return fallback.invokeWithMixedArguments(
+                    name, textArguments, numericArguments);
+        }
     }
 }

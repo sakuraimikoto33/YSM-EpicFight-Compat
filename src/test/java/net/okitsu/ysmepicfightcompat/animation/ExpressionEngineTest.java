@@ -90,6 +90,17 @@ class ExpressionEngineTest {
         assertEquals(expected, result, 1.0E-12D);
     }
 
+    @Test
+    void mixedFunctionArgumentsKeepTheirTextKeyAndEvaluateNumericExpressions() {
+        TestEnvironment environment = new TestEnvironment();
+
+        double result = ExpressionEngine.compile(
+                "ysm.first_order('hair',2+3,math.lerp(0,1,0.25))")
+                .evaluate(environment);
+
+        assertEquals(5.25D, result, 1.0E-12D);
+    }
+
     private static final class TestEnvironment implements ExpressionEngine.Environment {
         private final Map<Integer, Double> values = new HashMap<>();
         private double animationTime;
@@ -133,6 +144,16 @@ class ExpressionEngineTest {
         @Override
         public double invokeWithText(String name, String[] arguments) {
             return 0.0D;
+        }
+
+        @Override
+        public double invokeWithMixedArguments(String name, String[] textArguments,
+                                               double[] numericArguments) {
+            if (!"ysm.first_order".equals(name)
+                    || !"hair".equals(textArguments[0])) {
+                return 0.0D;
+            }
+            return numericArguments[1] + numericArguments[2];
         }
     }
 }
