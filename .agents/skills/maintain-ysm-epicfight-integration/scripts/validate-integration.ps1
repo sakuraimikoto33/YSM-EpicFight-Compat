@@ -29,8 +29,8 @@ function Require-Text {
 
 Require-Text 'gradle.properties' ("^minecraft_version=" + [regex]::Escape($minecraftVersion) + "$") "Minecraft target must match branch '$branch'."
 Require-Text 'gradle.properties' '^forge_version=47\.4\.20$' 'Forge baseline changed unexpectedly.'
-Require-Text 'gradle.properties' '^ysm_mapping_api_version=0\.1\.4$' 'Mapping API selection version must remain 0.1.4.'
-Require-Text 'gradle.properties' '^ysm_mapping_api_version_range=0\.1\.4$' 'Mapping API loader dependency floor must remain 0.1.4.'
+Require-Text 'gradle.properties' '^ysm_mapping_api_version=0\.1\.5$' 'Mapping API selection version must remain 0.1.5.'
+Require-Text 'gradle.properties' '^ysm_mapping_api_version_range=0\.1\.5$' 'Mapping API loader dependency floor must remain 0.1.5.'
 Require-Text 'settings.gradle' "apply from: 'gradle/ysm-mapping-api\.settings\.gradle'" 'Settings must apply the Mapping API resolver.'
 Require-Text 'gradle/ysm-mapping-api.settings.gradle' 'git.*ls-remote.*--refs.*--tags' 'Mapping API resolver must query remote tags.'
 Require-Text 'gradle/ysm-mapping-api.settings.gradle' 'ysm_mapping_api_version_range' 'Mapping API resolver must validate the loader dependency floor.'
@@ -97,8 +97,8 @@ if (-not $SkipBuild) {
 [pscustomobject]@{
     success = $true
     target = $branch
-    mappingApiVersion = '0.1.4'
-    mappingApiVersionRange = '0.1.4'
+    mappingApiVersion = '0.1.5'
+    mappingApiVersionRange = '0.1.5'
     officialYsmOnly = $true
     buildSkipped = [bool]$SkipBuild
 } | ConvertTo-Json -Compress
