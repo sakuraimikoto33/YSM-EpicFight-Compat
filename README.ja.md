@@ -20,7 +20,11 @@ Modをビルドする前に、対象バージョンのブランチへ切り替�
 - YSMのフォルダモデルと、暗号化されたものを含む `.ysm` パッケージをEpic Fightの戦闘用メッシュへ変換します。
 - シングルプレイとマルチプレイで、各プレイヤーが選択したモデルとテクスチャを使用します。
 - Epic Fightの三人称および一人称の戦闘描画に対応します。
-- Epic Fightの主要jointポーズを置き換えず、補助ボーンの `pre_parallel`・`parallel` 動作を維持します。
+- 戦闘ポーズはEpic Fightが担当したまま、互換性のある範囲でYSMの補助ボーン、自動・条件・騎乗・ルーレット・Animation Controllerアニメーションを適用します。
+- 公式YSMで使用されるMolang数学関数、読み取り専用Query、補助物理関数、モデル変数の対応部分を評価します。`v.*`・`variable.*`、`v.roaming.*`・`variable.roaming.*` の各略記も同様に扱います。
+- Animation Controllerの状態変数と `remap_curve`、モデル内サウンド出力、Molangパーティクル補助関数、Bedrockの宣言型 `particle_effects` に対応します。
+- モデル選択とモデル変数の状態を同期し、リモートプレイヤーでも表示バリエーションを一致させます。
+- Epic Fightの戦闘モード中に公式YSMの左上オーバーレイを非表示にできます。
 - Epic Fightがプレイヤー描画を上書きしなくなると、公式YSMの描画へ戻します。
 - リソース再読み込みとYSMのモデル再読み込みコマンド後に変換モデルを更新します。
 - 選択モデルを準備できない場合はEpic Fightのデフォルトプレイヤーメッシュへフォールバックします。
@@ -31,6 +35,8 @@ Modをビルドする前に、対象バージョンのブランチへ切り替�
 ## 導入
 
 このModと必要な依存Modを `mods` ディレクトリへ導入してください。マルチプレイでは、プレイヤーの選択状態とサーバー提供モデルを正しく解決するため、専用サーバーと参加する全クライアントの両方へYSM Epic Fight Compatを導入してください。
+
+[Configured](https://www.curseforge.com/minecraft/mc-mods/configured) は任意です。導入すると、YSMの戦闘モード用オーバーレイ設定をゲーム内で変更でき、再起動せずに反映されます。ConfiguredがなくてもModは正常に起動しますが、設定画面は利用できません。
 
 ## ビルド
 
@@ -49,7 +55,7 @@ Java 17とGitが必要です。
 配布用jarは次の場所に生成されます。
 
 ```text
-build/libs/ysm-epicfight-compat-mc1.20.1-0.1.0-all.jar
+build/libs/ysm-epicfight-compat-mc1.20.1-<mod-version>-all.jar
 ```
 
 ## ドキュメント

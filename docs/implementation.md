@@ -28,7 +28,29 @@ Input sizes, counts, paths, hierarchy depth, and numeric values are checked at p
 
 `HumanoidRig` reserves Epic Fight's 20 biped joints for a strict set of humanoid major bones. `AuxiliaryBoneLayout` assigns accessory bones parent-first to additional skinning indices, up to Epic Fight's 1,000-matrix limit. Each auxiliary bone is anchored to its nearest major joint while retaining its authored bind hierarchy.
 
-For every frame, `AuxiliaryPoseMatrices` copies Epic Fight's major skin matrices without modification and appends the composed auxiliary matrices. `ParallelAnimationProgram` evaluates `pre_parallel` before `parallel`; position, rotation, and scale transforms are applied only to auxiliary bones. Tracks on non-geometry Molang pseudo-bones are still evaluated in source order for their variable side effects, but can never receive a pose matrix. Nested Molang functions use separate stacked argument frames, so an inner call cannot overwrite its caller's arguments. Timeline events remain chronological across a loop boundary: tail events run before the next cycle's head events. Each clip's Molang `blend_weight` scales its contribution. Rotation channels from all parallel clips accumulate on the authored bind rotation, while the later, higher-priority clip replaces position and scale channels. Tracks on major bones never replace Epic Fight's pose. Scale tracks may still hide a major bone and its descendants, which preserves model variant visibility without moving the combat rig.
+## Animation and Molang runtime
+
+For every frame, `AuxiliaryPoseMatrices` copies Epic Fight's major skin matrices without modification and appends the composed auxiliary matrices. `ParallelAnimationProgram` evaluates `pre_parallel` before `parallel`; position, rotation, and scale transforms are applied to the compatible supplemental pose without mutating Epic Fight's animator. Rotation channels from parallel clips accumulate on the authored bind rotation, while the later, higher-priority clip replaces position and scale channels. Scale tracks may hide a major bone and its descendants, preserving model variants without moving the combat rig.
+
+`AutomaticAnimationSelector` retains YSM state, armor-condition, vehicle, and passenger clips. Locomotion clips supplement Epic Fight's pose, while mounted states use a separate whole-model path so Epic Fight's riding pose is not applied a second time. Roulette clips use the same model-space composition path for large root and body movement. Held-item-specific automatic clips are intentionally not selected because Epic Fight owns held-item animation and rendering during combat.
+
+Animation clips retain loop or hold-on-last-frame playback, Molang `blend_weight`, keyframe interpolation, and chronological timeline dispatch across loop boundaries. Tracks on non-geometry Molang pseudo-bones are evaluated in source order for their variable side effects but never receive a pose matrix. Nested Molang functions use stacked argument frames, preventing an inner call from overwriting its caller's arguments.
+
+`ExpressionEngine` implements the Molang operators needed by these clips, the supported official math functions and read-only queries, and YSM helpers such as `ysm.first_order`, `ysm.second_order`, and `ysm.perlin_noise`. Entity, equipment, item, biome, block, camera-distance, and animation-time inputs are exposed through read-only query paths. Ordinary variables accept both `v.*` and `variable.*`; persistent roaming variables accept both `v.roaming.*` and `variable.roaming.*`. Configuration-variable snapshots are synchronized for remote players so visibility and conditional animation state match the owning player.
+
+## Animation controllers and auxiliary outputs
+
+`BedrockAnimationControllerParser` and `AnimationControllerProgram` implement the supported controller state machine: initial state selection, ordered transitions, animation weights, `on_entry`, `on_exit`, fixed or curved blending, and shortest-path rotation blending. State `variables` are evaluated into a frame-local overlay before the state's clips. A `remap_curve` is sorted by input, clamped to its endpoint values outside the declared range, and linearly interpolated between adjacent points.
+
+Animation timelines and controller states can emit sounds without copying model resources to disk. `ClientSoundOutput` resolves model-local audio through official YSM's in-memory sound cache using Mapping API contracts; namespaced Minecraft sound events are also accepted. Sounds are scoped to their clip or controller state, stopped when that scope exits, and cleared when the model or session is invalidated. Minecraft's sound engine owns pause and resume. Roulette audio remains owned by official YSM so the compatibility renderer does not start a duplicate stream.
+
+Particles can be emitted with the `ysm.particle` and `ysm.abs_particle` Molang helpers or with Bedrock animation/controller `particle_effects`. Declarative entries retain `effect`, `locator`, `pre_effect_script`, and `bind_to_actor`. Entry-scoped particles are removed when their controller state exits, and bound particles follow the actor. Common humanoid locators use bounded body-relative approximations; an unknown locator falls back to the entity center because arbitrary model-bone locator matrices are not exposed to the particle engine.
+
+## Molang evaluation scheduling
+
+Scalar and vector expressions are compiled once when an `AnimationClip` is created. The compiler also records the variables, queries, functions, text arguments, and assignments used by each expression. This metadata controls both snapshot size and whether a pose evaluation can leave the render thread.
+
+The local player and any expression with state changes, timeline output, text/world access, randomness, or another render-thread-only function remain synchronous. A side-effect-free remote-player pose can be evaluated from an immutable `SnapshotExpressionEnvironment` on a bounded daemon worker pool; the renderer keeps the last completed frame while newer work is pending. Distance LOD schedules those remote evaluations every frame within 16 blocks, at one-tick intervals from 16 to 32 blocks, two-tick intervals from 32 to 64 blocks, and four-tick intervals beyond 64 blocks. Stateful physics and output expressions therefore retain their ordering and are never made asynchronous merely because the player is distant.
 
 ## Texture resolution
 
@@ -40,7 +62,7 @@ For a model available locally, `CombatMeshCache` can retain package texture byte
 
 If the client does not have a model selected by an online player, it requests that model from the dedicated server. `ServerModelTransfers` verifies that the model exists and is currently selected, parses it outside the server tick, and encodes it with `GeometryTransferCodec`.
 
-The transfer contains bounded, compressed geometry, scale properties, and automatic animation clips, including their blend weights. It never contains a `.ysm` package or texture bytes. Payloads are divided into bounded chunks; the client limits concurrent assemblies, total sizes, timeouts, and decompressed data before accepting a `ModelBundle`. Official YSM remains responsible for providing and caching the corresponding multiplayer texture on the client.
+The transfer contains bounded, compressed geometry, scale properties, retained animation clips, and animation-controller data required by the compatibility renderer. Clip timing, blend weights, timelines, controller variables, remap curves, sound references, and particle declarations are encoded with explicit bounds. It never contains a `.ysm` package, texture bytes, or audio bytes. Payloads are divided into bounded chunks; the client limits concurrent assemblies, total sizes, timeouts, and decompressed data before accepting a `ModelBundle`. Official YSM remains responsible for providing and caching the corresponding multiplayer texture and model-local resources on the client.
 
 Some official packages represent an animation with no finite declared end by using positive infinity. The encoder normalizes that declaration to zero; the runtime derives an effective duration from retained keyframes where possible. The decoder continues to reject non-finite values received from the network.
 
@@ -60,12 +82,16 @@ The patched third-person renderer suppresses armor, head equipment, and elytra f
 
 During client load, `YSMCompatibilityWarningFilter` identifies only official YSM's Epic Fight compatibility warning. `YSMCompatibilityWarningState` records its first display in the existing client preferences so subsequent launches suppress that warning without affecting unrelated warnings.
 
+## Client configuration
+
+`CombatOverlayMixin` delegates each official-YSM overlay frame to `CombatOverlayPolicy`. The client option suppresses the top-left YSM player overlay only while Epic Fight battle mode is active and is read for every overlay frame, so a live configuration reload takes effect without restarting. Configured 2.2.3 or later is an optional client dependency that exposes this option in game; no Configured classes are linked from the compatibility jar, so its absence only removes the settings screen.
+
 ## Source layout
 
 | Area | Package |
 | --- | --- |
 | Model and texture input | `assets`, `assets.binary`, `geometry` |
-| Animation data and default form | `animation` |
+| Animation, Molang, controllers, sound, and particles | `animation` |
 | Rig mapping, conversion, and cache | `mesh` |
 | Epic Fight rendering and layers | `render`, `render.layer`, `event`, `mixin` |
 | Selection and geometry synchronization | `network`, `network.geometry`, `network.message` |
