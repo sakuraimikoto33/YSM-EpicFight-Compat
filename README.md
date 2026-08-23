@@ -17,7 +17,11 @@ YSM Epic Fight Compat is a Forge mod that renders player models selected in the 
 - Converts YSM folder models and `.ysm` packages, including encrypted packages, into Epic Fight combat meshes.
 - Uses the model and texture selected by each player in single-player and multiplayer.
 - Supports Epic Fight's third-person and first-person combat rendering.
-- Preserves auxiliary-bone `pre_parallel`/`parallel` motion without replacing Epic Fight's major-joint poses.
+- Keeps Epic Fight in control of combat poses while applying YSM auxiliary-bone, automatic, conditional, riding, roulette, and animation-controller motion where compatible.
+- Evaluates the supported official YSM Molang math functions, read-only queries, auxiliary physics functions, and model variables, including the `v.*`/`variable.*` and `v.roaming.*`/`variable.roaming.*` aliases.
+- Supports Animation Controller state variables and `remap_curve`, model-local sound output, Molang particle helpers, and declarative Bedrock `particle_effects`.
+- Synchronizes model-selection and model-variable state so visibility variants remain consistent for remote players.
+- Can hide official YSM's top-left overlay while Epic Fight battle mode is active.
 - Returns rendering to official YSM when Epic Fight no longer overrides the player renderer.
 - Refreshes converted models after resource reloads and YSM model reload commands.
 - Falls back to Epic Fight's default player mesh when a selected model cannot be prepared.
@@ -28,6 +32,8 @@ When a converted model is active, armor, head equipment, and elytra are hidden b
 ## Installation
 
 Install this mod and all requirements in the `mods` directory. For multiplayer, install YSM Epic Fight Compat on both the dedicated server and every participating client so that player selections and server-provided models can be resolved consistently.
+
+[Configured](https://www.curseforge.com/minecraft/mc-mods/configured) is optional. When it is installed, the client option for YSM's battle-mode overlay can be changed in game and takes effect without restarting. The mod starts normally without Configured, but that settings screen is unavailable.
 
 ## Building
 
@@ -46,7 +52,7 @@ To use a Mapping API checkout under development, provide its path explicitly:
 The distributable jar is written to:
 
 ```text
-build/libs/ysm-epicfight-compat-mc1.20.1-0.1.0-all.jar
+build/libs/ysm-epicfight-compat-mc1.20.1-<mod-version>-all.jar
 ```
 
 ## Documentation
