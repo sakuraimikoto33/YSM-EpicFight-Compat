@@ -25,6 +25,63 @@ public final class AnimationController {
     public record BlendPoint(float time, float value) {
     }
 
+    public record RemapPoint(float input, float output) {
+    }
+
+    public static final class StateVariable {
+        private final String name;
+        private final String inputExpression;
+        private final List<RemapPoint> remapCurve;
+
+        public StateVariable(String name, String inputExpression,
+                             List<RemapPoint> remapCurve) {
+            String normalized = name == null ? "" : name;
+            String lower = normalized.toLowerCase(java.util.Locale.ROOT);
+            this.name = lower.startsWith("v.") || lower.startsWith("variable.")
+                    ? normalized : "variable." + normalized;
+            this.inputExpression = inputExpression == null || inputExpression.isBlank()
+                    ? "0" : inputExpression;
+            this.remapCurve = remapCurve == null ? List.of() : remapCurve.stream()
+                    .filter(point -> point != null && Float.isFinite(point.input())
+                            && Float.isFinite(point.output()))
+                    .sorted(java.util.Comparator.comparing(RemapPoint::input))
+                    .toList();
+        }
+
+        public String name() {
+            return name;
+        }
+
+        public String inputExpression() {
+            return inputExpression;
+        }
+
+        public List<RemapPoint> remapCurve() {
+            return remapCurve;
+        }
+
+        public double remap(double input) {
+            if (remapCurve.isEmpty() || !Double.isFinite(input)) {
+                return Double.isFinite(input) ? input : 0.0D;
+            }
+            RemapPoint left = remapCurve.get(0);
+            if (input <= left.input()) {
+                return left.output();
+            }
+            for (int index = 1; index < remapCurve.size(); index++) {
+                RemapPoint right = remapCurve.get(index);
+                if (input <= right.input()) {
+                    float width = right.input() - left.input();
+                    double alpha = width <= 0.0F ? 1.0D
+                            : (input - left.input()) / width;
+                    return left.output() + (right.output() - left.output()) * alpha;
+                }
+                left = right;
+            }
+            return left.output();
+        }
+    }
+
     public static final class BlendTransition {
         private final float duration;
         private final List<BlendPoint> curve;
@@ -93,6 +150,8 @@ public final class AnimationController {
         private final List<String> onEntry;
         private final List<String> onExit;
         private final List<String> soundEffects;
+        private final List<StateVariable> variables;
+        private final List<DeclarativeParticleEffect> particleEffects;
         private final BlendTransition blendTransition;
         private final boolean blendViaShortestPath;
 
@@ -101,7 +160,7 @@ public final class AnimationController {
                      List<String> onExit, BlendTransition blendTransition,
                      boolean blendViaShortestPath) {
             this(name, animations, transitions, onEntry, onExit, List.of(),
-                    blendTransition, blendViaShortestPath);
+                    List.of(), List.of(), blendTransition, blendViaShortestPath);
         }
 
         public State(String name, List<AnimationReference> animations,
@@ -115,6 +174,29 @@ public final class AnimationController {
             this.onEntry = onEntry == null ? List.of() : List.copyOf(onEntry);
             this.onExit = onExit == null ? List.of() : List.copyOf(onExit);
             this.soundEffects = soundEffects == null ? List.of() : List.copyOf(soundEffects);
+            this.variables = List.of();
+            this.particleEffects = List.of();
+            this.blendTransition = blendTransition == null
+                    ? new BlendTransition(0.0F, List.of()) : blendTransition;
+            this.blendViaShortestPath = blendViaShortestPath;
+        }
+
+        public State(String name, List<AnimationReference> animations,
+                     List<Transition> transitions, List<String> onEntry,
+                     List<String> onExit, List<String> soundEffects,
+                     List<StateVariable> variables,
+                     List<DeclarativeParticleEffect> particleEffects,
+                     BlendTransition blendTransition,
+                     boolean blendViaShortestPath) {
+            this.name = name == null ? "" : name;
+            this.animations = animations == null ? List.of() : List.copyOf(animations);
+            this.transitions = transitions == null ? List.of() : List.copyOf(transitions);
+            this.onEntry = onEntry == null ? List.of() : List.copyOf(onEntry);
+            this.onExit = onExit == null ? List.of() : List.copyOf(onExit);
+            this.soundEffects = soundEffects == null ? List.of() : List.copyOf(soundEffects);
+            this.variables = variables == null ? List.of() : List.copyOf(variables);
+            this.particleEffects = particleEffects == null
+                    ? List.of() : List.copyOf(particleEffects);
             this.blendTransition = blendTransition == null
                     ? new BlendTransition(0.0F, List.of()) : blendTransition;
             this.blendViaShortestPath = blendViaShortestPath;
@@ -142,6 +224,14 @@ public final class AnimationController {
 
         public List<String> soundEffects() {
             return soundEffects;
+        }
+
+        public List<StateVariable> variables() {
+            return variables;
+        }
+
+        public List<DeclarativeParticleEffect> particleEffects() {
+            return particleEffects;
         }
 
         public BlendTransition blendTransition() {

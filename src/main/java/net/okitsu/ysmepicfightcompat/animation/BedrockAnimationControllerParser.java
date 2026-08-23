@@ -53,13 +53,21 @@ public final class BedrockAnimationControllerParser {
                     List<String> onEntry = actions(state.get("on_entry"));
                     List<String> onExit = actions(state.get("on_exit"));
                     List<String> soundEffects = soundEffects(state.get("sound_effects"));
+                    List<AnimationController.StateVariable> variables =
+                            variables(state.get("variables"));
+                    List<DeclarativeParticleEffect> particleEffects =
+                            particleEffects(state.get("particle_effects"));
                     entries += animations.size() + transitions.size()
-                            + onEntry.size() + onExit.size() + soundEffects.size();
+                            + onEntry.size() + onExit.size() + soundEffects.size()
+                            + variables.size() + particleEffects.size()
+                            + variables.stream().mapToLong(
+                            variable -> variable.remapCurve().size()).sum();
                     require(entries <= MAX_STATE_ENTRIES,
                             "Too many animation controller entries");
                     String stateName = text(stateEntry.getKey());
                     controllerStates.put(stateName, new AnimationController.State(
                             stateName, animations, transitions, onEntry, onExit, soundEffects,
+                            variables, particleEffects,
                             blend(state.get("blend_transition")),
                             bool(state.get("blend_via_shortest_path"))));
                 }
@@ -134,6 +142,68 @@ public final class BedrockAnimationControllerParser {
             }
         }
         return result.stream().filter(value -> !value.isBlank()).toList();
+    }
+
+    private static List<AnimationController.StateVariable> variables(JsonElement source) {
+        if (source == null || !source.isJsonObject()) {
+            return List.of();
+        }
+        List<AnimationController.StateVariable> result = new ArrayList<>();
+        for (Map.Entry<String, JsonElement> entry : source.getAsJsonObject().entrySet()) {
+            String name = text(entry.getKey());
+            JsonElement value = entry.getValue();
+            if (value.isJsonPrimitive()) {
+                result.add(new AnimationController.StateVariable(
+                        name, string(value, "0"), List.of()));
+                continue;
+            }
+            if (!value.isJsonObject()) {
+                continue;
+            }
+            JsonObject object = value.getAsJsonObject();
+            String input = string(object.get("input"), "0");
+            List<AnimationController.RemapPoint> curve = new ArrayList<>();
+            JsonObject curveSource = object(object, "remap_curve");
+            if (curveSource != null) {
+                for (Map.Entry<String, JsonElement> point : curveSource.entrySet()) {
+                    try {
+                        float coordinate = Float.parseFloat(point.getKey());
+                        float output = point.getValue().getAsFloat();
+                        if (Float.isFinite(coordinate) && Float.isFinite(output)) {
+                            curve.add(new AnimationController.RemapPoint(coordinate, output));
+                        }
+                    } catch (RuntimeException ignored) {
+                    }
+                }
+                curve.sort(Comparator.comparing(AnimationController.RemapPoint::input));
+            }
+            result.add(new AnimationController.StateVariable(name, input, curve));
+        }
+        return List.copyOf(result);
+    }
+
+    private static List<DeclarativeParticleEffect> particleEffects(JsonElement source) {
+        if (source == null || source.isJsonNull()) {
+            return List.of();
+        }
+        List<DeclarativeParticleEffect> result = new ArrayList<>();
+        if (source.isJsonArray()) {
+            source.getAsJsonArray().forEach(value -> addParticle(result, value));
+        } else {
+            addParticle(result, source);
+        }
+        return List.copyOf(result);
+    }
+
+    private static void addParticle(List<DeclarativeParticleEffect> result,
+                                    JsonElement source) {
+        DeclarativeParticleEffect particle = BedrockAnimationParser.particle(source);
+        if (particle != null && !particle.effect().isBlank()) {
+            text(particle.effect());
+            text(particle.locator());
+            text(particle.preEffectScript());
+            result.add(particle);
+        }
     }
 
     private static AnimationController.BlendTransition blend(JsonElement source) {

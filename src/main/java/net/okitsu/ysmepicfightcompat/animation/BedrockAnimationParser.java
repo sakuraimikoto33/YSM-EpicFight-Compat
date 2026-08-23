@@ -95,6 +95,7 @@ public final class BedrockAnimationParser {
         readBones(source.getAsJsonObject("bones"), clip);
         readTimeline(source.getAsJsonObject("timeline"), clip);
         readSoundEffects(source.getAsJsonObject("sound_effects"), clip);
+        readParticleEffects(source.getAsJsonObject("particle_effects"), clip);
         return clip;
     }
 
@@ -255,6 +256,59 @@ public final class BedrockAnimationParser {
         }
         events.sort(Comparator.comparing(AnimationClip.SoundEvent::time));
         clip.soundEffects().addAll(events);
+    }
+
+    private static void readParticleEffects(JsonObject source, AnimationClip clip) {
+        if (source == null) {
+            return;
+        }
+        List<AnimationClip.ParticleEvent> events = new ArrayList<>();
+        for (Map.Entry<String, JsonElement> entry : source.entrySet()) {
+            Float time = parseTime(entry.getKey());
+            if (time == null || !Float.isFinite(time) || time < 0.0F) {
+                continue;
+            }
+            JsonElement value = entry.getValue();
+            if (value.isJsonArray()) {
+                value.getAsJsonArray().forEach(item -> addParticle(events, time, item));
+            } else {
+                addParticle(events, time, value);
+            }
+        }
+        events.sort(Comparator.comparing(AnimationClip.ParticleEvent::time));
+        clip.particleEffects().addAll(events);
+    }
+
+    private static void addParticle(List<AnimationClip.ParticleEvent> events,
+                                    float time, JsonElement source) {
+        DeclarativeParticleEffect particle = particle(source);
+        if (particle != null && !particle.effect().isBlank()) {
+            events.add(new AnimationClip.ParticleEvent(time, particle));
+        }
+    }
+
+    static DeclarativeParticleEffect particle(JsonElement source) {
+        if (source == null || source.isJsonNull()) {
+            return null;
+        }
+        if (source.isJsonPrimitive()) {
+            return new DeclarativeParticleEffect(source.getAsString(), "", "", true);
+        }
+        if (!source.isJsonObject()) {
+            return null;
+        }
+        JsonObject object = source.getAsJsonObject();
+        String effect = primitiveText(object.get("effect"));
+        String locator = primitiveText(object.get("locator"));
+        String script = primitiveText(object.get("pre_effect_script"));
+        boolean bind = !object.has("bind_to_actor")
+                || !object.get("bind_to_actor").isJsonPrimitive()
+                || object.get("bind_to_actor").getAsBoolean();
+        return new DeclarativeParticleEffect(effect, locator, script, bind);
+    }
+
+    private static String primitiveText(JsonElement source) {
+        return source != null && source.isJsonPrimitive() ? source.getAsString() : "";
     }
 
     private static Float parseTime(String value) {

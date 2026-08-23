@@ -2,6 +2,7 @@ package net.okitsu.ysmepicfightcompat.network.geometry;
 
 import net.okitsu.ysmepicfightcompat.animation.AnimationClip;
 import net.okitsu.ysmepicfightcompat.animation.AnimationController;
+import net.okitsu.ysmepicfightcompat.animation.DeclarativeParticleEffect;
 import net.okitsu.ysmepicfightcompat.assets.ModelBundle;
 import net.okitsu.ysmepicfightcompat.geometry.GeometryDocument;
 import net.okitsu.ysmepicfightcompat.network.CompatNetwork;
@@ -67,6 +68,9 @@ class GeometryTransferCodecTest {
         clip.timeline().add(new AnimationClip.TimelineEvent(
                 0.0F, java.util.List.of("variable.scale=1")));
         clip.soundEffects().add(new AnimationClip.SoundEvent(0.25F, "model.chime"));
+        clip.particleEffects().add(new AnimationClip.ParticleEvent(0.5F,
+                new DeclarativeParticleEffect("minecraft:flame", "head",
+                        "v.ready=1", false)));
 
         AnimationClip endless = new AnimationClip("parallel.endless");
         endless.playback(AnimationClip.Playback.REPEAT);
@@ -79,6 +83,12 @@ class GeometryTransferCodecTest {
                         "hidden", "q.all_animations_finished")),
                 java.util.List.of("v.entered=1;"), java.util.List.of("v.exited=1;"),
                 java.util.List.of("model.enter"),
+                java.util.List.of(new AnimationController.StateVariable(
+                        "speed", "q.ground_speed", java.util.List.of(
+                        new AnimationController.RemapPoint(0.0F, 0.0F),
+                        new AnimationController.RemapPoint(1.0F, 2.0F)))),
+                java.util.List.of(new DeclarativeParticleEffect(
+                        "minecraft:smoke", "body", "", true)),
                 new AnimationController.BlendTransition(0.0F, java.util.List.of(
                 new AnimationController.BlendPoint(0.0F, 1.0F),
                 new AnimationController.BlendPoint(0.2F, 0.0F))), true);
@@ -112,6 +122,9 @@ class GeometryTransferCodecTest {
         assertEquals("variable.scale=1", restored.timeline().get(0).statements().get(0));
         assertEquals(new AnimationClip.SoundEvent(0.25F, "model.chime"),
                 restored.soundEffects().get(0));
+        assertEquals(new DeclarativeParticleEffect("minecraft:flame", "head",
+                        "v.ready=1", false),
+                restored.particleEffects().get(0).particle());
         assertEquals("variable.scale", restored.boneTracks().get("head")
                 .scale().keyframes().get(0).value().expression(2));
         assertEquals(0.0F, decoded.animations().get("parallel.endless").duration());
@@ -127,6 +140,12 @@ class GeometryTransferCodecTest {
         assertTrue(restoredController.states().get("default").blendViaShortestPath());
         assertEquals(java.util.List.of("model.enter"), restoredController.states()
                 .get("default").soundEffects());
+        assertEquals("q.ground_speed", restoredController.states().get("default")
+                .variables().get(0).inputExpression());
+        assertEquals(1.0D, restoredController.states().get("default")
+                .variables().get(0).remap(0.5D), 0.0001D);
+        assertEquals("minecraft:smoke", restoredController.states().get("default")
+                .particleEffects().get(0).effect());
     }
 
     @Test

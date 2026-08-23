@@ -26,6 +26,17 @@ class ParallelAnimationProgramTest {
     }
 
     @Test
+    void distanceLodKeepsNearActorsContinuousAndBoundsFarUpdateRates() {
+        assertEquals(0.0D, ParallelAnimationProgram.lodIntervalSeconds(16.0D * 16.0D));
+        assertEquals(1.0D / 20.0D,
+                ParallelAnimationProgram.lodIntervalSeconds(24.0D * 24.0D));
+        assertEquals(2.0D / 20.0D,
+                ParallelAnimationProgram.lodIntervalSeconds(48.0D * 48.0D));
+        assertEquals(4.0D / 20.0D,
+                ParallelAnimationProgram.lodIntervalSeconds(96.0D * 96.0D));
+    }
+
+    @Test
     void keepsParallelAndRouletteTransformsInSeparateSpaces() {
         GeometryDocument geometry = headAndEar();
         AnimationClip parallel = new AnimationClip("pre_parallel0");

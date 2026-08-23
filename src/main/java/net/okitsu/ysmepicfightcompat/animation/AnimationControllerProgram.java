@@ -24,7 +24,11 @@ final class AnimationControllerProgram {
     }
 
     record ActiveAnimation(String instanceKey, String name, double elapsed,
-                           float weight, boolean blendViaShortestPath) {
+                           float weight, boolean blendViaShortestPath,
+                           Map<Integer, Double> stateVariables) {
+        ActiveAnimation {
+            stateVariables = stateVariables == null ? Map.of() : Map.copyOf(stateVariables);
+        }
     }
 
     static final class RuntimeState {
@@ -58,8 +62,11 @@ final class AnimationControllerProgram {
             generation++;
             lastStepAt = now;
             environment.completion(Completion.NONE);
+            environment.beginState(current);
             execute(current == null ? List.of() : current.onEntry(), environment);
             environment.playSounds(current == null ? List.of() : current.soundEffects());
+            environment.playParticles(current == null
+                    ? List.of() : current.particleEffects());
         }
     }
 
@@ -67,6 +74,7 @@ final class AnimationControllerProgram {
         private final ExpressionEngine.Environment delegate;
         private Completion completion = Completion.NONE;
         private String soundScope = "controller";
+        private final Map<Integer, Double> stateVariables = new LinkedHashMap<>();
 
         private ControllerEnvironment(ExpressionEngine.Environment delegate) {
             this.delegate = delegate;
@@ -83,9 +91,10 @@ final class AnimationControllerProgram {
             }
         }
 
-        private void stopSoundScope() {
+        private void stopOutputScope() {
             if (delegate instanceof EntityAnimationEnvironment entityEnvironment) {
                 entityEnvironment.stopSoundScope(soundScope);
+                entityEnvironment.stopParticleScope(soundScope);
             }
         }
 
@@ -95,19 +104,48 @@ final class AnimationControllerProgram {
             }
         }
 
+        private void playParticles(List<DeclarativeParticleEffect> effects) {
+            if (delegate instanceof EntityAnimationEnvironment entityEnvironment) {
+                effects.forEach(effect -> entityEnvironment.playParticleEffect(effect, true));
+            }
+        }
+
+        private void beginState(AnimationController.State state) {
+            stateVariables.clear();
+            if (state == null) {
+                return;
+            }
+            for (AnimationController.StateVariable variable : state.variables()) {
+                int slot = ExpressionEngine.slot(variable.name());
+                double input = ExpressionEngine.compile(variable.inputExpression())
+                        .evaluate(this);
+                double value = variable.remap(input);
+                stateVariables.put(slot, Double.isFinite(value) ? value : 0.0D);
+            }
+        }
+
+        private Map<Integer, Double> stateVariables() {
+            return Map.copyOf(stateVariables);
+        }
+
         @Override
         public double readVariable(int slot) {
-            return delegate.readVariable(slot);
+            return stateVariables.containsKey(slot)
+                    ? stateVariables.get(slot) : delegate.readVariable(slot);
         }
 
         @Override
         public boolean hasVariable(int slot) {
-            return delegate.hasVariable(slot);
+            return stateVariables.containsKey(slot) || delegate.hasVariable(slot);
         }
 
         @Override
         public void writeVariable(int slot, double value) {
-            delegate.writeVariable(slot, value);
+            if (stateVariables.containsKey(slot)) {
+                stateVariables.put(slot, Double.isFinite(value) ? value : 0.0D);
+            } else {
+                delegate.writeVariable(slot, value);
+            }
         }
 
         @Override
@@ -198,6 +236,7 @@ final class AnimationControllerProgram {
                 >= runtime.previous.blend().duration()) {
             runtime.previous = null;
         }
+        environment.beginState(runtime.current);
         Completion completion = completion(runtime.current,
                 Math.max(0.0D, now - runtime.enteredAt), environment);
         environment.completion(completion);
@@ -207,7 +246,7 @@ final class AnimationControllerProgram {
                     transition.conditionExpression()).evaluate(environment))) {
                 continue;
             }
-            environment.stopSoundScope();
+            environment.stopOutputScope();
             execute(runtime.current.onExit(), environment);
             AnimationController.BlendTransition blend = target.blendTransition();
             runtime.previous = blend.duration() > EPSILON
@@ -217,8 +256,10 @@ final class AnimationControllerProgram {
             runtime.enteredAt = now;
             runtime.generation++;
             environment.completion(Completion.NONE);
+            environment.beginState(target);
             execute(target.onEntry(), environment);
             environment.playSounds(target.soundEffects());
+            environment.playParticles(target.particleEffects());
             break;
         }
     }
@@ -252,6 +293,7 @@ final class AnimationControllerProgram {
         if (state == null) {
             return;
         }
+        environment.beginState(state);
         environment.completion(completion(state, elapsed, environment));
         for (int index = 0; index < state.animations().size(); index++) {
             AnimationController.AnimationReference reference = state.animations().get(index);
@@ -266,7 +308,7 @@ final class AnimationControllerProgram {
             String key = "controller/" + controllerName + '/' + state.name() + '/'
                     + generation + '/' + index;
             result.add(new ActiveAnimation(key, normalized, elapsed, weight,
-                    shortestPath));
+                    shortestPath, environment.stateVariables()));
         }
     }
 

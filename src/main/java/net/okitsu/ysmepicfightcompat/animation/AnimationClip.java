@@ -54,14 +54,18 @@ public final class AnimationClip {
     public static final class VectorValue {
         private final String[] expressions = new String[3];
         private final double[] constants = new double[3];
+        private final ExpressionEngine.Expression[] compiled =
+                new ExpressionEngine.Expression[3];
 
         public void setConstant(int axis, double value) {
             expressions[axis] = null;
+            compiled[axis] = null;
             constants[axis] = value;
         }
 
         public void setExpression(int axis, String source) {
             expressions[axis] = source;
+            compiled[axis] = null;
             constants[axis] = 0.0D;
         }
 
@@ -72,19 +76,35 @@ public final class AnimationClip {
         public double constant(int axis) {
             return constants[axis];
         }
+
+        public ExpressionEngine.Expression compiledExpression(int axis) {
+            String source = expressions[axis];
+            if (source == null) {
+                return null;
+            }
+            ExpressionEngine.Expression result = compiled[axis];
+            if (result == null) {
+                result = ExpressionEngine.compile(source);
+                compiled[axis] = result;
+            }
+            return result;
+        }
     }
 
     public static final class ScalarValue {
         private String expression;
         private double constant = 1.0D;
+        private volatile ExpressionEngine.Expression compiled;
 
         public void setConstant(double value) {
             expression = null;
+            compiled = null;
             constant = value;
         }
 
         public void setExpression(String source) {
             expression = source;
+            compiled = null;
             constant = 0.0D;
         }
 
@@ -94,6 +114,19 @@ public final class AnimationClip {
 
         public double constant() {
             return constant;
+        }
+
+        public ExpressionEngine.Expression compiledExpression() {
+            String source = expression;
+            if (source == null) {
+                return null;
+            }
+            ExpressionEngine.Expression result = compiled;
+            if (result == null) {
+                result = ExpressionEngine.compile(source);
+                compiled = result;
+            }
+            return result;
         }
     }
 
@@ -155,6 +188,13 @@ public final class AnimationClip {
         }
     }
 
+    public record ParticleEvent(float time, DeclarativeParticleEffect particle) {
+        public ParticleEvent {
+            particle = particle == null
+                    ? new DeclarativeParticleEffect("", "", "", true) : particle;
+        }
+    }
+
     private final String name;
     private Playback playback = Playback.ONCE;
     private float duration;
@@ -162,6 +202,7 @@ public final class AnimationClip {
     private final Map<String, BoneTracks> boneTracks = new LinkedHashMap<>();
     private final List<TimelineEvent> timeline = new ArrayList<>();
     private final List<SoundEvent> soundEffects = new ArrayList<>();
+    private final List<ParticleEvent> particleEffects = new ArrayList<>();
 
     public AnimationClip(String name) {
         this.name = name;
@@ -201,5 +242,9 @@ public final class AnimationClip {
 
     public List<SoundEvent> soundEffects() {
         return soundEffects;
+    }
+
+    public List<ParticleEvent> particleEffects() {
+        return particleEffects;
     }
 }

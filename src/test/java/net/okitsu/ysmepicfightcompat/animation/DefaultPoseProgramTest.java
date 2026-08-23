@@ -30,6 +30,26 @@ class DefaultPoseProgramTest {
     }
 
     @Test
+    void retainsOrderedDeclarativeParticleEffects() {
+        AnimationClip clip = BedrockAnimationParser.parse("parallel.particles",
+                JsonParser.parseString("""
+                        {"particle_effects":{
+                          "0.5":[{"effect":"minecraft:flame","locator":"head",
+                            "pre_effect_script":"v.ready=1","bind_to_actor":false}],
+                          "0.1":"minecraft:smoke"
+                        }}
+                        """).getAsJsonObject());
+
+        assertEquals(2, clip.particleEffects().size());
+        assertEquals(0.1F, clip.particleEffects().get(0).time());
+        DeclarativeParticleEffect particle = clip.particleEffects().get(1).particle();
+        assertEquals("minecraft:flame", particle.effect());
+        assertEquals("head", particle.locator());
+        assertEquals("v.ready=1", particle.preEffectScript());
+        assertFalse(particle.bindToActor());
+    }
+
+    @Test
     void zeroScaleOnAParentHidesItsDescendantsInTheDefaultForm() {
         GeometryDocument geometry = new GeometryDocument();
         GeometryDocument.Bone body = new GeometryDocument.Bone("body");

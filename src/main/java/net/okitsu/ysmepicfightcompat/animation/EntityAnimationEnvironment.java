@@ -78,6 +78,7 @@ final class EntityAnimationEnvironment implements ExpressionEngine.Environment {
         cachedActorCount = -1;
         cameraPositionResolved = false;
         cachedCameraPosition = null;
+        ClientParticleOutput.update(entity);
     }
 
     void clipTime(double animationTime) {
@@ -106,9 +107,24 @@ final class EntityAnimationEnvironment implements ExpressionEngine.Environment {
         ClientSoundOutput.stopScope(entity, scope);
     }
 
+    void playParticleEffect(DeclarativeParticleEffect effect, boolean scoped) {
+        if (effect == null || effect.effect().isBlank()) {
+            return;
+        }
+        if (!effect.preEffectScript().isBlank()) {
+            ExpressionEngine.compile(effect.preEffectScript()).evaluate(this);
+        }
+        ClientParticleOutput.emitEffect(entity, soundScope, effect, scoped);
+    }
+
+    void stopParticleScope(String scope) {
+        ClientParticleOutput.stopScope(entity, scope);
+    }
+
     void reset() {
         physics.reset();
         ClientSoundOutput.stopAll(entity);
+        ClientParticleOutput.stopAll(entity);
     }
 
     @Override

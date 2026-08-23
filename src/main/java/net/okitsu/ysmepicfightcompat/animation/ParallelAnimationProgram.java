@@ -21,6 +21,9 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.WeakHashMap;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 /** Evaluates YSM auxiliary and whole-model clips without mutating Epic Fight's animator. */
 public final class ParallelAnimationProgram {
@@ -28,8 +31,14 @@ public final class ParallelAnimationProgram {
     private static final float EPSILON = 0.0001F;
     private static final Set<String> WHOLE_MODEL_MOUNTED_STATES = Set.of(
             "boat", "ride_pig", "ride", "sit");
+    private static final ExecutorService ANIMATION_WORKERS = Executors.newFixedThreadPool(
+            Math.max(1, Math.min(2, Runtime.getRuntime().availableProcessors() - 1)), task -> {
+                Thread worker = new Thread(task, "ysm-ef-molang-evaluator");
+                worker.setDaemon(true);
+                return worker;
+            });
 
-    /** Values are reused and remain valid only until this program's next sample. */
+    /** Values are reused and remain valid only until the owning entity's next sample. */
     public record Frame(OpenMatrix4f[] parallelDeltas, OpenMatrix4f[] wholeModelDeltas,
                         boolean replaceEpicFightPose, Set<String> hiddenBones) {
     }
@@ -45,12 +54,68 @@ public final class ParallelAnimationProgram {
     }
 
     private record ClipProgram(AnimationClip clip, float duration,
-                               List<BoneProgram> bones) {
+                               List<BoneProgram> bones, Set<Integer> variableSlots,
+                               Set<Integer> querySlots, boolean asyncSafe) {
+    }
+
+    private record AsyncResult(Frame frame, EvaluationScratch scratch) {
     }
 
     private enum ApplyMode {
         OVERRIDE,
         PARALLEL
+    }
+
+    private static final class ControllerVariableEnvironment
+            implements ExpressionEngine.Environment {
+        private final ExpressionEngine.Environment delegate;
+        private final Map<Integer, Double> variables;
+
+        private ControllerVariableEnvironment(ExpressionEngine.Environment delegate,
+                                              Map<Integer, Double> variables) {
+            this.delegate = delegate;
+            this.variables = new HashMap<>(variables);
+        }
+
+        @Override
+        public double readVariable(int slot) {
+            return variables.containsKey(slot) ? variables.get(slot) : delegate.readVariable(slot);
+        }
+
+        @Override
+        public boolean hasVariable(int slot) {
+            return variables.containsKey(slot) || delegate.hasVariable(slot);
+        }
+
+        @Override
+        public void writeVariable(int slot, double value) {
+            if (variables.containsKey(slot)) {
+                variables.put(slot, Double.isFinite(value) ? value : 0.0D);
+            } else {
+                delegate.writeVariable(slot, value);
+            }
+        }
+
+        @Override
+        public double readQuery(int slot) {
+            return delegate.readQuery(slot);
+        }
+
+        @Override
+        public double invoke(String name, double[] arguments) {
+            return delegate.invoke(name, arguments);
+        }
+
+        @Override
+        public double invokeWithText(String name, String[] arguments) {
+            return delegate.invokeWithText(name, arguments);
+        }
+
+        @Override
+        public double invokeWithMixedArguments(String name, String[] textArguments,
+                                               double[] numericArguments) {
+            return delegate.invokeWithMixedArguments(name, textArguments, numericArguments);
+        }
     }
 
     private static final class PoseScratch {
@@ -107,20 +172,8 @@ public final class ParallelAnimationProgram {
     private final float verticalScale;
     private final Map<LivingEntity, RuntimeState> states = new WeakHashMap<>();
 
-    private final float[][] visibilityScales;
-    private final boolean[] hasVisibilityScale;
-    private final float[] effectiveScale;
-    private final PoseScratch parallelPose;
-    private final PoseScratch wholeModelPose;
-    private final Matrix4f scaledDelta = new Matrix4f();
-    private final Set<String> hiddenBones = new LinkedHashSet<>();
-    private final Set<String> hiddenView = Collections.unmodifiableSet(hiddenBones);
-    private final double[] sample = new double[3];
-    private final double[] p0 = new double[3];
-    private final double[] p1 = new double[3];
-    private final double[] p2 = new double[3];
-    private final double[] p3 = new double[3];
-    private boolean replaceEpicFightPose;
+    private final int auxiliaryCount;
+    private final EvaluationScratch testScratch;
 
     public ParallelAnimationProgram(GeometryDocument geometry,
                                     Map<String, AnimationClip> animations,
@@ -168,12 +221,8 @@ public final class ParallelAnimationProgram {
         });
         controllerProgram = new AnimationControllerProgram(controllers, controllerInfo);
 
-        int auxiliaryCount = layout.entries().size();
-        visibilityScales = new float[visibilityBones.size()][3];
-        hasVisibilityScale = new boolean[visibilityBones.size()];
-        effectiveScale = new float[visibilityBones.size()];
-        parallelPose = new PoseScratch(auxiliaryCount);
-        wholeModelPose = new PoseScratch(auxiliaryCount);
+        auxiliaryCount = layout.entries().size();
+        testScratch = new EvaluationScratch(visibilityBones.size(), auxiliaryCount);
     }
 
     public boolean isEmpty() {
@@ -183,7 +232,8 @@ public final class ParallelAnimationProgram {
 
     public Frame sample(LivingEntity entity, float partialTick, boolean firstPerson) {
         RuntimeState state = states.computeIfAbsent(entity,
-                value -> new RuntimeState(value, modelId));
+                value -> new RuntimeState(value, modelId,
+                        new EvaluationScratch(visibilityBones.size(), auxiliaryCount)));
         double sampledNow = (entity.tickCount + partialTick) / 20.0D;
         if (entity.tickCount < state.lastTickCount) {
             state.reset(sampledNow);
@@ -214,25 +264,167 @@ public final class ParallelAnimationProgram {
         List<AnimationControllerProgram.ActiveAnimation> controlled =
                 controllerProgram.select(now, state.environment, state.controllerState);
         state.prepareControllerTimelines(controllerProgram.activeKeys(controlled));
-        evaluate(elapsed, automatic, controlled, rouletteClip, rouletteElapsed,
-                state.environment, state);
+        collectCompletedEvaluation(state);
+        boolean workerEligible = entity != Minecraft.getInstance().player
+                && asyncSafe(automatic, controlled, rouletteClip);
+        if (!workerEligible) {
+            discardPendingEvaluation(state);
+            evaluate(elapsed, automatic, controlled, rouletteClip, rouletteElapsed,
+                    state.environment, state, state.scratch);
+            state.publishedFrame = frame(state.scratch);
+            state.publishedScratch = state.scratch;
+        } else {
+            fireActiveTimelines(elapsed, automatic, controlled, rouletteClip,
+                    rouletteElapsed, state.environment, state);
+            if (state.publishedFrame == null) {
+                evaluate(elapsed, automatic, controlled, rouletteClip, rouletteElapsed,
+                        state.environment, null, state.scratch);
+                state.publishedFrame = frame(state.scratch);
+                state.publishedScratch = state.scratch;
+            }
+            double interval = lodIntervalSeconds(entity, stablePartialTick);
+            if (state.pendingEvaluation == null
+                    && now + 1.0E-6D >= state.lastScheduledAt + interval) {
+                scheduleEvaluation(state, elapsed, automatic, controlled,
+                        rouletteClip, rouletteElapsed, now);
+            }
+        }
         if (rouletteClip != null
                 && state.shouldStopRoulette(rouletteClip, rouletteElapsed)) {
             OfficialRoamingVariables.stopLocalRouletteAnimation(entity);
         }
-        return frame();
+        return state.publishedFrame;
+    }
+
+    private void scheduleEvaluation(RuntimeState state, double elapsed,
+                                    List<AutomaticAnimationSelector.ActiveClip> automatic,
+                                    List<AnimationControllerProgram.ActiveAnimation> controlled,
+                                    ClipProgram rouletteClip, double rouletteElapsed,
+                                    double now) {
+        Set<Integer> variableSlots = new LinkedHashSet<>();
+        Set<Integer> querySlots = new LinkedHashSet<>();
+        collectDependencies(automatic, controlled, rouletteClip, variableSlots, querySlots);
+        SnapshotExpressionEnvironment snapshot = SnapshotExpressionEnvironment.capture(
+                state.environment, variableSlots, querySlots);
+        EvaluationScratch working = state.spareWorkerScratch == null
+                ? new EvaluationScratch(visibilityBones.size(), auxiliaryCount)
+                : state.spareWorkerScratch;
+        state.spareWorkerScratch = null;
+        List<AutomaticAnimationSelector.ActiveClip> automaticCopy = List.copyOf(automatic);
+        List<AnimationControllerProgram.ActiveAnimation> controlledCopy = List.copyOf(controlled);
+        state.lastScheduledAt = now;
+        state.pendingEvaluation = CompletableFuture.supplyAsync(() -> {
+            evaluate(elapsed, automaticCopy, controlledCopy, rouletteClip, rouletteElapsed,
+                    snapshot, null, working);
+            return new AsyncResult(frame(working), working);
+        }, ANIMATION_WORKERS);
+    }
+
+    private static void collectCompletedEvaluation(RuntimeState state) {
+        CompletableFuture<AsyncResult> pending = state.pendingEvaluation;
+        if (pending == null || !pending.isDone()) {
+            return;
+        }
+        state.pendingEvaluation = null;
+        try {
+            AsyncResult result = pending.join();
+            EvaluationScratch previous = state.publishedScratch;
+            state.publishedFrame = result.frame();
+            state.publishedScratch = result.scratch();
+            if (previous != null && previous != state.scratch
+                    && previous != result.scratch()) {
+                state.spareWorkerScratch = previous;
+            }
+        } catch (RuntimeException exception) {
+            CompatMod.LOG.debug("YSM-EF Compat: asynchronous Molang evaluation failed", exception);
+        }
+    }
+
+    private static void discardPendingEvaluation(RuntimeState state) {
+        if (state.pendingEvaluation != null) {
+            state.pendingEvaluation.cancel(false);
+            state.pendingEvaluation = null;
+        }
+    }
+
+    private boolean asyncSafe(List<AutomaticAnimationSelector.ActiveClip> automatic,
+                              List<AnimationControllerProgram.ActiveAnimation> controlled,
+                              ClipProgram rouletteClip) {
+        if (parallelClips.stream().anyMatch(program -> !program.asyncSafe())) {
+            return false;
+        }
+        for (AutomaticAnimationSelector.ActiveClip active : automatic) {
+            ClipProgram program = automaticClips.get(active.name());
+            if (program != null && !program.asyncSafe()) {
+                return false;
+            }
+        }
+        for (AnimationControllerProgram.ActiveAnimation active : controlled) {
+            ClipProgram program = controllerClips.get(active.name());
+            if (program != null && !program.asyncSafe()) {
+                return false;
+            }
+        }
+        return rouletteClip == null || rouletteClip.asyncSafe();
+    }
+
+    private void collectDependencies(
+            List<AutomaticAnimationSelector.ActiveClip> automatic,
+            List<AnimationControllerProgram.ActiveAnimation> controlled,
+            ClipProgram rouletteClip, Set<Integer> variables, Set<Integer> queries) {
+        parallelClips.forEach(program -> collectDependencies(program, variables, queries));
+        automatic.forEach(active -> collectDependencies(
+                automaticClips.get(active.name()), variables, queries));
+        controlled.forEach(active -> collectDependencies(
+                controllerClips.get(active.name()), variables, queries));
+        collectDependencies(rouletteClip, variables, queries);
+    }
+
+    private static void collectDependencies(ClipProgram program, Set<Integer> variables,
+                                            Set<Integer> queries) {
+        if (program != null) {
+            variables.addAll(program.variableSlots());
+            queries.addAll(program.querySlots());
+        }
+    }
+
+    private static double lodIntervalSeconds(LivingEntity entity, float partialTick) {
+        Minecraft minecraft = Minecraft.getInstance();
+        if (minecraft.level == null || minecraft.level != entity.level()) {
+            return 0.0D;
+        }
+        net.minecraft.world.phys.Vec3 camera =
+                minecraft.gameRenderer.getMainCamera().getPosition();
+        double x = net.minecraft.util.Mth.lerp(partialTick, entity.xOld, entity.getX());
+        double y = net.minecraft.util.Mth.lerp(partialTick, entity.yOld, entity.getY());
+        double z = net.minecraft.util.Mth.lerp(partialTick, entity.zOld, entity.getZ());
+        double distanceSquared = camera.distanceToSqr(x, y, z);
+        return lodIntervalSeconds(distanceSquared);
+    }
+
+    static double lodIntervalSeconds(double distanceSquared) {
+        if (distanceSquared <= 16.0D * 16.0D) {
+            return 0.0D;
+        }
+        if (distanceSquared <= 32.0D * 32.0D) {
+            return 1.0D / 20.0D;
+        }
+        if (distanceSquared <= 64.0D * 64.0D) {
+            return 2.0D / 20.0D;
+        }
+        return 4.0D / 20.0D;
     }
 
     Frame sampleAt(double elapsed, ExpressionEngine.Environment environment) {
-        evaluate(elapsed, List.of(), List.of(), null, 0.0D, environment, null);
-        return frame();
+        evaluate(elapsed, List.of(), List.of(), null, 0.0D, environment, null, testScratch);
+        return frame(testScratch);
     }
 
     Frame sampleAt(double elapsed, String rouletteAnimation, double rouletteElapsed,
                    ExpressionEngine.Environment environment) {
         evaluate(elapsed, List.of(), List.of(), rouletteClip(rouletteAnimation), rouletteElapsed,
-                environment, null);
-        return frame();
+                environment, null, testScratch);
+        return frame(testScratch);
     }
 
     Frame sampleAutomaticAt(double elapsed, List<String> animationNames,
@@ -241,21 +433,100 @@ public final class ParallelAnimationProgram {
                 .map(ParallelAnimationProgram::normalize)
                 .map(name -> new AutomaticAnimationSelector.ActiveClip(name, elapsed, false))
                 .toList();
-        evaluate(elapsed, active, List.of(), null, 0.0D, environment, null);
-        return frame();
+        evaluate(elapsed, active, List.of(), null, 0.0D, environment, null, testScratch);
+        return frame(testScratch);
     }
 
     Frame sampleControllersAt(double now, ExpressionEngine.Environment environment,
                               AnimationControllerProgram.RuntimeState controllerState) {
         List<AnimationControllerProgram.ActiveAnimation> controlled =
                 controllerProgram.select(now, environment, controllerState);
-        evaluate(now, List.of(), controlled, null, 0.0D, environment, null);
-        return frame();
+        evaluate(now, List.of(), controlled, null, 0.0D, environment, null, testScratch);
+        return frame(testScratch);
     }
 
-    private Frame frame() {
-        return new Frame(parallelPose.output, wholeModelPose.output,
-                replaceEpicFightPose, hiddenView);
+    private Frame frame(EvaluationScratch scratch) {
+        return new Frame(scratch.parallelPose.output, scratch.wholeModelPose.output,
+                scratch.replaceEpicFightPose, scratch.hiddenView);
+    }
+
+    private void fireActiveTimelines(
+            double elapsed, List<AutomaticAnimationSelector.ActiveClip> automatic,
+            List<AnimationControllerProgram.ActiveAnimation> controlled,
+            ClipProgram rouletteClip, double rouletteElapsed,
+            ExpressionEngine.Environment environment, RuntimeState runtimeState) {
+        for (ClipProgram program : parallelClips) {
+            if (program.clip().name().startsWith("pre_parallel")) {
+                fireProgramTimeline(program, localTime(program, elapsed), environment,
+                        runtimeState, program.clip().name(), true);
+            }
+        }
+        for (AutomaticAnimationSelector.ActiveClip active : automatic) {
+            ClipProgram program = automaticClips.get(active.name());
+            if (program == null) {
+                continue;
+            }
+            if (active.restarted()) {
+                runtimeState.environment.stopSoundScope(program.clip().name());
+                runtimeState.lastLocalTime.remove(program.clip().name());
+            }
+            float localTime = automaticTime(program, active.elapsed());
+            if (localTime >= 0.0F) {
+                fireProgramTimeline(program, localTime, environment, runtimeState,
+                        program.clip().name(), true);
+            }
+        }
+        for (AnimationControllerProgram.ActiveAnimation active : controlled) {
+            ClipProgram program = controllerClips.get(active.name());
+            if (program == null) {
+                continue;
+            }
+            ExpressionEngine.Environment controllerEnvironment = active.stateVariables().isEmpty()
+                    ? environment : new ControllerVariableEnvironment(
+                    environment, active.stateVariables());
+            fireProgramTimeline(program, controllerTime(program, active.elapsed()),
+                    controllerEnvironment, runtimeState, active.instanceKey(), true);
+        }
+        if (rouletteClip != null && rouletteElapsed >= 0.0D) {
+            float localTime = rouletteTime(rouletteClip, rouletteElapsed);
+            if (localTime >= 0.0F) {
+                fireProgramTimeline(rouletteClip, localTime, environment, runtimeState,
+                        rouletteClip.clip().name(), false);
+            }
+        }
+        for (ClipProgram program : parallelClips) {
+            if (!program.clip().name().startsWith("pre_parallel")) {
+                fireProgramTimeline(program, localTime(program, elapsed), environment,
+                        runtimeState, program.clip().name(), true);
+            }
+        }
+    }
+
+    private static void fireProgramTimeline(
+            ClipProgram program, float localTime, ExpressionEngine.Environment environment,
+            RuntimeState runtimeState, String timelineKey, boolean soundOutputEnabled) {
+        EntityAnimationEnvironment entityEnvironment = entityEnvironment(environment);
+        if (entityEnvironment != null) {
+            entityEnvironment.clipTime(localTime);
+            entityEnvironment.soundScope(timelineKey);
+        }
+        SnapshotExpressionEnvironment snapshot = snapshotEnvironment(environment);
+        if (snapshot != null) {
+            snapshot.clipTime(localTime);
+        }
+        boolean previousSoundOutput = entityEnvironment == null
+                || entityEnvironment.soundOutputEnabled();
+        if (entityEnvironment != null) {
+            entityEnvironment.soundOutputEnabled(soundOutputEnabled);
+        }
+        try {
+            fireTimeline(program.clip(), timelineKey, localTime, environment,
+                    runtimeState.lastLocalTime);
+        } finally {
+            if (entityEnvironment != null) {
+                entityEnvironment.soundOutputEnabled(previousSoundOutput);
+            }
+        }
     }
 
     private void evaluate(double elapsed,
@@ -263,12 +534,12 @@ public final class ParallelAnimationProgram {
                           List<AnimationControllerProgram.ActiveAnimation> controlled,
                           ClipProgram rouletteClip, double rouletteElapsed,
                           ExpressionEngine.Environment environment,
-                          RuntimeState runtimeState) {
-        resetScratch();
+                          RuntimeState runtimeState, EvaluationScratch scratch) {
+        resetScratch(scratch);
         for (ClipProgram program : parallelClips) {
             if (program.clip().name().startsWith("pre_parallel")) {
                 evaluateProgram(program, localTime(program, elapsed), environment,
-                        runtimeState, parallelPose, ApplyMode.PARALLEL);
+                        runtimeState, scratch.parallelPose, ApplyMode.PARALLEL, scratch);
             }
         }
         for (AutomaticAnimationSelector.ActiveClip active : automatic) {
@@ -283,10 +554,10 @@ public final class ParallelAnimationProgram {
             float localTime = automaticTime(program, active.elapsed());
             if (localTime >= 0.0F) {
                 boolean mounted = isWholeModelMountedClip(active.name());
-                PoseScratch target = mounted ? wholeModelPose : parallelPose;
+                PoseScratch target = mounted ? scratch.wholeModelPose : scratch.parallelPose;
                 boolean applied = evaluateProgram(program, localTime, environment,
-                        runtimeState, target, ApplyMode.OVERRIDE);
-                replaceEpicFightPose |= mounted && applied;
+                        runtimeState, target, ApplyMode.OVERRIDE, scratch);
+                scratch.replaceEpicFightPose |= mounted && applied;
             }
         }
         for (AnimationControllerProgram.ActiveAnimation active : controlled) {
@@ -294,9 +565,13 @@ public final class ParallelAnimationProgram {
             if (program == null) {
                 continue;
             }
+            ExpressionEngine.Environment controllerEnvironment = active.stateVariables().isEmpty()
+                    ? environment : new ControllerVariableEnvironment(
+                    environment, active.stateVariables());
             evaluateProgram(program, controllerTime(program, active.elapsed()),
-                    environment, runtimeState, parallelPose, ApplyMode.OVERRIDE,
-                    active.weight(), active.blendViaShortestPath(), active.instanceKey(), true);
+                    controllerEnvironment, runtimeState, scratch.parallelPose,
+                    ApplyMode.OVERRIDE, active.weight(), active.blendViaShortestPath(),
+                    active.instanceKey(), true, scratch);
         }
         if (rouletteClip != null && rouletteElapsed >= 0.0D) {
             float localTime = rouletteTime(rouletteClip, rouletteElapsed);
@@ -304,27 +579,27 @@ public final class ParallelAnimationProgram {
                 // Official YSM owns roulette audio even while Epic Fight owns the pose.
                 // Replaying the retained sound outputs here creates a second stream.
                 evaluateProgram(rouletteClip, localTime, environment, runtimeState,
-                        wholeModelPose, ApplyMode.PARALLEL, 1.0F, false,
-                        rouletteClip.clip().name(), false);
+                        scratch.wholeModelPose, ApplyMode.PARALLEL, 1.0F, false,
+                        rouletteClip.clip().name(), false, scratch);
             }
         }
         for (ClipProgram program : parallelClips) {
             if (!program.clip().name().startsWith("pre_parallel")) {
                 evaluateProgram(program, localTime(program, elapsed), environment,
-                        runtimeState, parallelPose, ApplyMode.PARALLEL);
+                        runtimeState, scratch.parallelPose, ApplyMode.PARALLEL, scratch);
             }
         }
-        composeVisibility();
-        composeAuxiliaryMatrices(parallelPose);
-        composeAuxiliaryMatrices(wholeModelPose);
+        composeVisibility(scratch);
+        composeAuxiliaryMatrices(scratch.parallelPose, scratch);
+        composeAuxiliaryMatrices(scratch.wholeModelPose, scratch);
     }
 
     private boolean evaluateProgram(ClipProgram program, float localTime,
                                     ExpressionEngine.Environment environment,
                                     RuntimeState runtimeState, PoseScratch pose,
-                                    ApplyMode applyMode) {
+                                    ApplyMode applyMode, EvaluationScratch scratch) {
         return evaluateProgram(program, localTime, environment, runtimeState, pose,
-                applyMode, 1.0F, false, program.clip().name(), true);
+                applyMode, 1.0F, false, program.clip().name(), true, scratch);
     }
 
     private boolean evaluateProgram(ClipProgram program, float localTime,
@@ -332,12 +607,15 @@ public final class ParallelAnimationProgram {
                                     RuntimeState runtimeState, PoseScratch pose,
                                     ApplyMode applyMode, float externalWeight,
                                     boolean shortestPath, String timelineKey,
-                                    boolean soundOutputEnabled) {
-        EntityAnimationEnvironment entityEnvironment =
-                environment instanceof EntityAnimationEnvironment value ? value : null;
+                                    boolean soundOutputEnabled, EvaluationScratch scratch) {
+        EntityAnimationEnvironment entityEnvironment = entityEnvironment(environment);
         if (entityEnvironment != null) {
             entityEnvironment.clipTime(localTime);
             entityEnvironment.soundScope(timelineKey);
+        }
+        SnapshotExpressionEnvironment snapshot = snapshotEnvironment(environment);
+        if (snapshot != null) {
+            snapshot.clipTime(localTime);
         }
         if (runtimeState != null) {
             boolean previousSoundOutput = entityEnvironment == null
@@ -363,14 +641,14 @@ public final class ParallelAnimationProgram {
         for (BoneProgram bone : program.bones()) {
             AnimationClip.BoneTracks tracks = bone.tracks();
             if (tracks.rotation() != null) {
-                sample(tracks.rotation(), localTime, environment, sample);
+                sample(tracks.rotation(), localTime, environment, scratch.sample, scratch);
                 if (bone.auxiliaryIndex() >= 0) {
                     appliedPose = true;
                     int auxiliary = bone.auxiliaryIndex();
                     float[] target = new float[]{
-                            radians(-finite(sample[0], 0.0F)),
-                            radians(-finite(sample[1], 0.0F)),
-                            radians(finite(sample[2], 0.0F))};
+                            radians(-finite(scratch.sample[0], 0.0F)),
+                            radians(-finite(scratch.sample[1], 0.0F)),
+                            radians(finite(scratch.sample[2], 0.0F))};
                     for (int axis = 0; axis < 3; axis++) {
                         if (applyMode == ApplyMode.PARALLEL) {
                             pose.rotations[auxiliary][axis] += target[axis] * blendWeight;
@@ -389,14 +667,14 @@ public final class ParallelAnimationProgram {
                 }
             }
             if (tracks.position() != null) {
-                sample(tracks.position(), localTime, environment, sample);
+                sample(tracks.position(), localTime, environment, scratch.sample, scratch);
                 if (bone.auxiliaryIndex() >= 0) {
                     appliedPose = true;
                     int auxiliary = bone.auxiliaryIndex();
                     float[] target = new float[]{
-                            -finite(sample[0], 0.0F) / 16.0F,
-                            finite(sample[1], 0.0F) / 16.0F,
-                            finite(sample[2], 0.0F) / 16.0F};
+                            -finite(scratch.sample[0], 0.0F) / 16.0F,
+                            finite(scratch.sample[1], 0.0F) / 16.0F,
+                            finite(scratch.sample[2], 0.0F) / 16.0F};
                     for (int axis = 0; axis < 3; axis++) {
                         float previous = applyMode == ApplyMode.OVERRIDE
                                 && pose.hasPosition[auxiliary]
@@ -408,22 +686,22 @@ public final class ParallelAnimationProgram {
                 }
             }
             if (tracks.scale() != null) {
-                sample(tracks.scale(), localTime, environment, sample);
+                sample(tracks.scale(), localTime, environment, scratch.sample, scratch);
                 if (bone.visibilityIndex() >= 0) {
                     for (int axis = 0; axis < 3; axis++) {
                         float previous = applyMode == ApplyMode.OVERRIDE
-                                && hasVisibilityScale[bone.visibilityIndex()]
-                                ? visibilityScales[bone.visibilityIndex()][axis] : 1.0F;
-                        float target = finite(sample[axis], 1.0F);
+                                && scratch.hasVisibilityScale[bone.visibilityIndex()]
+                                ? scratch.visibilityScales[bone.visibilityIndex()][axis] : 1.0F;
+                        float target = finite(scratch.sample[axis], 1.0F);
                         float value = finite(previous
                                 + (target - previous) * blendWeight, 1.0F);
-                        visibilityScales[bone.visibilityIndex()][axis] = value;
+                        scratch.visibilityScales[bone.visibilityIndex()][axis] = value;
                         if (bone.auxiliaryIndex() >= 0) {
                             appliedPose = true;
                             pose.scales[bone.auxiliaryIndex()][axis] = value;
                         }
                     }
-                    hasVisibilityScale[bone.visibilityIndex()] = true;
+                    scratch.hasVisibilityScale[bone.visibilityIndex()] = true;
                     if (bone.auxiliaryIndex() >= 0) {
                         pose.hasScale[bone.auxiliaryIndex()] = true;
                     }
@@ -439,33 +717,35 @@ public final class ParallelAnimationProgram {
                 && sampledNow < previousNow ? previousNow : sampledNow;
     }
 
-    private void resetScratch() {
-        parallelPose.reset();
-        wholeModelPose.reset();
-        replaceEpicFightPose = false;
-        Arrays.fill(hasVisibilityScale, false);
-        for (float[] scale : visibilityScales) {
+    private void resetScratch(EvaluationScratch scratch) {
+        scratch.parallelPose.reset();
+        scratch.wholeModelPose.reset();
+        scratch.replaceEpicFightPose = false;
+        Arrays.fill(scratch.hasVisibilityScale, false);
+        for (float[] scale : scratch.visibilityScales) {
             Arrays.fill(scale, 1.0F);
         }
     }
 
-    private void composeVisibility() {
-        hiddenBones.clear();
+    private void composeVisibility(EvaluationScratch scratch) {
+        scratch.hiddenBones.clear();
         for (int index = 0; index < visibilityBones.size(); index++) {
             VisibilityBone bone = visibilityBones.get(index);
-            float own = hasVisibilityScale[index]
-                    ? Math.min(visibilityScales[index][0],
-                    Math.min(visibilityScales[index][1], visibilityScales[index][2]))
+            float own = scratch.hasVisibilityScale[index]
+                    ? Math.min(scratch.visibilityScales[index][0],
+                    Math.min(scratch.visibilityScales[index][1],
+                            scratch.visibilityScales[index][2]))
                     : 1.0F;
-            float inherited = bone.parentIndex() < 0 ? 1.0F : effectiveScale[bone.parentIndex()];
-            effectiveScale[index] = own * inherited;
-            if (effectiveScale[index] < HIDDEN_SCALE) {
-                hiddenBones.add(bone.bone().name());
+            float inherited = bone.parentIndex() < 0 ? 1.0F
+                    : scratch.effectiveScale[bone.parentIndex()];
+            scratch.effectiveScale[index] = own * inherited;
+            if (scratch.effectiveScale[index] < HIDDEN_SCALE) {
+                scratch.hiddenBones.add(bone.bone().name());
             }
         }
     }
 
-    private void composeAuxiliaryMatrices(PoseScratch pose) {
+    private void composeAuxiliaryMatrices(PoseScratch pose, EvaluationScratch scratch) {
         for (AuxiliaryBoneLayout.Entry entry : layout.entries()) {
             int auxiliary = entry.auxiliaryIndex();
             GeometryDocument.Bone bone = entry.bone();
@@ -499,11 +779,12 @@ public final class ParallelAnimationProgram {
             } else {
                 pose.chainDelta[auxiliary].set(pose.deltaModel[auxiliary]);
             }
-            scaledDelta.identity().scale(horizontalScale, verticalScale, horizontalScale)
+            scratch.scaledDelta.identity().scale(
+                            horizontalScale, verticalScale, horizontalScale)
                     .mul(pose.chainDelta[auxiliary])
                     .scale(1.0F / horizontalScale, 1.0F / verticalScale,
                             1.0F / horizontalScale);
-            importMatrix(pose.output[auxiliary], scaledDelta);
+            importMatrix(pose.output[auxiliary], scratch.scaledDelta);
         }
     }
 
@@ -526,7 +807,8 @@ public final class ParallelAnimationProgram {
             // order because official physics timelines commit at the tail and calculate
             // the next step at the head.
             fireTimelineRange(clip, previous, Float.POSITIVE_INFINITY, environment);
-            if (environment instanceof EntityAnimationEnvironment entityEnvironment) {
+            EntityAnimationEnvironment entityEnvironment = entityEnvironment(environment);
+            if (entityEnvironment != null) {
                 entityEnvironment.stopSoundScope(timelineKey);
             }
             fireTimelineRange(clip, Float.NEGATIVE_INFINITY, localTime, environment);
@@ -541,13 +823,66 @@ public final class ParallelAnimationProgram {
                         ExpressionEngine.compile(statement).evaluate(environment));
             }
         }
-        if (environment instanceof EntityAnimationEnvironment entityEnvironment) {
+        EntityAnimationEnvironment entityEnvironment = entityEnvironment(environment);
+        if (entityEnvironment != null) {
             for (AnimationClip.SoundEvent event : clip.soundEffects()) {
                 if (event.time() > after && event.time() <= through) {
                     entityEnvironment.playSoundEffect(event.effect());
                 }
             }
+            for (AnimationClip.ParticleEvent event : clip.particleEffects()) {
+                if (event.time() > after && event.time() <= through) {
+                    entityEnvironment.playParticleEffect(event.particle(), false);
+                }
+            }
         }
+    }
+
+    private static final class EvaluationScratch {
+        private final float[][] visibilityScales;
+        private final boolean[] hasVisibilityScale;
+        private final float[] effectiveScale;
+        private final PoseScratch parallelPose;
+        private final PoseScratch wholeModelPose;
+        private final Matrix4f scaledDelta = new Matrix4f();
+        private final Set<String> hiddenBones = new LinkedHashSet<>();
+        private final Set<String> hiddenView = Collections.unmodifiableSet(hiddenBones);
+        private final double[] sample = new double[3];
+        private final double[] p0 = new double[3];
+        private final double[] p1 = new double[3];
+        private final double[] p2 = new double[3];
+        private final double[] p3 = new double[3];
+        private boolean replaceEpicFightPose;
+
+        private EvaluationScratch(int visibilityCount, int auxiliaryCount) {
+            visibilityScales = new float[visibilityCount][3];
+            hasVisibilityScale = new boolean[visibilityCount];
+            effectiveScale = new float[visibilityCount];
+            parallelPose = new PoseScratch(auxiliaryCount);
+            wholeModelPose = new PoseScratch(auxiliaryCount);
+        }
+    }
+
+    private static EntityAnimationEnvironment entityEnvironment(
+            ExpressionEngine.Environment environment) {
+        if (environment instanceof EntityAnimationEnvironment value) {
+            return value;
+        }
+        if (environment instanceof ControllerVariableEnvironment value) {
+            return entityEnvironment(value.delegate);
+        }
+        return null;
+    }
+
+    private static SnapshotExpressionEnvironment snapshotEnvironment(
+            ExpressionEngine.Environment environment) {
+        if (environment instanceof SnapshotExpressionEnvironment value) {
+            return value;
+        }
+        if (environment instanceof ControllerVariableEnvironment value) {
+            return snapshotEnvironment(value.delegate);
+        }
+        return null;
     }
 
     private List<ClipProgram> compileParallelClips(Map<String, AnimationClip> animations,
@@ -572,8 +907,8 @@ public final class ParallelAnimationProgram {
                                 ? -1 : auxiliary.auxiliaryIndex(), tracks));
             });
             if (!bones.isEmpty() || !clip.timeline().isEmpty()
-                    || !clip.soundEffects().isEmpty()) {
-                result.add(new ClipProgram(clip, duration(clip), List.copyOf(bones)));
+                    || !clip.soundEffects().isEmpty() || !clip.particleEffects().isEmpty()) {
+                result.add(clipProgram(clip, bones));
             }
         }
         return List.copyOf(result);
@@ -642,8 +977,76 @@ public final class ParallelAnimationProgram {
                     pose == null || auxiliaryOnly && major ? -1 : pose.auxiliaryIndex(), tracks));
         });
         return bones.isEmpty() && clip.timeline().isEmpty() && clip.soundEffects().isEmpty()
+                && clip.particleEffects().isEmpty()
                 ? null
-                : new ClipProgram(clip, duration(clip), List.copyOf(bones));
+                : clipProgram(clip, bones);
+    }
+
+    private static ClipProgram clipProgram(AnimationClip clip, List<BoneProgram> bones) {
+        Set<Integer> variables = new LinkedHashSet<>();
+        Set<Integer> queries = new LinkedHashSet<>();
+        boolean[] safe = {clip.timeline().isEmpty()
+                && clip.particleEffects().stream().allMatch(event ->
+                event.particle().preEffectScript().isBlank())};
+        collect(clip.blendWeight().compiledExpression(), variables, queries, safe);
+        for (BoneProgram bone : bones) {
+            collect(bone.tracks().rotation(), variables, queries, safe);
+            collect(bone.tracks().position(), variables, queries, safe);
+            collect(bone.tracks().scale(), variables, queries, safe);
+        }
+        return new ClipProgram(clip, duration(clip), List.copyOf(bones),
+                Set.copyOf(variables), Set.copyOf(queries), safe[0]);
+    }
+
+    private static void collect(AnimationClip.Track track, Set<Integer> variables,
+                                Set<Integer> queries, boolean[] safe) {
+        if (track == null) {
+            return;
+        }
+        for (AnimationClip.Keyframe keyframe : track.keyframes()) {
+            collect(keyframe.value(), variables, queries, safe);
+            collect(keyframe.incomingValue(), variables, queries, safe);
+        }
+    }
+
+    private static void collect(AnimationClip.VectorValue value, Set<Integer> variables,
+                                Set<Integer> queries, boolean[] safe) {
+        if (value == null) {
+            return;
+        }
+        for (int axis = 0; axis < 3; axis++) {
+            collect(value.compiledExpression(axis), variables, queries, safe);
+        }
+    }
+
+    private static void collect(ExpressionEngine.Expression expression,
+                                Set<Integer> variables,
+                                Set<Integer> queries, boolean[] safe) {
+        if (expression == null) {
+            return;
+        }
+        ExpressionEngine.Dependencies dependencies = expression.dependencies();
+        variables.addAll(dependencies.variableSlots());
+        queries.addAll(dependencies.querySlots());
+        if (dependencies.writesVariables() || dependencies.hasTextArguments()
+                || dependencies.functions().stream().anyMatch(
+                function -> !asyncFunction(function))) {
+            safe[0] = false;
+        }
+    }
+
+    private static boolean asyncFunction(String function) {
+        if (function.equals("ysm.perlin_noise")) {
+            return true;
+        }
+        return function.startsWith("math.")
+                && !function.equals("math.random")
+                && !function.equals("math.randomi")
+                && !function.equals("math.random_integer")
+                && !function.equals("math.die_roll")
+                && !function.equals("math.die_roll_integer")
+                && !function.equals("math.roll")
+                && !function.equals("math.rolli");
     }
 
     private ClipProgram rouletteClip(String name) {
@@ -670,6 +1073,9 @@ public final class ParallelAnimationProgram {
             result = Math.max(result, event.time());
         }
         for (AnimationClip.SoundEvent event : clip.soundEffects()) {
+            result = Math.max(result, event.time());
+        }
+        for (AnimationClip.ParticleEvent event : clip.particleEffects()) {
             result = Math.max(result, event.time());
         }
         return result;
@@ -717,7 +1123,8 @@ public final class ParallelAnimationProgram {
     }
 
     private void sample(AnimationClip.Track track, float time,
-                        ExpressionEngine.Environment environment, double[] target) {
+                        ExpressionEngine.Environment environment, double[] target,
+                        EvaluationScratch scratch) {
         List<AnimationClip.Keyframe> keys = track.keyframes();
         int right = 0;
         while (right < keys.size() && keys.get(right).time() <= time) {
@@ -741,18 +1148,21 @@ public final class ParallelAnimationProgram {
         }
         double alpha = Math.max(0.0D, Math.min(1.0D,
                 (time - leftKey.time()) / (rightKey.time() - leftKey.time())));
-        evaluate(leftKey.value(), environment, p1);
+        evaluate(leftKey.value(), environment, scratch.p1);
         evaluate(rightKey.incomingValue() == null
-                ? rightKey.value() : rightKey.incomingValue(), environment, p2);
+                ? rightKey.value() : rightKey.incomingValue(), environment, scratch.p2);
         if (rightKey.interpolation() == AnimationClip.Interpolation.CATMULL_ROM) {
-            evaluate(keys.get(Math.max(0, left - 1)).value(), environment, p0);
-            evaluate(keys.get(Math.min(keys.size() - 1, right + 1)).value(), environment, p3);
+            evaluate(keys.get(Math.max(0, left - 1)).value(), environment, scratch.p0);
+            evaluate(keys.get(Math.min(keys.size() - 1, right + 1)).value(),
+                    environment, scratch.p3);
             for (int axis = 0; axis < 3; axis++) {
-                target[axis] = catmullRom(p0[axis], p1[axis], p2[axis], p3[axis], alpha);
+                target[axis] = catmullRom(scratch.p0[axis], scratch.p1[axis],
+                        scratch.p2[axis], scratch.p3[axis], alpha);
             }
         } else {
             for (int axis = 0; axis < 3; axis++) {
-                target[axis] = p1[axis] + (p2[axis] - p1[axis]) * alpha;
+                target[axis] = scratch.p1[axis]
+                        + (scratch.p2[axis] - scratch.p1[axis]) * alpha;
             }
         }
     }
@@ -762,14 +1172,14 @@ public final class ParallelAnimationProgram {
         for (int axis = 0; axis < 3; axis++) {
             String expression = value.expression(axis);
             target[axis] = expression == null ? value.constant(axis)
-                    : ExpressionEngine.compile(expression).evaluate(environment);
+                    : value.compiledExpression(axis).evaluate(environment);
         }
     }
 
     private static double evaluate(AnimationClip.ScalarValue value,
                                    ExpressionEngine.Environment environment) {
         return value.expression() == null ? value.constant()
-                : ExpressionEngine.compile(value.expression()).evaluate(environment);
+                : value.compiledExpression().evaluate(environment);
     }
 
     private static double catmullRom(double a, double b, double c, double d, double time) {
@@ -874,6 +1284,7 @@ public final class ParallelAnimationProgram {
         private final Set<Integer> assigned = new java.util.HashSet<>();
         private final Map<String, Float> lastLocalTime = new HashMap<>();
         private final EntityAnimationEnvironment environment;
+        private final EvaluationScratch scratch;
         private final AutomaticAnimationSelector.State automaticState =
                 new AutomaticAnimationSelector.State();
         private final AnimationControllerProgram.RuntimeState controllerState =
@@ -886,13 +1297,24 @@ public final class ParallelAnimationProgram {
         private String reportedRoulette = "";
         private double rouletteStartedAt;
         private boolean rouletteStopSent;
+        private Frame publishedFrame;
+        private EvaluationScratch publishedScratch;
+        private EvaluationScratch spareWorkerScratch;
+        private CompletableFuture<AsyncResult> pendingEvaluation;
+        private double lastScheduledAt = Double.NEGATIVE_INFINITY;
 
-        private RuntimeState(LivingEntity entity, String modelId) {
+        private RuntimeState(LivingEntity entity, String modelId,
+                             EvaluationScratch scratch) {
             environment = new EntityAnimationEnvironment(entity, variables, assigned, modelId);
+            this.scratch = scratch;
             startedAt = (entity.tickCount + Minecraft.getInstance().getFrameTime()) / 20.0D;
         }
 
         private void reset(double now) {
+            if (pendingEvaluation != null) {
+                pendingEvaluation.cancel(false);
+                pendingEvaluation = null;
+            }
             variables.clear();
             assigned.clear();
             environment.reset();
@@ -907,6 +1329,10 @@ public final class ParallelAnimationProgram {
             reportedRoulette = "";
             rouletteStartedAt = now;
             rouletteStopSent = false;
+            publishedFrame = null;
+            publishedScratch = null;
+            spareWorkerScratch = null;
+            lastScheduledAt = Double.NEGATIVE_INFINITY;
         }
 
         private void prepareAutomaticTimelines(
@@ -1009,6 +1435,7 @@ public final class ParallelAnimationProgram {
 
     public static void clearSoundOutput() {
         ClientSoundOutput.clear();
+        ClientParticleOutput.clear();
     }
 
     public static void releaseSoundOutput(String modelId) {

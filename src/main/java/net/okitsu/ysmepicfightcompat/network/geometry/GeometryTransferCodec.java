@@ -2,6 +2,7 @@ package net.okitsu.ysmepicfightcompat.network.geometry;
 
 import net.okitsu.ysmepicfightcompat.animation.AnimationClip;
 import net.okitsu.ysmepicfightcompat.animation.AnimationController;
+import net.okitsu.ysmepicfightcompat.animation.DeclarativeParticleEffect;
 import net.okitsu.ysmepicfightcompat.assets.ModelBundle;
 import net.okitsu.ysmepicfightcompat.geometry.GeometryDocument;
 import org.joml.Vector3f;
@@ -36,6 +37,7 @@ public final class GeometryTransferCodec {
     private static final int MAX_KEYFRAMES = 2_000_000;
     private static final int MAX_TIMELINE_STATEMENTS = 1_000_000;
     private static final int MAX_SOUND_EVENTS = 1_000_000;
+    private static final int MAX_PARTICLE_EVENTS = 1_000_000;
     private static final int MAX_CONTROLLERS = 4_096;
     private static final int MAX_CONTROLLER_STATES = 65_536;
     private static final int MAX_CONTROLLER_ENTRIES = 1_000_000;
@@ -180,6 +182,7 @@ public final class GeometryTransferCodec {
         long keyframes = 0;
         long statements = 0;
         long sounds = 0;
+        long particles = 0;
         for (AnimationClip clip : animations.values()) {
             string(output, clip.name());
             output.writeByte(clip.playback().wireValue());
@@ -219,6 +222,15 @@ public final class GeometryTransferCodec {
             for (AnimationClip.SoundEvent event : clip.soundEffects()) {
                 finite(output, event.time());
                 string(output, event.effect());
+            }
+            output.writeInt(clip.particleEffects().size());
+            particles += clip.particleEffects().size();
+            if (particles > MAX_PARTICLE_EVENTS) {
+                throw new IOException("Model has too many animation particle events");
+            }
+            for (AnimationClip.ParticleEvent event : clip.particleEffects()) {
+                finite(output, event.time());
+                writeParticle(output, event.particle());
             }
         }
     }
@@ -281,6 +293,7 @@ public final class GeometryTransferCodec {
         long keyframes = 0;
         long statements = 0;
         long sounds = 0;
+        long particles = 0;
         for (int animationIndex = 0; animationIndex < animationCount; animationIndex++) {
             String name = string(input);
             AnimationClip clip = new AnimationClip(name);
@@ -329,6 +342,16 @@ public final class GeometryTransferCodec {
             for (int sound = 0; sound < soundCount; sound++) {
                 clip.soundEffects().add(new AnimationClip.SoundEvent(
                         finite(input), string(input)));
+            }
+            int particleCount = bounded(input.readInt(), MAX_PARTICLE_EVENTS,
+                    "animation particle event");
+            particles += particleCount;
+            if (particles > MAX_PARTICLE_EVENTS) {
+                throw new IOException("Model has too many animation particle events");
+            }
+            for (int particle = 0; particle < particleCount; particle++) {
+                clip.particleEffects().add(new AnimationClip.ParticleEvent(
+                        finite(input), readParticle(input)));
             }
             if (result.putIfAbsent(name, clip) != null) {
                 throw new IOException("Duplicate animation name");
@@ -403,6 +426,32 @@ public final class GeometryTransferCodec {
                 }
                 for (String effect : state.soundEffects()) {
                     string(output, effect);
+                }
+                output.writeInt(state.variables().size());
+                entries += state.variables().size();
+                if (entries > MAX_CONTROLLER_ENTRIES) {
+                    throw new IOException("Model has too many animation controller entries");
+                }
+                for (AnimationController.StateVariable variable : state.variables()) {
+                    string(output, variable.name());
+                    string(output, variable.inputExpression());
+                    output.writeInt(variable.remapCurve().size());
+                    entries += variable.remapCurve().size();
+                    if (entries > MAX_CONTROLLER_ENTRIES) {
+                        throw new IOException("Model has too many animation controller entries");
+                    }
+                    for (AnimationController.RemapPoint point : variable.remapCurve()) {
+                        finite(output, point.input());
+                        finite(output, point.output());
+                    }
+                }
+                output.writeInt(state.particleEffects().size());
+                entries += state.particleEffects().size();
+                if (entries > MAX_CONTROLLER_ENTRIES) {
+                    throw new IOException("Model has too many animation controller entries");
+                }
+                for (DeclarativeParticleEffect particle : state.particleEffects()) {
+                    writeParticle(output, particle);
                 }
             }
         }
@@ -494,8 +543,48 @@ public final class GeometryTransferCodec {
                 for (int sound = 0; sound < soundCount; sound++) {
                     soundEffects.add(string(input));
                 }
+                int variableCount = bounded(input.readInt(), MAX_CONTROLLER_ENTRIES,
+                        "controller variable");
+                entries += variableCount;
+                if (entries > MAX_CONTROLLER_ENTRIES) {
+                    throw new IOException("Model has too many animation controller entries");
+                }
+                List<AnimationController.StateVariable> variables =
+                        new java.util.ArrayList<>(variableCount);
+                for (int variable = 0; variable < variableCount; variable++) {
+                    String variableName = string(input);
+                    String inputExpression = string(input);
+                    int pointCount = bounded(input.readInt(), MAX_CONTROLLER_ENTRIES,
+                            "controller variable remap point");
+                    entries += pointCount;
+                    if (entries > MAX_CONTROLLER_ENTRIES) {
+                        throw new IOException("Model has too many animation controller entries");
+                    }
+                    java.util.ArrayList<AnimationController.RemapPoint> points =
+                            new java.util.ArrayList<>(pointCount);
+                    for (int point = 0; point < pointCount; point++) {
+                        points.add(new AnimationController.RemapPoint(
+                                finite(input), finite(input)));
+                    }
+                    points.sort(java.util.Comparator.comparing(
+                            AnimationController.RemapPoint::input));
+                    variables.add(new AnimationController.StateVariable(
+                            variableName, inputExpression, points));
+                }
+                int particleCount = bounded(input.readInt(), MAX_CONTROLLER_ENTRIES,
+                        "controller particle effect");
+                entries += particleCount;
+                if (entries > MAX_CONTROLLER_ENTRIES) {
+                    throw new IOException("Model has too many animation controller entries");
+                }
+                List<DeclarativeParticleEffect> particleEffects =
+                        new java.util.ArrayList<>(particleCount);
+                for (int particle = 0; particle < particleCount; particle++) {
+                    particleEffects.add(readParticle(input));
+                }
                 AnimationController.State state = new AnimationController.State(
                         stateName, animations, transitions, onEntry, onExit, soundEffects,
+                        variables, particleEffects,
                         new AnimationController.BlendTransition(duration, curve), shortestPath);
                 if (controllerStates.putIfAbsent(stateName, state) != null) {
                     throw new IOException("Duplicate animation controller state");
@@ -508,6 +597,20 @@ public final class GeometryTransferCodec {
             }
         }
         return result;
+    }
+
+    private static void writeParticle(DataOutputStream output,
+                                      DeclarativeParticleEffect particle) throws IOException {
+        string(output, particle.effect());
+        string(output, particle.locator());
+        string(output, particle.preEffectScript());
+        output.writeBoolean(particle.bindToActor());
+    }
+
+    private static DeclarativeParticleEffect readParticle(DataInputStream input)
+            throws IOException {
+        return new DeclarativeParticleEffect(
+                string(input), string(input), string(input), input.readBoolean());
     }
 
     private static void readScalar(DataInputStream input, AnimationClip.ScalarValue target)

@@ -51,6 +51,42 @@ class AnimationControllerProgramTest {
     }
 
     @Test
+    void evaluatesFrameLocalVariablesAndRemapCurves() {
+        Map<String, AnimationController> parsed = BedrockAnimationControllerParser.parse(
+                JsonParser.parseString("""
+                        {"animation_controllers":{"player.parallel_4":{
+                          "states":{"default":{
+                            "variables":{"speed":{"input":"0.5",
+                              "remap_curve":{"0.0":0.0,"1.0":2.0}}},
+                            "animations":[{"ears":"variable.speed"}],
+                            "particle_effects":[{"effect":"minecraft:flame",
+                              "locator":"head","pre_effect_script":"v.started=1",
+                              "bind_to_actor":false}]
+                          }}
+                        }}}
+                        """).getAsJsonObject());
+        AnimationController controller = parsed.get("player.parallel_4");
+        AnimationController.State state = controller.states().get("default");
+        assertEquals(1, state.variables().size());
+        assertEquals(1.0D, state.variables().get(0).remap(0.5D), 0.0001D);
+        assertEquals("minecraft:flame", state.particleEffects().get(0).effect());
+        assertEquals("head", state.particleEffects().get(0).locator());
+
+        AnimationControllerProgram program = new AnimationControllerProgram(
+                Map.of(controller.name(), controller), Map.of(
+                "ears", new AnimationControllerProgram.ClipInfo(
+                        1.0F, AnimationClip.Playback.REPEAT)));
+        TestEnvironment environment = new TestEnvironment();
+        List<AnimationControllerProgram.ActiveAnimation> active = program.select(
+                0.0D, environment, new AnimationControllerProgram.RuntimeState());
+
+        assertEquals(1.0F, active.get(0).weight(), 0.0001F);
+        assertEquals(1.0D, active.get(0).stateVariables().get(
+                ExpressionEngine.slot("variable.speed")), 0.0001D);
+        assertTrue(!environment.hasVariable(ExpressionEngine.slot("variable.speed")));
+    }
+
+    @Test
     void executesLifecycleActionsOnceAndUsesAnimationCompletionForTransitions() {
         AnimationController.State idle = state("idle", List.of(
                         new AnimationController.AnimationReference("wave", "1")),

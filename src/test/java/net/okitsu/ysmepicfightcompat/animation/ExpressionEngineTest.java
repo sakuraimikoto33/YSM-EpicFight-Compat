@@ -6,6 +6,8 @@ import java.util.HashMap;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class ExpressionEngineTest {
     @Test
@@ -99,6 +101,40 @@ class ExpressionEngineTest {
                 .evaluate(environment);
 
         assertEquals(5.25D, result, 1.0E-12D);
+    }
+
+    @Test
+    void recordsDependenciesNeededForSafeWorkerSnapshots() {
+        ExpressionEngine.Dependencies pure = ExpressionEngine.compile(
+                "math.sin(q.anim_time)+v.wind").dependencies();
+        assertTrue(pure.querySlots().contains(
+                ExpressionEngine.querySlot("query.anim_time")));
+        assertTrue(pure.variableSlots().contains(ExpressionEngine.slot("v.wind")));
+        assertEquals(java.util.Set.of("math.sin"), pure.functions());
+        assertFalse(pure.writesVariables());
+        assertFalse(pure.hasTextArguments());
+
+        ExpressionEngine.Dependencies stateful = ExpressionEngine.compile(
+                "v.wind=ysm.first_order('hair',q.delta_time,1)").dependencies();
+        assertTrue(stateful.writesVariables());
+        assertTrue(stateful.hasTextArguments());
+        assertTrue(stateful.functions().contains("ysm.first_order"));
+    }
+
+    @Test
+    void snapshotKeepsCapturedValuesAndWorkerLocalAnimationTime() {
+        TestEnvironment source = new TestEnvironment();
+        int wind = ExpressionEngine.slot("v.wind");
+        int time = ExpressionEngine.querySlot("q.anim_time");
+        source.values.put(wind, 2.0D);
+        source.animationTime = 1.0D;
+        SnapshotExpressionEnvironment snapshot = SnapshotExpressionEnvironment.capture(
+                source, java.util.Set.of(wind), java.util.Set.of(time));
+        source.values.put(wind, 9.0D);
+        snapshot.clipTime(0.25D);
+
+        assertEquals(3.0D, ExpressionEngine.compile(
+                "v.wind+math.lerp(0,4,q.anim_time)").evaluate(snapshot), 0.0001D);
     }
 
     private static final class TestEnvironment implements ExpressionEngine.Environment {

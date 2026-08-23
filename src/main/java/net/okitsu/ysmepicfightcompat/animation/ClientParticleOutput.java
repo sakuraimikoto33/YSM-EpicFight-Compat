@@ -12,10 +12,13 @@ import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.phys.Vec3;
 
 import java.util.Collections;
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Random;
+import java.util.WeakHashMap;
 
 /** Bounded client-side implementation of official YSM's particle Molang helpers. */
 final class ClientParticleOutput {
@@ -34,6 +37,11 @@ final class ClientParticleOutput {
                     return size() > MAX_CACHE_ENTRIES;
                 }
             });
+    private static final Map<LivingEntity, Map<String, List<BoundParticle>>> SCOPES =
+            new WeakHashMap<>();
+
+    private record BoundParticle(Particle particle, String locator, boolean bound) {
+    }
 
     record Request(String particle, double offsetX, double offsetY, double offsetZ,
                    double deltaX, double deltaY, double deltaZ, double speed,
@@ -63,6 +71,85 @@ final class ClientParticleOutput {
             minecraft.execute(emission);
         }
         return true;
+    }
+
+    static boolean emitEffect(LivingEntity entity, String scope,
+                              DeclarativeParticleEffect effect, boolean scoped) {
+        if (entity == null || entity.isRemoved() || effect == null
+                || effect.effect().isBlank()) {
+            return false;
+        }
+        ParticleOptions particle = particle(effect.effect());
+        Minecraft minecraft = Minecraft.getInstance();
+        if (particle == null || minecraft.level == null || minecraft.particleEngine == null
+                || !minecraft.isSameThread()) {
+            return false;
+        }
+        Vec3 offset = locatorOffset(entity, effect.locator());
+        Particle created = create(minecraft.particleEngine, particle,
+                entity.getX() + offset.x, entity.getY() + offset.y,
+                entity.getZ() + offset.z, 0.0D, 0.0D, 0.0D,
+                scoped ? MAX_LIFETIME : 20);
+        if (created == null || (!scoped && !effect.bindToActor())) {
+            return created != null;
+        }
+        String normalizedScope = scope == null || scope.isBlank() ? "controller" : scope;
+        SCOPES.computeIfAbsent(entity, ignored -> new LinkedHashMap<>())
+                .computeIfAbsent(normalizedScope, ignored -> new ArrayList<>())
+                .add(new BoundParticle(created, effect.locator(), effect.bindToActor()));
+        return true;
+    }
+
+    static void update(LivingEntity entity) {
+        Map<String, List<BoundParticle>> scopes = SCOPES.get(entity);
+        if (scopes == null) {
+            return;
+        }
+        scopes.values().forEach(particles -> particles.removeIf(bound -> {
+            Particle particle = bound.particle();
+            if (!particle.isAlive()) {
+                return true;
+            }
+            if (bound.bound()) {
+                Vec3 offset = locatorOffset(entity, bound.locator());
+                particle.setPos(entity.getX() + offset.x,
+                        entity.getY() + offset.y, entity.getZ() + offset.z);
+            }
+            return false;
+        }));
+        scopes.values().removeIf(List::isEmpty);
+        if (scopes.isEmpty()) {
+            SCOPES.remove(entity);
+        }
+    }
+
+    static void stopScope(LivingEntity entity, String scope) {
+        Map<String, List<BoundParticle>> scopes = SCOPES.get(entity);
+        if (scopes == null) {
+            return;
+        }
+        List<BoundParticle> particles = scopes.remove(
+                scope == null || scope.isBlank() ? "controller" : scope);
+        if (particles != null) {
+            particles.forEach(bound -> bound.particle().remove());
+        }
+        if (scopes.isEmpty()) {
+            SCOPES.remove(entity);
+        }
+    }
+
+    static void stopAll(LivingEntity entity) {
+        Map<String, List<BoundParticle>> scopes = SCOPES.remove(entity);
+        if (scopes != null) {
+            scopes.values().forEach(particles ->
+                    particles.forEach(bound -> bound.particle().remove()));
+        }
+    }
+
+    static void clear() {
+        SCOPES.values().forEach(scopes -> scopes.values().forEach(particles ->
+                particles.forEach(bound -> bound.particle().remove())));
+        SCOPES.clear();
     }
 
     static Request request(String[] textArguments, double[] numericArguments,
@@ -127,7 +214,7 @@ final class ClientParticleOutput {
         }
     }
 
-    private static void create(ParticleEngine engine, ParticleOptions particle,
+    private static Particle create(ParticleEngine engine, ParticleOptions particle,
                                double x, double y, double z,
                                double velocityX, double velocityY, double velocityZ,
                                int lifetime) {
@@ -136,6 +223,30 @@ final class ClientParticleOutput {
         if (created != null) {
             created.setLifetime(lifetime);
         }
+        return created;
+    }
+
+    private static Vec3 locatorOffset(LivingEntity entity, String locator) {
+        if (locator == null || locator.isBlank()) {
+            return new Vec3(0.0D, entity.getBbHeight() * 0.5D, 0.0D);
+        }
+        String name = locator.toLowerCase(java.util.Locale.ROOT);
+        double height = entity.getBbHeight();
+        double width = entity.getBbWidth();
+        Vec3 local = switch (name) {
+            case "head", "face", "eyes" -> new Vec3(0.0D, entity.getEyeHeight(), 0.0D);
+            case "body", "chest", "torso" -> new Vec3(0.0D, height * 0.62D, 0.0D);
+            case "leftarm", "left_arm", "lefthand", "left_hand" ->
+                    new Vec3(width * 0.6D, height * 0.58D, 0.0D);
+            case "rightarm", "right_arm", "righthand", "right_hand" ->
+                    new Vec3(-width * 0.6D, height * 0.58D, 0.0D);
+            case "leftleg", "left_leg", "leftfoot", "left_foot" ->
+                    new Vec3(width * 0.2D, height * 0.12D, 0.0D);
+            case "rightleg", "right_leg", "rightfoot", "right_foot" ->
+                    new Vec3(-width * 0.2D, height * 0.12D, 0.0D);
+            default -> new Vec3(0.0D, height * 0.5D, 0.0D);
+        };
+        return rotateOffset(local.x, local.y, local.z, entity.getYRot(), false);
     }
 
     private static ParticleOptions particle(String source) {

@@ -3,8 +3,10 @@ package net.okitsu.ysmepicfightcompat.animation;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
+import java.util.LinkedHashSet;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 
 /** Small Molang-compatible expression compiler used by model animation clips. */
@@ -31,6 +33,23 @@ public final class ExpressionEngine {
     @FunctionalInterface
     public interface Expression {
         double evaluate(Environment environment);
+
+        default Dependencies dependencies() {
+            return Dependencies.EMPTY;
+        }
+    }
+
+    public record Dependencies(Set<Integer> variableSlots, Set<Integer> querySlots,
+                               Set<String> functions, boolean writesVariables,
+                               boolean hasTextArguments) {
+        private static final Dependencies EMPTY = new Dependencies(
+                Set.of(), Set.of(), Set.of(), false, false);
+
+        public Dependencies {
+            variableSlots = Set.copyOf(variableSlots);
+            querySlots = Set.copyOf(querySlots);
+            functions = Set.copyOf(functions);
+        }
     }
 
     private enum Kind {NUMBER, IDENTIFIER, TEXT, SYMBOL, END}
@@ -39,6 +58,14 @@ public final class ExpressionEngine {
     }
 
     private interface Node extends Expression {
+    }
+
+    private record CompiledExpression(Node program, Dependencies dependencies)
+            implements Expression {
+        @Override
+        public double evaluate(Environment environment) {
+            return program.evaluate(environment);
+        }
     }
 
     private record Literal(double value) implements Node {
@@ -136,13 +163,49 @@ public final class ExpressionEngine {
 
     private static Expression compileUncached(String source) {
         try {
-            Parser parser = new Parser(tokenize(source));
+            List<Token> tokens = tokenize(source);
+            Parser parser = new Parser(tokens);
             Node program = parser.program();
             parser.requireEnd();
-            return program;
+            return new CompiledExpression(program, dependencies(tokens));
         } catch (RuntimeException ignored) {
             return ZERO;
         }
+    }
+
+    private static Dependencies dependencies(List<Token> tokens) {
+        Set<Integer> variables = new LinkedHashSet<>();
+        Set<Integer> queries = new LinkedHashSet<>();
+        Set<String> functions = new LinkedHashSet<>();
+        boolean writes = false;
+        boolean text = false;
+        for (int index = 0; index < tokens.size(); index++) {
+            Token token = tokens.get(index);
+            if (token.kind() == Kind.TEXT) {
+                text = true;
+                continue;
+            }
+            if (token.kind() != Kind.IDENTIFIER) {
+                continue;
+            }
+            Token next = index + 1 < tokens.size() ? tokens.get(index + 1) : null;
+            if (next != null && next.kind() == Kind.SYMBOL && next.text().equals("(")) {
+                functions.add(token.text().toLowerCase(Locale.ROOT));
+                continue;
+            }
+            String canonical = canonicalVariableName(token.text());
+            if (isVariableName(canonical)) {
+                variables.add(slot(canonical));
+                if (next != null && next.kind() == Kind.SYMBOL
+                        && (next.text().equals("=") || next.text().equals("+=")
+                        || next.text().equals("-="))) {
+                    writes = true;
+                }
+            } else {
+                queries.add(querySlot(canonical));
+            }
+        }
+        return new Dependencies(variables, queries, functions, writes, text);
     }
 
     private static List<Token> tokenize(String source) {
