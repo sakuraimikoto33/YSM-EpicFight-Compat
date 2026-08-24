@@ -113,6 +113,19 @@ def _newly_reachable_commits(
 
 
 def _commit_changed_paths(repository: Path, commit: str) -> tuple[str, ...]:
+    revision = _run_git(repository, "rev-list", "--parents", "-n", "1", commit)
+    fields = revision.decode("ascii").strip().split()
+    if not fields or fields[0] != commit:
+        raise GitInspectionError(f"could not read parents for commit {commit}")
+
+    if len(fields) > 1:
+        # A pushed merge changes the target branch relative to its first parent.
+        # Commits from every merged side are already present in the rev-list and
+        # are inspected separately, so comparing against every merge parent
+        # would incorrectly classify the target branch's existing mod files as
+        # newly changed.
+        return _revision_changed_paths(repository, fields[1], commit)
+
     output = _run_git(
         repository,
         "diff-tree",
@@ -121,23 +134,22 @@ def _commit_changed_paths(repository: Path, commit: str) -> tuple[str, ...]:
         "--name-only",
         "-z",
         "-r",
-        "-m",
         commit,
         "--",
     )
     return _decode_nul_paths(output)
 
 
-def _endpoint_changed_paths(
-    repository: Path, before: str, after: str
+def _revision_changed_paths(
+    repository: Path, old_revision: str, new_revision: str
 ) -> tuple[str, ...]:
     output = _run_git(
         repository,
         "diff",
         "--name-only",
         "-z",
-        before,
-        after,
+        old_revision,
+        new_revision,
         "--",
     )
     return _decode_nul_paths(output)
@@ -175,7 +187,7 @@ def detect_changes(
         changed_paths.update(_commit_changed_paths(repository, commit))
 
     if before not in ZERO_OIDS:
-        changed_paths.update(_endpoint_changed_paths(repository, before, after))
+        changed_paths.update(_revision_changed_paths(repository, before, after))
 
     relevant_paths = tuple(
         sorted(path for path in changed_paths if is_build_relevant_path(path))
