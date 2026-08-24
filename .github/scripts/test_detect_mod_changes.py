@@ -102,6 +102,25 @@ class PushedHistoryTest(unittest.TestCase):
         self.assertEqual(2, decision.commits_scanned)
         self.assertIn("src/main/Test.java", decision.relevant_paths)
 
+    def test_merge_is_compared_with_target_branch_first_parent(self) -> None:
+        self.repository.commit_file("README.md", "initial\n", "initial")
+        self.repository.git("switch", "-c", "mc/test")
+        before = self.repository.commit_file(
+            "src/main/Test.java", "class Test {}\n", "existing mod code"
+        )
+        self.repository.git("switch", "main")
+        self.repository.commit_file(
+            ".github/workflows/build.yml", "name: test\n", "automation"
+        )
+        self.repository.git("switch", "mc/test")
+        self.repository.git("merge", "--no-ff", "main", "-m", "merge main")
+        after = self.repository.git("rev-parse", "HEAD")
+
+        decision = detect_changes(self.repository.root, before, after)
+
+        self.assertFalse(decision.mod_changed)
+        self.assertEqual(2, decision.commits_scanned)
+
     def test_force_push_removing_mod_content_requires_build(self) -> None:
         after = self.repository.commit_file("README.md", "initial\n", "initial")
         before = self.repository.commit_file(
