@@ -9,6 +9,52 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 
 class ModelPoseRetargeterTest {
     @Test
+    void keepsNestedCentralJointsConnectedWhileReapplyingLocalAnimation() {
+        OpenMatrix4f[] referenceLocals = AuxiliaryPoseMatrices.allocate(3);
+        referenceLocals[1].translate(0.0F, 1.0F, 0.0F);
+        referenceLocals[2].translate(0.0F, 1.0F, 0.0F);
+        OpenMatrix4f[] targetLocals = AuxiliaryPoseMatrices.allocate(3);
+        targetLocals[1].translate(0.0F, 2.0F, 0.0F);
+        targetLocals[2].translate(0.0F, 3.0F, 0.0F);
+        OpenMatrix4f[] targetToOrigin = AuxiliaryPoseMatrices.allocate(3);
+        OpenMatrix4f targetChestBind = new OpenMatrix4f(targetLocals[1]);
+        OpenMatrix4f targetHeadBind = OpenMatrix4f.mul(
+                targetChestBind, targetLocals[2], null);
+        OpenMatrix4f.invert(targetChestBind, targetToOrigin[1]);
+        OpenMatrix4f.invert(targetHeadBind, targetToOrigin[2]);
+
+        OpenMatrix4f rootRotation = new OpenMatrix4f().rotateDeg(40.0F, Vec3f.Z_AXIS);
+        OpenMatrix4f chestRotation = new OpenMatrix4f().rotateDeg(25.0F, Vec3f.X_AXIS);
+        OpenMatrix4f headRotation = new OpenMatrix4f().rotateDeg(-15.0F, Vec3f.Y_AXIS);
+        OpenMatrix4f[] poses = AuxiliaryPoseMatrices.allocate(3);
+        poses[0].load(rootRotation);
+        OpenMatrix4f referenceChestBase = OpenMatrix4f.mul(
+                poses[0], referenceLocals[1], null);
+        OpenMatrix4f.mul(referenceChestBase, chestRotation, poses[1]);
+        OpenMatrix4f referenceHeadBase = OpenMatrix4f.mul(
+                poses[1], referenceLocals[2], null);
+        OpenMatrix4f.mul(referenceHeadBase, headRotation, poses[2]);
+        OpenMatrix4f[] targetPoseWorlds = AuxiliaryPoseMatrices.allocate(3);
+        OpenMatrix4f[] targetSkinMatrices = AuxiliaryPoseMatrices.allocate(3);
+
+        ModelPoseRetargeter.retarget(poses, referenceLocals, targetLocals, targetToOrigin,
+                new int[]{-1, 0, 1}, new int[]{0, 1, 2}, 3,
+                targetPoseWorlds, targetSkinMatrices,
+                new OpenMatrix4f(), new OpenMatrix4f(), new OpenMatrix4f(),
+                new OpenMatrix4f(), new OpenMatrix4f());
+
+        OpenMatrix4f expectedChest = OpenMatrix4f.mul(rootRotation, targetLocals[1], null);
+        expectedChest.mulBack(chestRotation);
+        OpenMatrix4f expectedHead = OpenMatrix4f.mul(expectedChest, targetLocals[2], null);
+        expectedHead.mulBack(headRotation);
+        assertMatrixEquals(rootRotation, targetPoseWorlds[0]);
+        assertMatrixEquals(expectedChest, targetPoseWorlds[1]);
+        assertMatrixEquals(expectedHead, targetPoseWorlds[2]);
+        assertMatrixEquals(OpenMatrix4f.mul(expectedHead, targetToOrigin[2], null),
+                targetSkinMatrices[2]);
+    }
+
+    @Test
     void reappliesTheReferenceLocalRotationAroundTheTargetBindPivot() {
         OpenMatrix4f[] referenceLocals = AuxiliaryPoseMatrices.allocate(2);
         referenceLocals[1].translate(1.0F, 2.0F, 0.0F);

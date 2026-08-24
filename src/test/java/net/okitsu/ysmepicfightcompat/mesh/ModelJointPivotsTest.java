@@ -12,6 +12,115 @@ import static org.junit.jupiter.api.Assertions.assertSame;
 
 class ModelJointPivotsTest {
     @Test
+    void derivesScaledCentralPivotsFromOfficialBodyControls() {
+        GeometryDocument geometry = new GeometryDocument();
+        geometry.add(bone("AllBody", "", 0.1F, 1.5F, 0.2F));
+        geometry.add(bone("UpBody", "AllBody", 0.1F, 1.0F, 0.2F));
+        geometry.add(bone("DownBody", "AllBody", 0.1F, 1.0F, 0.2F));
+        geometry.add(bone("UpperBody", "UpBody", 0.1F, 1.3F, 0.2F));
+        geometry.add(bone("AllHead", "UpperBody", 0.1F, 1.8F, 0.2F));
+        geometry.linkHierarchy();
+
+        Map<Integer, Vector3f> pivots = ModelJointPivots.estimate(geometry, 2.0F, 3.0F);
+
+        assertVectorEquals(new Vector3f(0.2F, 3.0F, 0.4F), pivots.get(HumanoidRig.TORSO));
+        assertVectorEquals(new Vector3f(0.2F, 3.9F, 0.4F), pivots.get(HumanoidRig.CHEST));
+        assertVectorEquals(new Vector3f(0.2F, 5.4F, 0.4F), pivots.get(HumanoidRig.HEAD));
+    }
+
+    @Test
+    void selectsTheClosestBodyControlPairWhenOneWaistControlIsAnOutlier() {
+        GeometryDocument geometry = new GeometryDocument();
+        geometry.add(bone("AllBody", "", 0.0F, 0.625F, 0.0F));
+        geometry.add(bone("UpBody", "AllBody", 0.0F, -0.143F, 0.0F));
+        geometry.add(bone("DownBody", "AllBody", 0.0F, 0.556F, 0.0F));
+        geometry.add(bone("UpperBody", "AllBody", 0.0F, 0.9F, 0.0F));
+        geometry.add(bone("AllHead", "UpperBody", 0.0F, 1.2F, 0.0F));
+        geometry.linkHierarchy();
+
+        Map<Integer, Vector3f> pivots = ModelJointPivots.estimate(geometry, 1.0F, 1.0F);
+
+        assertEquals(0.5905F, pivots.get(HumanoidRig.TORSO).y(), 0.00001F);
+        assertEquals(0.9F, pivots.get(HumanoidRig.CHEST).y(), 0.00001F);
+        assertEquals(1.2F, pivots.get(HumanoidRig.HEAD).y(), 0.00001F);
+    }
+
+    @Test
+    void usesUpBodyAsTheVerifiedLegacyChestFallback() {
+        GeometryDocument geometry = new GeometryDocument();
+        geometry.add(bone("AllBody", "", 0.0F, 1.0F, 0.0F));
+        geometry.add(bone("UpBody", "AllBody", 0.0F, 1.2F, 0.0F));
+        geometry.add(bone("DownBody", "AllBody", 0.0F, 1.2F, 0.0F));
+        geometry.add(bone("AllHead", "UpBody", 0.0F, 1.6F, 0.0F));
+        geometry.linkHierarchy();
+
+        Map<Integer, Vector3f> pivots = ModelJointPivots.estimate(geometry, 1.0F, 1.0F);
+
+        assertVectorEquals(new Vector3f(0.0F, 1.2F, 0.0F), pivots.get(HumanoidRig.TORSO));
+        assertVectorEquals(new Vector3f(0.0F, 1.2F, 0.0F), pivots.get(HumanoidRig.CHEST));
+        assertVectorEquals(new Vector3f(0.0F, 1.6F, 0.0F), pivots.get(HumanoidRig.HEAD));
+    }
+
+    @Test
+    void carriesCentralPivotsThroughTheParentBindTransform() {
+        GeometryDocument geometry = new GeometryDocument();
+        GeometryDocument.Bone root = bone("Root", "", 0.0F, 0.0F, 0.0F);
+        root.rotation(0.0F, 0.0F, (float) Math.toRadians(90.0D));
+        geometry.add(root);
+        geometry.add(bone("AllBody", "Root", 1.0F, 0.0F, 0.0F));
+        geometry.add(bone("UpBody", "AllBody", 1.0F, 0.0F, 0.0F));
+        geometry.add(bone("DownBody", "AllBody", 1.0F, 0.0F, 0.0F));
+        geometry.add(bone("UpperBody", "UpBody", 2.0F, 0.0F, 0.0F));
+        geometry.add(bone("AllHead", "UpperBody", 3.0F, 0.0F, 0.0F));
+        geometry.linkHierarchy();
+
+        Map<Integer, Vector3f> pivots = ModelJointPivots.estimate(geometry, 1.0F, 1.0F);
+
+        assertEquals(0.0F, pivots.get(HumanoidRig.TORSO).x(), 0.00001F);
+        assertEquals(1.0F, pivots.get(HumanoidRig.TORSO).y(), 0.00001F);
+        assertEquals(0.0F, pivots.get(HumanoidRig.CHEST).x(), 0.00001F);
+        assertEquals(2.0F, pivots.get(HumanoidRig.CHEST).y(), 0.00001F);
+        assertEquals(0.0F, pivots.get(HumanoidRig.HEAD).x(), 0.00001F);
+        assertEquals(3.0F, pivots.get(HumanoidRig.HEAD).y(), 0.00001F);
+    }
+
+    @Test
+    void rejectsConflictingCentralAliasesPerJoint() {
+        GeometryDocument geometry = new GeometryDocument();
+        geometry.add(bone("AllBody", "", 0.0F, 1.0F, 0.0F));
+        geometry.add(bone("UpBody", "AllBody", 0.0F, 1.0F, 0.0F));
+        geometry.add(bone("DownBody", "AllBody", 0.0F, 1.0F, 0.0F));
+        geometry.add(bone("UpperBody", "UpBody", 0.0F, 1.3F, 0.0F));
+        geometry.add(bone("Chest", "UpBody", 0.0F, 2.0F, 0.0F));
+        geometry.add(bone("AllHead", "UpBody", 0.0F, 1.6F, 0.0F));
+        geometry.linkHierarchy();
+
+        Map<Integer, Vector3f> pivots = ModelJointPivots.estimate(geometry, 1.0F, 1.0F);
+
+        assertVectorEquals(new Vector3f(0.0F, 1.0F, 0.0F), pivots.get(HumanoidRig.TORSO));
+        assertFalse(pivots.containsKey(HumanoidRig.CHEST));
+        assertVectorEquals(new Vector3f(0.0F, 1.6F, 0.0F), pivots.get(HumanoidRig.HEAD));
+    }
+
+    @Test
+    void excludesAlternateOrLimbNestedCentralControls() {
+        GeometryDocument geometry = new GeometryDocument();
+        geometry.add(bone("AllBody", "", 0.0F, 1.0F, 0.0F));
+        geometry.add(bone("UpBody", "AllBody", 0.0F, 1.0F, 0.0F));
+        geometry.add(bone("DownBody", "AllBody", 0.0F, 1.0F, 0.0F));
+        geometry.add(bone("UpperBody2_Default", "UpBody", 0.0F, 1.3F, 0.0F));
+        geometry.add(bone("RightArm", "UpBody", -0.3F, 1.4F, 0.0F));
+        geometry.add(bone("AllHead", "RightArm", 0.0F, 1.6F, 0.0F));
+        geometry.linkHierarchy();
+
+        Map<Integer, Vector3f> pivots = ModelJointPivots.estimate(geometry, 1.0F, 1.0F);
+
+        assertVectorEquals(new Vector3f(0.0F, 1.0F, 0.0F), pivots.get(HumanoidRig.TORSO));
+        assertFalse(pivots.containsKey(HumanoidRig.CHEST));
+        assertFalse(pivots.containsKey(HumanoidRig.HEAD));
+    }
+
+    @Test
     void derivesScaledShoulderPivotFromTheUpperArmTopRing() {
         GeometryDocument geometry = new GeometryDocument();
         GeometryDocument.Bone arm = faceBone("RightArm", 1.0F, 3.0F, 1.0F, 2.0F);
@@ -385,5 +494,11 @@ class ModelJointPivotsTest {
         bone.parentName(parent);
         bone.pivot(pivotX, pivotY, pivotZ);
         return bone;
+    }
+
+    private static void assertVectorEquals(Vector3f expected, Vector3f actual) {
+        assertEquals(expected.x(), actual.x(), 0.00001F);
+        assertEquals(expected.y(), actual.y(), 0.00001F);
+        assertEquals(expected.z(), actual.z(), 0.00001F);
     }
 }

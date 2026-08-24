@@ -5,6 +5,7 @@ import org.joml.Matrix4f;
 import org.joml.Vector3f;
 
 import java.util.ArrayDeque;
+import java.util.EnumMap;
 import java.util.HashMap;
 import java.util.IdentityHashMap;
 import java.util.List;
@@ -17,6 +18,18 @@ final class ModelJointPivots {
     private static final float DISTAL_RING_EPSILON = 0.05F;
     private static final float MIN_SEGMENT_LENGTH = 0.1F;
     private static final float ANCHOR_CLUSTER_EPSILON_SQUARED = 0.0025F;
+    /** Four authored model pixels after the package's configured model scale is applied. */
+    private static final float CENTRAL_PAIR_TOLERANCE = 0.25F;
+    private static final float CENTRAL_MIN_SPAN_SQUARED = 0.0025F;
+
+    private enum CentralRole {
+        ALL_BODY,
+        UP_BODY,
+        DOWN_BODY,
+        EXPLICIT_TORSO,
+        UPPER_BODY,
+        HEAD_BASE
+    }
 
     private record Visit(GeometryDocument.Bone bone, Matrix4f parentTransform) {
     }
@@ -30,6 +43,38 @@ final class ModelJointPivots {
     }
 
     private record ToolAnchor(Vector3f point, GeometryDocument.Bone source) {
+    }
+
+    /** Merges equivalent/default central controls while rejecting conflicting definitions. */
+    private static final class PivotCluster {
+        private final Vector3f sum = new Vector3f();
+        private Vector3f first;
+        private int count;
+        private int candidates;
+        private boolean ambiguous;
+
+        private void include(Vector3f value) {
+            candidates++;
+            if (value == null || !finite(value)) {
+                ambiguous = true;
+                return;
+            }
+            if (first == null) {
+                first = new Vector3f(value);
+            } else if (first.distanceSquared(value) > ANCHOR_CLUSTER_EPSILON_SQUARED) {
+                ambiguous = true;
+            }
+            sum.add(value);
+            count++;
+        }
+
+        private boolean present() {
+            return candidates > 0;
+        }
+
+        private Vector3f value() {
+            return ambiguous || count == 0 ? null : new Vector3f(sum).div(count);
+        }
     }
 
     private static final class VerticalExtent {
@@ -216,6 +261,7 @@ final class ModelJointPivots {
         Map<Integer, Vector3f> lowerLimbPivots = new HashMap<>();
         Map<Integer, AnchorCluster> toolLocators = new HashMap<>();
         Map<GeometryDocument.Bone, SegmentCandidate> segments = new IdentityHashMap<>();
+        Map<CentralRole, PivotCluster> centralControls = new EnumMap<>(CentralRole.class);
 
         ArrayDeque<Visit> pending = roots(geometry);
         Vector3f scratch = new Vector3f();
@@ -224,6 +270,14 @@ final class ModelJointPivots {
             GeometryDocument.Bone bone = visit.bone();
             Matrix4f transform = bindTransform(visit.parentTransform(), bone);
             boolean primary = isPrimaryVariant(bone.name());
+
+            CentralRole centralRole = primary && isOnCentralBranch(bone)
+                    ? centralRole(bone.name()) : null;
+            if (centralRole != null) {
+                centralControls.computeIfAbsent(centralRole, ignored -> new PivotCluster())
+                        .include(transformedPivot(
+                                bone, visit.parentTransform(), horizontalScale, verticalScale));
+            }
 
             if (primary && isLowerLimbSegmentRoot(bone)) {
                 Vector3f pivot = transformedPivot(
@@ -280,6 +334,15 @@ final class ModelJointPivots {
         }
 
         Map<Integer, Vector3f> result = new HashMap<>();
+        float centralTolerance = CENTRAL_PAIR_TOLERANCE
+                * Math.max(horizontalScale, verticalScale);
+        Vector3f torso = selectTorsoPivot(centralControls, centralTolerance);
+        Vector3f head = centralValue(centralControls, CentralRole.HEAD_BASE);
+        Vector3f chest = selectChestPivot(
+                centralControls, torso, head, centralTolerance);
+        put(result, HumanoidRig.TORSO, torso);
+        put(result, HumanoidRig.CHEST, chest);
+        put(result, HumanoidRig.HEAD, head);
         putPair(result, HumanoidRig.RIGHT_SHOULDER, HumanoidRig.RIGHT_ARM,
                 topOf(topRings, HumanoidRig.RIGHT_ARM));
         putPair(result, HumanoidRig.LEFT_SHOULDER, HumanoidRig.LEFT_ARM,
@@ -306,6 +369,110 @@ final class ModelJointPivots {
         putTool(result, toolSources, HumanoidRig.RIGHT_TOOL, rightTool);
         putTool(result, toolSources, HumanoidRig.LEFT_TOOL, leftTool);
         return new Estimate(result, toolSources);
+    }
+
+    private static Vector3f selectTorsoPivot(
+            Map<CentralRole, PivotCluster> controls, float tolerance) {
+        PivotCluster explicit = controls.get(CentralRole.EXPLICIT_TORSO);
+        if (explicit != null && explicit.present()) {
+            return explicit.value();
+        }
+        Vector3f[] candidates = {
+                centralValue(controls, CentralRole.ALL_BODY),
+                centralValue(controls, CentralRole.UP_BODY),
+                centralValue(controls, CentralRole.DOWN_BODY)
+        };
+        float toleranceSquared = tolerance * tolerance;
+        float bestDistance = Float.MAX_VALUE;
+        Vector3f best = null;
+        for (int first = 0; first < candidates.length; first++) {
+            if (candidates[first] == null) {
+                continue;
+            }
+            for (int second = first + 1; second < candidates.length; second++) {
+                if (candidates[second] == null) {
+                    continue;
+                }
+                float distance = candidates[first].distanceSquared(candidates[second]);
+                if (Float.isFinite(distance) && distance <= toleranceSquared
+                        && distance < bestDistance) {
+                    bestDistance = distance;
+                    best = new Vector3f(candidates[first]).add(candidates[second]).mul(0.5F);
+                }
+            }
+        }
+        return best;
+    }
+
+    private static Vector3f selectChestPivot(
+            Map<CentralRole, PivotCluster> controls,
+            Vector3f torso, Vector3f head, float tolerance) {
+        PivotCluster upperBody = controls.get(CentralRole.UPPER_BODY);
+        if (upperBody != null && upperBody.present()) {
+            Vector3f direct = upperBody.value();
+            return direct != null && plausibleCentralPoint(direct, torso, head, tolerance)
+                    ? direct : null;
+        }
+
+        // Some official legacy models omit UpperBody. UpBody is the corresponding authored
+        // upper-body control, but only use it when the surrounding torso/head span verifies it.
+        Vector3f fallback = centralValue(controls, CentralRole.UP_BODY);
+        return fallback != null && torso != null && head != null
+                && plausibleCentralPoint(fallback, torso, head, tolerance) ? fallback : null;
+    }
+
+    private static boolean plausibleCentralPoint(
+            Vector3f point, Vector3f torso, Vector3f head, float tolerance) {
+        if (torso == null || head == null) {
+            return true;
+        }
+        Vector3f span = new Vector3f(head).sub(torso);
+        float spanSquared = span.lengthSquared();
+        if (!Float.isFinite(spanSquared) || spanSquared < CENTRAL_MIN_SPAN_SQUARED) {
+            return false;
+        }
+        Vector3f offset = new Vector3f(point).sub(torso);
+        float progress = offset.dot(span) / spanSquared;
+        if (!Float.isFinite(progress) || progress < -0.05F || progress > 1.05F) {
+            return false;
+        }
+        Vector3f projected = new Vector3f(span).mul(progress).add(torso);
+        float distance = projected.distanceSquared(point);
+        return Float.isFinite(distance) && distance <= tolerance * tolerance;
+    }
+
+    private static Vector3f centralValue(
+            Map<CentralRole, PivotCluster> controls, CentralRole role) {
+        PivotCluster cluster = controls.get(role);
+        return cluster == null ? null : cluster.value();
+    }
+
+    private static CentralRole centralRole(String name) {
+        return switch (normalizedName(name)) {
+            case "allbody" -> CentralRole.ALL_BODY;
+            case "upbody" -> CentralRole.UP_BODY;
+            case "downbody" -> CentralRole.DOWN_BODY;
+            case "waist", "torso", "hip", "hips", "pelvis" ->
+                    CentralRole.EXPLICIT_TORSO;
+            case "upperbody", "chest" -> CentralRole.UPPER_BODY;
+            case "allhead", "neck" -> CentralRole.HEAD_BASE;
+            default -> null;
+        };
+    }
+
+    private static boolean isOnCentralBranch(GeometryDocument.Bone bone) {
+        for (GeometryDocument.Bone parent = bone.parent(); parent != null;
+             parent = parent.parent()) {
+            if (!isPrimaryVariant(parent.name())) {
+                return false;
+            }
+            int direct = HumanoidRig.directJointFor(parent);
+            if (direct >= 0 && direct != HumanoidRig.ROOT
+                    && direct != HumanoidRig.TORSO && direct != HumanoidRig.CHEST) {
+                return false;
+            }
+        }
+        return true;
     }
 
     private static Map<Integer, TopRing> collectRings(
@@ -549,6 +716,24 @@ final class ModelJointPivots {
             }
         } while (!compact.equals(previous));
         return !numbered;
+    }
+
+    private static String normalizedName(String name) {
+        String compact = name == null ? "" : name.toLowerCase(Locale.ROOT)
+                .replace("_", "").replace(" ", "");
+        String previous;
+        do {
+            previous = compact;
+            int end = compact.length();
+            while (end > 0 && Character.isDigit(compact.charAt(end - 1))) {
+                end--;
+            }
+            compact = compact.substring(0, end);
+            if (compact.endsWith("default")) {
+                compact = compact.substring(0, compact.length() - "default".length());
+            }
+        } while (!compact.equals(previous));
+        return compact;
     }
 
     private static ArrayDeque<Visit> roots(GeometryDocument geometry) {
