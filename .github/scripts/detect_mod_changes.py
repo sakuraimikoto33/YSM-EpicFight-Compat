@@ -6,10 +6,14 @@ from __future__ import annotations
 import argparse
 from dataclasses import dataclass
 import json
+import os
 from pathlib import Path
 import re
 import subprocess
-from typing import Iterable
+from typing import Any, Iterable
+from urllib.error import HTTPError, URLError
+from urllib.parse import quote, urlencode
+from urllib.request import Request, urlopen
 
 
 OID_PATTERN = re.compile(r"(?:[0-9a-fA-F]{40}|[0-9a-fA-F]{64})")
@@ -31,6 +35,10 @@ NON_BUILD_PREFIXES = (
     "assets/",
     "docs/",
 )
+ARTIFACT_NAME_PREFIX = "ysm-epicfight-compat-"
+GITHUB_API_VERSION = "2022-11-28"
+ARTIFACTS_PER_PAGE = 100
+MAX_ARTIFACT_PAGES = 10
 
 
 @dataclass(frozen=True)
@@ -41,8 +49,27 @@ class ChangeDecision:
     reason: str
 
 
+@dataclass(frozen=True)
+class ArtifactReference:
+    artifact_id: int
+    name: str
+    run_id: int
+    created_at: str
+
+    def web_url(self, server_url: str, repository: str) -> str:
+        repository_path = quote(repository, safe="/")
+        return (
+            f"{server_url.rstrip('/')}/{repository_path}/actions/runs/"
+            f"{self.run_id}/artifacts/{self.artifact_id}"
+        )
+
+
 class GitInspectionError(RuntimeError):
     """Raised when a pushed range cannot be inspected reliably."""
+
+
+class ArtifactLookupError(RuntimeError):
+    """Raised when retained artifacts cannot be inspected reliably."""
 
 
 def _run_git(repository: Path, *arguments: str) -> bytes:
@@ -211,6 +238,87 @@ def conservative_decision(error: Exception) -> ChangeDecision:
     )
 
 
+def artifact_name_prefix(branch: str) -> str:
+    return f"{ARTIFACT_NAME_PREFIX}{branch.replace('/', '-')}-"
+
+
+def select_latest_artifact(
+    artifacts: Iterable[dict[str, Any]], branch: str
+) -> ArtifactReference | None:
+    expected_prefix = artifact_name_prefix(branch)
+    candidates: list[ArtifactReference] = []
+    for artifact in artifacts:
+        if not isinstance(artifact, dict):
+            continue
+        workflow_run = artifact.get("workflow_run")
+        if not isinstance(workflow_run, dict):
+            continue
+        name = artifact.get("name")
+        artifact_id = artifact.get("id")
+        run_id = workflow_run.get("id")
+        created_at = artifact.get("created_at")
+        if (
+            artifact.get("expired") is not False
+            or workflow_run.get("head_branch") != branch
+            or not isinstance(name, str)
+            or not name.startswith(expected_prefix)
+            or not isinstance(artifact_id, int)
+            or artifact_id <= 0
+            or not isinstance(run_id, int)
+            or run_id <= 0
+            or not isinstance(created_at, str)
+        ):
+            continue
+        candidates.append(ArtifactReference(artifact_id, name, run_id, created_at))
+
+    if not candidates:
+        return None
+    return max(candidates, key=lambda artifact: (artifact.created_at, artifact.artifact_id))
+
+
+def fetch_latest_artifact(
+    api_url: str,
+    token: str,
+    repository: str,
+    branch: str,
+) -> ArtifactReference | None:
+    if not repository or "/" not in repository:
+        raise ArtifactLookupError("GitHub repository must use the owner/name form")
+
+    repository_path = quote(repository, safe="/")
+    for page in range(1, MAX_ARTIFACT_PAGES + 1):
+        query = urlencode({"per_page": ARTIFACTS_PER_PAGE, "page": page})
+        endpoint = (
+            f"{api_url.rstrip('/')}/repos/{repository_path}/actions/artifacts?{query}"
+        )
+        headers = {
+            "Accept": "application/vnd.github+json",
+            "User-Agent": "YSM-EpicFight-Compat-build-decision",
+            "X-GitHub-Api-Version": GITHUB_API_VERSION,
+        }
+        if token:
+            headers["Authorization"] = f"Bearer {token}"
+
+        request = Request(endpoint, headers=headers)
+        try:
+            with urlopen(request, timeout=15) as response:
+                payload = json.load(response)
+        except (HTTPError, URLError, TimeoutError, json.JSONDecodeError) as error:
+            raise ArtifactLookupError(str(error)) from error
+
+        if not isinstance(payload, dict) or not isinstance(
+            payload.get("artifacts"), list
+        ):
+            raise ArtifactLookupError("GitHub returned an invalid artifact response")
+        artifacts = payload["artifacts"]
+        latest = select_latest_artifact(artifacts, branch)
+        if latest is not None:
+            return latest
+        if len(artifacts) < ARTIFACTS_PER_PAGE:
+            break
+    return None
+
+
 def _append_outputs(path: Path, decision: ChangeDecision) -> None:
     with path.open("a", encoding="utf-8", newline="\n") as output:
         output.write(f"mod_changed={str(decision.mod_changed).lower()}\n")
@@ -222,7 +330,13 @@ def _markdown_code(value: str) -> str:
     return sanitized.replace("`", "\\`")
 
 
-def _append_summary(path: Path, decision: ChangeDecision) -> None:
+def _append_summary(
+    path: Path,
+    decision: ChangeDecision,
+    artifact: ArtifactReference | None = None,
+    artifact_url: str | None = None,
+    artifact_note: str | None = None,
+) -> None:
     with path.open("a", encoding="utf-8", newline="\n") as summary:
         summary.write("## Mod build decision\n\n")
         summary.write(
@@ -230,6 +344,15 @@ def _append_summary(path: Path, decision: ChangeDecision) -> None:
         )
         summary.write(f"- Pushed commits inspected: {decision.commits_scanned}\n")
         summary.write(f"- Reason: {_markdown_code(decision.reason)}\n")
+        if not decision.mod_changed:
+            if artifact is not None and artifact_url is not None:
+                summary.write(
+                    f"- Latest artifact: [{_markdown_code(artifact.name)}]"
+                    f"({artifact_url})\n"
+                )
+            else:
+                note = artifact_note or "no retained artifact was found"
+                summary.write(f"- Latest artifact: {_markdown_code(note)}\n")
         if decision.relevant_paths:
             summary.write("- Build-relevant paths:\n")
             for changed_path in decision.relevant_paths[:20]:
@@ -260,6 +383,11 @@ def main(arguments: Iterable[str] | None = None) -> int:
     parser.add_argument("--fetch-missing-before")
     parser.add_argument("--github-output", type=Path)
     parser.add_argument("--github-step-summary", type=Path)
+    parser.add_argument("--github-repository")
+    parser.add_argument("--github-ref-name")
+    parser.add_argument("--github-api-url", default="https://api.github.com")
+    parser.add_argument("--github-server-url", default="https://github.com")
+    parser.add_argument("--github-token-env")
     options = parser.parse_args(arguments)
 
     try:
@@ -272,10 +400,47 @@ def main(arguments: Iterable[str] | None = None) -> int:
     except (GitInspectionError, OSError) as error:
         decision = conservative_decision(error)
 
+    artifact: ArtifactReference | None = None
+    artifact_url: str | None = None
+    artifact_note: str | None = None
+    if not decision.mod_changed:
+        if options.github_repository and options.github_ref_name:
+            token = (
+                os.environ.get(options.github_token_env, "")
+                if options.github_token_env
+                else ""
+            )
+            try:
+                artifact = fetch_latest_artifact(
+                    options.github_api_url,
+                    token,
+                    options.github_repository,
+                    options.github_ref_name,
+                )
+                if artifact is not None:
+                    artifact_url = artifact.web_url(
+                        options.github_server_url, options.github_repository
+                    )
+                else:
+                    artifact_note = (
+                        f"no retained artifact was found for "
+                        f"{options.github_ref_name}"
+                    )
+            except ArtifactLookupError as error:
+                artifact_note = f"lookup failed: {error}"
+        else:
+            artifact_note = "lookup was not configured"
+
     if options.github_output is not None:
         _append_outputs(options.github_output, decision)
     if options.github_step_summary is not None:
-        _append_summary(options.github_step_summary, decision)
+        _append_summary(
+            options.github_step_summary,
+            decision,
+            artifact,
+            artifact_url,
+            artifact_note,
+        )
     print(_decision_json(decision))
     return 0
 
