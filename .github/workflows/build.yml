@@ -10,8 +10,40 @@ permissions:
   contents: read
 
 jobs:
+  changes:
+    name: Inspect pushed commits
+    if: github.event.deleted != true
+    runs-on: ubuntu-latest
+    outputs:
+      mod_changed: ${{ steps.detect.outputs.mod_changed }}
+      commits_scanned: ${{ steps.detect.outputs.commits_scanned }}
+
+    steps:
+      - name: Checkout complete pushed history
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.after }}
+          fetch-depth: 0
+          fetch-tags: false
+
+      - name: Detect mod changes across the push
+        id: detect
+        shell: bash
+        env:
+          BEFORE_SHA: ${{ github.event.before }}
+          AFTER_SHA: ${{ github.event.after }}
+        run: >-
+          python3 .github/scripts/detect_mod_changes.py
+          --before "$BEFORE_SHA"
+          --after "$AFTER_SHA"
+          --fetch-missing-before origin
+          --github-output "$GITHUB_OUTPUT"
+          --github-step-summary "$GITHUB_STEP_SUMMARY"
+
   build:
     name: Build ${{ github.ref_name }}
+    needs: changes
+    if: needs.changes.outputs.mod_changed == 'true'
     runs-on: ubuntu-latest
     outputs:
       artifact_name: ${{ steps.artifact.outputs.name }}
