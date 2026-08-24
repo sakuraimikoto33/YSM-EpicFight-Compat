@@ -2,6 +2,7 @@ package net.okitsu.ysmepicfightcompat;
 
 import net.minecraftforge.fml.common.Mod;
 import net.okitsu.ysmepicfightcompat.config.ClientPreferences;
+import net.okitsu.ysmepicfightcompat.config.ServerPreferences;
 import net.okitsu.ysmepicfightcompat.network.CompatNetwork;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
@@ -14,6 +15,7 @@ public final class CompatMod {
 
     public CompatMod() {
         ClientPreferences.register();
+        ServerPreferences.register();
         CompatNetwork.registerMessages();
         LOG.info("YSM-EF Compat: initialized");
     }

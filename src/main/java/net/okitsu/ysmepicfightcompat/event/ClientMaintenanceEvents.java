@@ -72,6 +72,7 @@ public final class ClientMaintenanceEvents {
             reloadCountdown = -1;
             Minecraft.getInstance().execute(() -> {
                 PlayerSelectionResolver.clear();
+                ClientModelTransfers.clear();
                 CombatMeshCache.clear();
             });
         }

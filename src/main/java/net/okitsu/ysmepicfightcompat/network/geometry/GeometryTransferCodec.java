@@ -25,7 +25,7 @@ import java.util.Map;
 import java.util.zip.GZIPInputStream;
 import java.util.zip.GZIPOutputStream;
 
-/** Texture- and audio-payload-free, size-limited transfer for server-only model data. */
+/** Size-limited transfer for server-only model data without package or audio payloads. */
 public final class GeometryTransferCodec {
     private static final int MAGIC = 0x59454632;
     private static final int VERSION = 1;
@@ -41,6 +41,9 @@ public final class GeometryTransferCodec {
     private static final int MAX_CONTROLLERS = 4_096;
     private static final int MAX_CONTROLLER_STATES = 65_536;
     private static final int MAX_CONTROLLER_ENTRIES = 1_000_000;
+    private static final int MAX_TEXTURES = 4_096;
+    private static final int MAX_SINGLE_TEXTURE_BYTES = 128 * 1024 * 1024;
+    private static final long MAX_TEXTURE_BYTES = 128L * 1024 * 1024;
     private static final int MAX_STRING_BYTES = 16 * 1024;
 
     private GeometryTransferCodec() {
@@ -64,6 +67,7 @@ public final class GeometryTransferCodec {
             writeGeometry(output, model.geometry());
             writeAnimations(output, model.animations());
             writeControllers(output, model.animationControllers());
+            writeTextures(output, model);
         }
         byte[] payload = target.toByteArray();
         if (payload.length > MAX_COMPRESSED_BYTES) {
@@ -90,14 +94,73 @@ public final class GeometryTransferCodec {
             GeometryDocument geometry = readGeometry(input, textureWidth, textureHeight);
             Map<String, AnimationClip> animations = readAnimations(input);
             Map<String, AnimationController> controllers = readControllers(input);
+            TextureResult textures = readTextures(input);
             if (input.read() != -1) {
                 throw new IOException("Trailing bytes in model transfer");
             }
-            return ModelBundle.remote(modelId, geometry, animations, controllers,
+            ModelBundle result = ModelBundle.remote(modelId, geometry, animations, controllers,
                     widthScale, heightScale, defaultTexture);
+            result.textures().putAll(textures.bytes());
+            result.textureInfo().putAll(textures.info());
+            return result;
         } catch (RuntimeException exception) {
             throw new IOException("Invalid model transfer", exception);
         }
+    }
+
+    private static void writeTextures(DataOutputStream output, ModelBundle model)
+            throws IOException {
+        bounded(model.textures().size(), MAX_TEXTURES, "texture");
+        output.writeInt(model.textures().size());
+        long total = 0;
+        for (Map.Entry<String, byte[]> entry : model.textures().entrySet()) {
+            string(output, entry.getKey());
+            byte[] bytes = entry.getValue();
+            if (bytes == null || bytes.length > MAX_SINGLE_TEXTURE_BYTES) {
+                throw new IOException("Invalid model texture size");
+            }
+            total += bytes.length;
+            if (total > MAX_TEXTURE_BYTES) {
+                throw new IOException("Model textures exceed their total size limit");
+            }
+            output.writeInt(bytes.length);
+            output.write(bytes);
+            ModelBundle.TextureInfo info = model.textureInfo().get(entry.getKey());
+            output.writeBoolean(info != null);
+            if (info != null) {
+                positive(info.width(), 65_536, "texture width");
+                positive(info.height(), 65_536, "texture height");
+                output.writeInt(info.width());
+                output.writeInt(info.height());
+                output.writeInt(info.format());
+            }
+        }
+    }
+
+    private static TextureResult readTextures(DataInputStream input) throws IOException {
+        int count = bounded(input.readInt(), MAX_TEXTURES, "texture");
+        Map<String, byte[]> textures = new LinkedHashMap<>();
+        Map<String, ModelBundle.TextureInfo> info = new LinkedHashMap<>();
+        long total = 0;
+        for (int index = 0; index < count; index++) {
+            String name = string(input);
+            int length = bounded(input.readInt(), MAX_SINGLE_TEXTURE_BYTES,
+                    "texture byte");
+            total += length;
+            if (total > MAX_TEXTURE_BYTES) {
+                throw new IOException("Model textures exceed their total size limit");
+            }
+            byte[] bytes = input.readNBytes(length);
+            if (bytes.length != length || textures.putIfAbsent(name, bytes) != null) {
+                throw new IOException("Invalid or duplicate model texture");
+            }
+            if (input.readBoolean()) {
+                int width = positive(input.readInt(), 65_536, "texture width");
+                int height = positive(input.readInt(), 65_536, "texture height");
+                info.put(name, new ModelBundle.TextureInfo(width, height, input.readInt()));
+            }
+        }
+        return new TextureResult(textures, info);
     }
 
     private static void writeGeometry(DataOutputStream output, GeometryDocument geometry)
@@ -742,6 +805,10 @@ public final class GeometryTransferCodec {
     }
 
     private record TrackResult(AnimationClip.Track track, int keyframes) {
+    }
+
+    private record TextureResult(Map<String, byte[]> bytes,
+                                 Map<String, ModelBundle.TextureInfo> info) {
     }
 
     private static final class InputLimit extends FilterInputStream {

@@ -140,10 +140,16 @@ public final class LocalModelRepository {
     }
 
     public static long contentStamp(String modelId) {
+        byte[] digest = contentDigest(modelId);
+        return digest == null ? -1L : ByteBuffer.wrap(digest).getLong();
+    }
+
+    /** Full source digest used to validate persistent parsed-model caches. */
+    public static byte[] contentDigest(String modelId) {
         try {
             Optional<LocatedModel> source = locate(DEFAULT_ROOT, modelId);
             if (source.isEmpty()) {
-                return -1L;
+                return null;
             }
             LocatedModel located = source.get();
             MessageDigest digest = MessageDigest.getInstance("SHA-256");
@@ -160,9 +166,9 @@ public final class LocalModelRepository {
                     digest.update(bytes);
                 }
             }
-            return ByteBuffer.wrap(digest.digest()).getLong();
+            return digest.digest();
         } catch (IOException | NoSuchAlgorithmException | RuntimeException exception) {
-            return -1L;
+            return null;
         }
     }
 

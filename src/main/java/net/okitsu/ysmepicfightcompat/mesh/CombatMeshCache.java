@@ -11,6 +11,7 @@ import net.okitsu.ysmepicfightcompat.animation.ParallelAnimationProgram;
 import net.okitsu.ysmepicfightcompat.assets.LocalModelRepository;
 import net.okitsu.ysmepicfightcompat.assets.ModelBundle;
 import net.okitsu.ysmepicfightcompat.assets.OfficialTextureResolver;
+import net.okitsu.ysmepicfightcompat.cache.ClientLocalModelCache;
 import net.okitsu.ysmepicfightcompat.config.ClientPreferences;
 import net.okitsu.ysmepicfightcompat.network.geometry.ClientModelTransfers;
 import yesman.epicfight.api.asset.AssetAccessor;
@@ -142,7 +143,7 @@ public final class CombatMeshCache {
         ensure(modelId);
         ResourceLocation official = OfficialTextureResolver.resolve(modelId, textureName);
         if (official != null) {
-            discardFallbacks(modelId);
+            releaseUploadedFallbacks(modelId);
             return official;
         }
         ResourceLocation exact = FALLBACK_LOCATIONS.get(modelId + '#'
@@ -273,7 +274,7 @@ public final class CombatMeshCache {
         try {
             CONVERSION_PERMITS.acquire();
             acquired = true;
-            ModelBundle source = remote != null ? remote : LocalModelRepository.load(modelId);
+            ModelBundle source = remote != null ? remote : ClientLocalModelCache.load(modelId);
             Conversion conversion = bake(source);
             synchronized (CombatMeshCache.class) {
                 PENDING_MODELS.remove(modelId);
@@ -357,7 +358,7 @@ public final class CombatMeshCache {
         }
         List<String> victims = new ArrayList<>();
         synchronized (RECENCY) {
-            while (RECENCY.size() > ClientPreferences.MODEL_CACHE_CAPACITY.get()) {
+            while (RECENCY.size() > ClientPreferences.CLIENT_MODEL_MEMORY_CACHE_SIZE.get()) {
                 String victim = RECENCY.keySet().iterator().next();
                 RECENCY.remove(victim);
                 victims.add(victim);
@@ -394,6 +395,19 @@ public final class CombatMeshCache {
                 RELEASE_AFTER_TICKS.put(key, RELEASE_DELAY);
             }
         }
+    }
+
+    private static void releaseUploadedFallbacks(String modelId) {
+        String prefix = modelId + '#';
+        FALLBACK_LOCATIONS.entrySet().stream()
+                .filter(entry -> entry.getKey().startsWith(prefix))
+                .map(Map.Entry::getValue)
+                .forEach(location -> {
+                    String key = location.toString();
+                    if (UPLOADED.remove(key)) {
+                        RELEASE_AFTER_TICKS.put(key, RELEASE_DELAY);
+                    }
+                });
     }
 
     private static NativeImage decodeTexture(byte[] bytes, ModelBundle.TextureInfo info)

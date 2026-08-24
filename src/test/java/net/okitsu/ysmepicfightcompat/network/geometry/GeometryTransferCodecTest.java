@@ -41,7 +41,7 @@ class GeometryTransferCodecTest {
     }
 
     @Test
-    void roundTripsGeometryAndBoundedAnimationMetadataWithoutAssets() throws IOException {
+    void roundTripsGeometryAnimationsAndBoundedTexturesWithoutPackageAssets() throws IOException {
         GeometryDocument geometry = new GeometryDocument();
         geometry.textureSize(128, 64);
         GeometryDocument.Bone root = bone("root", "");
@@ -103,10 +103,16 @@ class GeometryTransferCodecTest {
         ModelBundle source = ModelBundle.remote("server/model", geometry,
                 Map.of(clip.name(), clip, endless.name(), endless),
                 Map.of(controller.name(), controller), 0.75F, 0.8F, "default");
+        source.textures().put("default", new byte[]{1, 2, 3, 4});
+        source.textures().put("alternate", new byte[]{5, 6, 7});
+        source.textureInfo().put("default", new ModelBundle.TextureInfo(1, 1, -1));
         byte[] payload = GeometryTransferCodec.encode(source);
         ModelBundle decoded = GeometryTransferCodec.decode("server/model", payload);
 
-        assertTrue(decoded.textures().isEmpty());
+        assertArrayEquals(new byte[]{1, 2, 3, 4}, decoded.textures().get("default"));
+        assertArrayEquals(new byte[]{5, 6, 7}, decoded.textures().get("alternate"));
+        assertEquals(new ModelBundle.TextureInfo(1, 1, -1),
+                decoded.textureInfo().get("default"));
         assertEquals(0.75F, decoded.widthScale());
         assertEquals(0.8F, decoded.heightScale());
         assertEquals("default", decoded.defaultTexture());
