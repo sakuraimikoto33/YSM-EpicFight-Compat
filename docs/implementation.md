@@ -32,11 +32,21 @@ Input sizes, counts, paths, hierarchy depth, and numeric values are checked at p
 
 For every frame, `AuxiliaryPoseMatrices` copies Epic Fight's major skin matrices without modification and appends the composed auxiliary matrices. `ParallelAnimationProgram` evaluates `pre_parallel` before `parallel`; position, rotation, and scale transforms are applied to the compatible supplemental pose without mutating Epic Fight's animator. Rotation channels from parallel clips accumulate on the authored bind rotation, while the later, higher-priority clip replaces position and scale channels. Scale tracks may hide a major bone and its descendants, preserving model variants without moving the combat rig.
 
-`AutomaticAnimationSelector` retains YSM state, armor-condition, vehicle, and passenger clips. Locomotion clips supplement Epic Fight's pose, while mounted states use a separate whole-model path so Epic Fight's riding pose is not applied a second time. Roulette clips use the same model-space composition path for large root and body movement. Held-item-specific automatic clips are intentionally not selected because Epic Fight owns held-item animation and rendering during combat.
+`AutomaticAnimationSelector` retains YSM state, armor-condition, held-item condition, vehicle, and passenger clips. Locomotion clips supplement Epic Fight's pose, while mounted states use a separate whole-model path so Epic Fight's riding pose is not applied a second time. Roulette clips use the same model-space composition path for large root and body movement. Held-item clips are evaluated only through the replacement and effect rules described below; an ordinary item with no detected model-authored geometry remains under Epic Fight's animation and item layer.
 
 Animation clips retain loop or hold-on-last-frame playback, Molang `blend_weight`, keyframe interpolation, and chronological timeline dispatch across loop boundaries. Tracks on non-geometry Molang pseudo-bones are evaluated in source order for their variable side effects but never receive a pose matrix. Nested Molang functions use stacked argument frames, preventing an inner call from overwriting its caller's arguments.
 
 `ExpressionEngine` implements the Molang operators needed by these clips, the supported official math functions and read-only queries, and YSM helpers such as `ysm.first_order`, `ysm.second_order`, and `ysm.perlin_noise`. Entity, equipment, item, biome, block, camera-distance, and animation-time inputs are exposed through read-only query paths. Ordinary variables accept both `v.*` and `variable.*`; persistent roaming variables accept both `v.roaming.*` and `variable.roaming.*`. Configuration-variable snapshots are synchronized for remote players so visibility and conditional animation state match the owning player.
+
+## Model-authored held items
+
+`CustomHeldItemPolicy` examines the model's automatic hold, use, and swing clips together with its default visibility. It treats a condition as a replacement only when that condition reveals a normally hidden renderable hand subtree, or when it hides the authored Tool locator for the clip while animating a renderable hand prop. The decision comes from model and animation semantics rather than a model-ID allowlist. A bow use clip that only reveals an effect, such as a magic circle, augments Epic Fight's retained bow and does not become a replacement by itself.
+
+When a replacement is active, `ParallelAnimationProgram` evaluates only the authored prop roots and their required parent chain. The prop is rebased onto Epic Fight's live left or right Tool joint while preserving the displayed fist position and item-specific Epic Fight correction. `PatchedItemInHandLayerMixin` suppresses Epic Fight's item for that hand only inside the exact converted-mesh render scope. If no replacement is detected, the local policy disables it, or the renderer falls back to Epic Fight's default mesh, Epic Fight continues to render the item normally.
+
+Detected custom bows temporarily remain on the YSM-authored main-hand/right-hand attachment instead of being moved to Epic Fight's left-hand bow convention. During draw and release, the complete authored YSM body pose replaces the combat pose so partial arm overrides cannot detach the shoulders. Aim yaw is derived from the live Epic Fight model orientation, the one-shot release continues after Epic Fight's short rebound signal ends, and the saved final authored pose blends back to Epic Fight instead of switching in one frame. Effect-only bow geometry is attached to Epic Fight's left Tool joint without suppressing its bow or replacing the body pose.
+
+`AttackAnimationSoundMixin` redirects only Epic Fight's attack-phase swing sound; hit and impact sounds are unchanged. `ServerAttackSoundRouter` preserves the attacking player, hand, exact Epic Fight sound, pitch, and sequence for each tracking client. A client suppresses that fallback only when the active converted model replaces the attacking item and its YSM timeline either plays or declares an authored attack-sound route. If no route becomes active after the bounded discovery delay, the original Epic Fight swing sound is played locally.
 
 ## Animation controllers and auxiliary outputs
 
@@ -84,7 +94,7 @@ Resource reloads, YSM model reload commands, disconnects, and server shutdowns i
 
 `CombatFirstPersonMixin` selects the same converted mesh for Epic Fight's first-person renderer and applies its configured part visibility. `FirstPersonArmorGateMixin` suppresses the biped armor pass while that converted first-person mesh is active.
 
-The patched third-person renderer suppresses armor, head equipment, and elytra for converted meshes because their biped attachment transforms are not valid for arbitrary model proportions. Held items, capes, arrows, and bee stingers continue through Epic Fight's patched layers. All standard layers remain available when the renderer falls back to Epic Fight's default mesh.
+The patched third-person renderer suppresses armor, head equipment, and elytra for converted meshes because their biped attachment transforms are not valid for arbitrary model proportions. Capes, arrows, and bee stingers continue through Epic Fight's patched layers. Held items also continue through that layer unless the active model-authored rule and the model owner's resolved preference replace the item for that hand. All standard layers remain available when the renderer falls back to Epic Fight's default mesh.
 
 ## Compatibility warning
 
@@ -92,7 +102,11 @@ During client load, `YSMCompatibilityWarningFilter` identifies only official YSM
 
 ## Client configuration
 
-The client config is stored at `config/ysm_epicfight_compat/ysm_epicfight_compat-client.toml`; the global integrated/dedicated-server cache config is stored beside it as `ysm_epicfight_compat-common.toml`. The previous root-level client TOML is intentionally not migrated. `CombatOverlayMixin` delegates each official-YSM overlay frame to `CombatOverlayPolicy`. The client option suppresses the top-left YSM player overlay only while Epic Fight battle mode is active and is read for every overlay frame, so a live configuration reload takes effect without restarting. Configured 2.2.3 or later is an optional client dependency that exposes client options in game; no Configured classes are linked from the compatibility jar, so its absence only removes the settings screen.
+The client config is stored at `config/ysm_epicfight_compat/ysm_epicfight_compat-client.toml`; the global integrated/dedicated-server cache config is stored beside it as `ysm_epicfight_compat-common.toml`. The previous root-level client TOML is intentionally not migrated. `CombatOverlayMixin` delegates each official-YSM overlay frame to `CombatOverlayPolicy`. The client option suppresses the top-left YSM player overlay only while Epic Fight battle mode is active and is read for every overlay frame, so a live configuration reload takes effect without restarting.
+
+`useYsmHeldItemModelsByDefault` defaults to enabled. `heldItemModelOverrides` is a model-ID table whose value is a list of item IDs or `#item_tag` selectors; a matching selector inverts the default for that model. These rules stay on the model owner's client. `ClientHeldItemModelPreferences` sends only the resolved main-hand and off-hand booleans, and `HeldItemPreferenceBroadcaster` relays those values to tracking clients so every observer chooses the same cosmetic renderer without receiving another player's configuration.
+
+Configured 2.2.3 or later is optional. String-targeted `@Pseudo` mixins replace only Configured's unsupported dynamic table leaf with `ConfiguredHeldItemRules`, keeping all Configured API linkage inside that optional integration boundary. The model-specific editor appears under the regular Client folder and adds the currently selected model ID as an empty editable row; empty rows are not written. When Configured is absent, those target classes are never loaded and only the in-game settings screen is unavailable.
 
 ## Source layout
 
@@ -102,5 +116,5 @@ The client config is stored at `config/ysm_epicfight_compat/ysm_epicfight_compat
 | Animation, Molang, controllers, sound, and particles | `animation` |
 | Rig mapping, conversion, and cache | `mesh`, `cache` |
 | Epic Fight rendering and layers | `render`, `render.layer`, `event`, `mixin` |
-| Selection and geometry synchronization | `network`, `network.geometry`, `network.message` |
-| Client preferences and warning handling | `config`, `compat` |
+| Selection, geometry, and held-item display synchronization | `network`, `network.geometry`, `network.message` |
+| Client preferences, optional Configured integration, and warning handling | `config`, `integration.configured`, `compat` |
