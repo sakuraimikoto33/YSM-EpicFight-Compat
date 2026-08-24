@@ -32,11 +32,21 @@
 
 各フレームで `AuxiliaryPoseMatrices` はEpic Fightの主要スキニング行列を変更せずにコピーし、その後ろへ合成済みの補助ボーン行列を追加します。`ParallelAnimationProgram` は `pre_parallel`、`parallel` の順に評価し、Epic Fightのanimatorを書き換えず、互換性のある補助ポーズへ座標・回転・スケール変形を適用します。parallelクリップの回転チャンネルはモデル定義時のbind回転へ加算し、座標とスケールは後から評価される高優先度クリップが置き換えます。主要ボーンのスケールトラックによる自身と子孫の非表示判定も行い、戦闘用リグを動かさずにモデルの表示バリエーションを維持します。
 
-`AutomaticAnimationSelector` は、YSMの状態、装備条件、乗り物、同乗者用クリップを保持します。移動状態用クリップはEpic Fightのポーズへ補助的に適用します。騎乗状態は別の全身用経路で処理し、Epic Fightの騎乗ポーズが二重に適用されないようにします。ルーレットクリップも、大きなroot・胴体移動で階層が分離しないよう同じモデル空間合成経路を使用します。戦闘中の手持ち品アニメーションと描画はEpic Fightが担当するため、手持ち品固有の自動クリップは意図的に選択しません。
+`AutomaticAnimationSelector` は、YSMの状態、装備条件、手持ち品条件、乗り物、同乗者用クリップを保持します。移動状態用クリップはEpic Fightのポーズへ補助的に適用します。騎乗状態は別の全身用経路で処理し、Epic Fightの騎乗ポーズが二重に適用されないようにします。ルーレットクリップも、大きなroot・胴体移動で階層が分離しないよう同じモデル空間合成経路を使用します。手持ち品用クリップは後述の置換・エフェクト規則を通じてのみ評価し、モデル独自のジオメトリを検出できない通常アイテムはEpic Fightのアニメーションとアイテムレイヤーへ任せます。
 
 アニメーションクリップでは、ループまたは最終フレーム保持の再生方式、Molang `blend_weight`、キーフレーム補間、ループ境界をまたぐタイムラインの時系列順を保持します。ジオメトリに存在しないMolang疑似ボーンのトラックも、変数更新の副作用を維持するため定義順に評価しますが、姿勢行列は割り当てません。入れ子のMolang関数は呼び出し階層ごとに引数フレームを分離し、内側の関数が呼び出し元の引数を書き換えないようにします。
 
 `ExpressionEngine` は、これらのクリップに必要なMolang演算子、対応する公式数学関数と読み取り専用Query、`ysm.first_order`・`ysm.second_order`・`ysm.perlin_noise` などのYSM補助関数を実装します。エンティティ、装備、アイテム、バイオーム、ブロック、カメラ距離、アニメーション時間の値を読み取り専用Queryとして公開します。通常変数では `v.*` と `variable.*`、永続roaming変数では `v.roaming.*` と `variable.roaming.*` を同一のものとして扱います。設定変数のスナップショットをリモートプレイヤーにも同期し、変数による表示と条件アニメーションを所有プレイヤーと一致させます。
+
+## モデル独自の手持ち品
+
+`CustomHeldItemPolicy` は、モデルの自動hold・use・swingクリップと既定表示状態を併せて調べます。条件によって通常は非表示の描画可能な手ボーン配下が表示される場合、またはクリップ全体でモデル定義のTool locatorを非表示にしながら描画可能な手持ちプロップを動かす場合だけ置換として扱います。モデルIDの許可リストではなく、モデルとアニメーションの意味から判定します。魔法陣などのエフェクトだけを表示する弓useクリップは、それだけでは置換とせず、Epic Fightの弓を残したまま追加描画します。
+
+置換が有効な場合、`ParallelAnimationProgram` はモデル定義のプロップrootと必要な親階層だけを評価します。プロップをEpic Fightの現在の左右Tool jointへrebaseし、描画されている拳位置とEpic Fightのアイテム固有補正を維持します。`PatchedItemInHandLayerMixin` は、同じ変換メッシュを描画している厳密なスコープ内だけ、その手のEpic Fightアイテムを抑止します。置換を検出できない場合、ローカル設定で無効にした場合、Epic Fightのデフォルトメッシュへフォールバックした場合は、Epic Fightが通常どおりアイテムを描画します。
+
+検出した独自弓は、Epic Fightの左手弓規則へ移さず、暫定的にYSM定義のメインハンド・右手位置へ取り付けます。引き絞りとリリース中は、腕だけの上書きで肩が分離しないよう、YSM定義の全身ポーズで戦闘ポーズを置き換えます。照準yawは現在のEpic Fightモデル方向から算出し、Epic Fightの短いrebound信号が終わった後も1回限りのリリースを継続し、保存したYSM最終ポーズからEpic Fightへ1フレームで切り替えずにブレンドします。弓のエフェクトだけを持つジオメトリは、弓や全身ポーズを置き換えずにEpic Fightの左Tool jointへ取り付けます。
+
+`AttackAnimationSoundMixin` が差し替えるのはEpic Fightの攻撃フェーズの振り音だけで、命中音と衝撃音は変更しません。`ServerAttackSoundRouter` は攻撃者、手、正確なEpic Fightサウンド、pitch、シーケンスを各追跡クライアントへ保持して送ります。クライアントは、有効な変換モデルが攻撃アイテムを置き換え、そのYSMタイムラインが音声を実際に再生したか、モデル定義の攻撃音声経路を持つ場合だけEpic Fightの代替音を抑止します。制限付きの確認待ち時間内に音声経路が有効にならなければ、元のEpic Fight振り音をローカル再生します。
 
 ## Animation Controllerと補助出力
 
@@ -84,7 +94,7 @@
 
 `CombatFirstPersonMixin` はEpic Fightの一人称レンダラーでも同じ変換メッシュを選択し、一人称設定のパーツ表示状態を適用します。`FirstPersonArmorGateMixin` は変換済み一人称メッシュの使用中にbiped用防具描画を抑止します。
 
-三人称のpatched rendererでは、二足歩行モデル用の装着変換を任意比率のモデルへ適用できないため、変換メッシュの防具、頭装備、エリトラを非表示にします。手持ち品、マント、矢、ハチの針はEpic Fightのpatched layerで描画を続けます。Epic Fightのデフォルトメッシュへフォールバックした場合は、すべての標準レイヤーを利用できます。
+三人称のpatched rendererでは、二足歩行モデル用の装着変換を任意比率のモデルへ適用できないため、変換メッシュの防具、頭装備、エリトラを非表示にします。マント、刺さった矢、ハチの針はEpic Fightのpatched layerで描画を続けます。手持ち品も、有効なモデル独自ルールとモデル使用者が解決した設定によってその手のアイテムを置き換える場合を除き、同じレイヤーで描画します。Epic Fightのデフォルトメッシュへフォールバックした場合は、すべての標準レイヤーを利用できます。
 
 ## 互換性警告
 
@@ -92,7 +102,11 @@
 
 ## クライアント設定
 
-クライアント設定は `config/ysm_epicfight_compat/ysm_epicfight_compat-client.toml`、統合・専用サーバー共通のキャッシュ設定は同じ階層の `ysm_epicfight_compat-common.toml` に保存します。以前のconfigルート直下にあるクライアントTOMLは移行しません。`CombatOverlayMixin` は、公式YSMの各オーバーレイフレームを `CombatOverlayPolicy` へ委譲します。クライアント設定は、Epic Fightの戦闘モード中だけ左上のYSMプレイヤーオーバーレイを抑止します。値は各オーバーレイフレームで読み取るため、設定のライブ再読み込みは再起動せずに反映されます。Configured 2.2.3以降はクライアント設定をゲーム内で表示する任意の依存Modです。互換ModのjarからConfiguredのクラスへ直接リンクしないため、Configuredがない場合は設定画面だけが利用できなくなります。
+クライアント設定は `config/ysm_epicfight_compat/ysm_epicfight_compat-client.toml`、統合・専用サーバー共通のキャッシュ設定は同じ階層の `ysm_epicfight_compat-common.toml` に保存します。以前のconfigルート直下にあるクライアントTOMLは移行しません。`CombatOverlayMixin` は、公式YSMの各オーバーレイフレームを `CombatOverlayPolicy` へ委譲します。クライアント設定は、Epic Fightの戦闘モード中だけ左上のYSMプレイヤーオーバーレイを抑止します。値は各オーバーレイフレームで読み取るため、設定のライブ再読み込みは再起動せずに反映されます。
+
+`useYsmHeldItemModelsByDefault` は既定で有効です。`heldItemModelOverrides` はモデルIDをキーとし、値へアイテムIDまたは `#item_tag` のリストを持つテーブルです。一致したselectorは、そのモデルについて既定値を反転します。これらのルールはモデル使用者のクライアントだけに残します。`ClientHeldItemModelPreferences` が解決済みのメインハンド・オフハンド真偽値だけを送信し、`HeldItemPreferenceBroadcaster` が追跡クライアントへ中継するため、他プレイヤーの設定を受信せずに全クライアントの見た目を一致させます。
+
+Configured 2.2.3以降は任意です。文字列targetの `@Pseudo` Mixinで、Configuredが扱えない動的テーブルのleafだけを `ConfiguredHeldItemRules` へ置き換え、Configured APIへのリンクを任意統合の境界内へ限定します。モデル別エディターは通常のClientフォルダー内に表示し、現在選択中のモデルIDを空の編集行として追加します。空の行は設定ファイルへ書きません。Configuredがない場合は対象クラスが読み込まれず、ゲーム内設定画面だけが利用できなくなります。
 
 ## ソース構成
 
@@ -102,5 +116,5 @@
 | アニメーション、Molang、Controller、サウンド、パーティクル | `animation` |
 | リグ対応、変換、キャッシュ | `mesh`, `cache` |
 | Epic Fight描画とレイヤー | `render`, `render.layer`, `event`, `mixin` |
-| 選択状態とジオメトリ同期 | `network`, `network.geometry`, `network.message` |
-| クライアント設定と警告処理 | `config`, `compat` |
+| 選択状態、ジオメトリ、手持ち品表示の同期 | `network`, `network.geometry`, `network.message` |
+| クライアント設定、Configured任意統合、警告処理 | `config`, `integration.configured`, `compat` |

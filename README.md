@@ -22,22 +22,24 @@ Select the appropriate version branch before building the mod. Each `mc/*` branc
 - Keeps parsed local models, validated remote models, and generated server transfer data in separate bounded disk caches without writing model JSON or standalone texture images.
 - Supports Epic Fight's third-person and first-person combat rendering.
 - Keeps Epic Fight in control of combat poses while applying YSM auxiliary-bone, automatic, conditional, riding, roulette, and animation-controller motion where compatible.
+- Uses a model-authored YSM weapon or tool when the selected model actually defines one for the held item; otherwise Epic Fight keeps rendering the item.
+- Applies the complete authored YSM draw and release pose for detected custom bows, and prevents duplicate Epic Fight/YSM attack-swing audio when a custom replacement owns the sound.
 - Evaluates the supported official YSM Molang math functions, read-only queries, auxiliary physics functions, and model variables, including the `v.*`/`variable.*` and `v.roaming.*`/`variable.roaming.*` aliases.
 - Supports Animation Controller state variables and `remap_curve`, model-local sound output, Molang particle helpers, and declarative Bedrock `particle_effects`.
-- Synchronizes model-selection and model-variable state so visibility variants remain consistent for remote players.
+- Synchronizes model selection, model-variable state, and each model owner's resolved per-hand replacement state so remote players see the same cosmetic result without receiving the owner's local rules.
 - Can hide official YSM's top-left overlay while Epic Fight battle mode is active.
 - Returns rendering to official YSM when Epic Fight no longer overrides the player renderer.
 - Refreshes converted models after resource reloads and YSM model reload commands.
 - Falls back to Epic Fight's default player mesh when a selected model cannot be prepared.
 - Limits YSM's Epic Fight compatibility warning to its first display on a client installation.
 
-When a converted model is active, armor, head equipment, and elytra are hidden because their biped attachment points do not match arbitrary YSM bodies. Held items continue to use Epic Fight's item layer. Equipment rendering remains unchanged when the default Epic Fight mesh is used.
+When a converted model is active, armor, head equipment, and elytra are hidden because their biped attachment points do not match arbitrary YSM bodies. Capes, arrows, bee stingers, and held items without an active model-authored replacement continue through Epic Fight's patched layers. Equipment rendering remains unchanged when the default Epic Fight mesh is used.
 
 ## Installation
 
 Install this mod and all requirements in the `mods` directory. For multiplayer, install YSM Epic Fight Compat on both the dedicated server and every participating client so that player selections and server-provided models can be resolved consistently.
 
-[Configured](https://www.curseforge.com/minecraft/mc-mods/configured) is optional. When it is installed, client options such as YSM's battle-mode overlay and model-cache limits can be changed in game. The mod starts normally without Configured, but that settings screen is unavailable.
+[Configured](https://www.curseforge.com/minecraft/mc-mods/configured) is optional. When it is installed, client options such as YSM's battle-mode overlay, model-cache limits, the default held-item replacement policy, and model-specific item or item-tag exceptions can be changed in game. The model-specific editor appears inside the normal Client settings and adds the currently selected model ID as an editable entry. The mod starts normally without Configured, but that settings screen is unavailable.
 
 ## Building
 
