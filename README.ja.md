@@ -16,6 +16,7 @@ YSM Epic Fight Compat は、公式 Yes Steve Model で選択したプレイヤ�
 
 - YSMのフォルダモデルと、暗号化されたものを含む `.ysm` パッケージをEpic Fightの戦闘用メッシュへ変換します。
 - シングルプレイとマルチプレイで、各プレイヤーが選択したモデルとテクスチャを使用します。
+- 解析済みローカルモデル、検証済みリモートモデル、生成済みサーバー転送データを個別の容量制限付きディスクキャッシュへ保存し、モデルJSONや単独のテクスチャ画像は生成しません。
 - Epic Fightの三人称および一人称の戦闘描画に対応します。
 - 戦闘ポーズはEpic Fightが担当したまま、互換性のある範囲でYSMの補助ボーン、自動・条件・騎乗・ルーレット・Animation Controllerアニメーションを適用します。
 - 公式YSMで使用されるMolang数学関数、読み取り専用Query、補助物理関数、モデル変数の対応部分を評価します。`v.*`・`variable.*`、`v.roaming.*`・`variable.roaming.*` の各略記も同様に扱います。
@@ -33,7 +34,7 @@ YSM Epic Fight Compat は、公式 Yes Steve Model で選択したプレイヤ�
 
 このModと必要な依存Modを `mods` ディレクトリへ導入してください。マルチプレイでは、プレイヤーの選択状態とサーバー提供モデルを正しく解決するため、専用サーバーと参加する全クライアントの両方へYSM Epic Fight Compatを導入してください。
 
-[Configured](https://www.curseforge.com/minecraft/mc-mods/configured) は任意です。導入すると、YSMの戦闘モード用オーバーレイ設定をゲーム内で変更でき、再起動せずに反映されます。ConfiguredがなくてもModは正常に起動しますが、設定画面は利用できません。
+[Configured](https://www.curseforge.com/minecraft/mc-mods/configured) は任意です。導入すると、YSMの戦闘モード用オーバーレイやモデルキャッシュ容量などのクライアント設定をゲーム内で変更できます。ConfiguredがなくてもModは正常に起動しますが、設定画面は利用できません。
 
 ## ビルド
 

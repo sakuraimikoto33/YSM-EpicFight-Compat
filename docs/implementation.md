@@ -42,7 +42,7 @@ Animation clips retain loop or hold-on-last-frame playback, Molang `blend_weight
 
 `BedrockAnimationControllerParser` and `AnimationControllerProgram` implement the supported controller state machine: initial state selection, ordered transitions, animation weights, `on_entry`, `on_exit`, fixed or curved blending, and shortest-path rotation blending. State `variables` are evaluated into a frame-local overlay before the state's clips. A `remap_curve` is sorted by input, clamped to its endpoint values outside the declared range, and linearly interpolated between adjacent points.
 
-Animation timelines and controller states can emit sounds without copying model resources to disk. `ClientSoundOutput` resolves model-local audio through official YSM's in-memory sound cache using Mapping API contracts; namespaced Minecraft sound events are also accepted. Sounds are scoped to their clip or controller state, stopped when that scope exits, and cleared when the model or session is invalidated. Minecraft's sound engine owns pause and resume. Roulette audio remains owned by official YSM so the compatibility renderer does not start a duplicate stream.
+Animation timelines and controller states can emit sounds without persisting model-local audio bytes. `ClientSoundOutput` resolves model-local audio through official YSM's in-memory sound cache using Mapping API contracts; namespaced Minecraft sound events are also accepted. Sounds are scoped to their clip or controller state, stopped when that scope exits, and cleared when the model or session is invalidated. Minecraft's sound engine owns pause and resume. Roulette audio remains owned by official YSM so the compatibility renderer does not start a duplicate stream.
 
 Particles can be emitted with the `ysm.particle` and `ysm.abs_particle` Molang helpers or with Bedrock animation/controller `particle_effects`. Declarative entries retain `effect`, `locator`, `pre_effect_script`, and `bind_to_actor`. Entry-scoped particles are removed when their controller state exits, and bound particles follow the actor. Common humanoid locators use bounded body-relative approximations; an unknown locator falls back to the entity center because arbitrary model-bone locator matrices are not exposed to the particle engine.
 
@@ -56,21 +56,29 @@ The local player and any expression with state changes, timeline output, text/wo
 
 `OfficialTextureResolver` obtains the selected texture from official YSM's in-memory texture cache. Access to the necessary YSM members is expressed through semantic YSM Mapping API keys and resolved as method handles at runtime; runtime-obfuscated names are not stored in this project.
 
-For a model available locally, `CombatMeshCache` can retain package texture bytes as a session-only fallback when the official cache has not supplied a texture yet. Decoding runs off-thread, while bounded texture registration runs on the render thread. No converted texture or mesh is written to disk.
+Official YSM's texture location has first priority so the compatibility renderer follows YSM texture selection without registering the same GPU image twice. Every parsed or server-provided `ModelBundle` also retains bounded encoded texture data. If the official location is unavailable, `CombatMeshCache` decodes that data off-thread and performs bounded dynamic-texture registration on the render thread. Selecting an official texture releases only the duplicate GPU registration; the fallback source remains available until the corresponding memory-cache entry is evicted, so a later loss of the official cache does not leave the model untextured.
 
-## Server-only model geometry
+## Server-provided model data
 
 If the client does not have a model selected by an online player, it requests that model from the dedicated server. `ServerModelTransfers` verifies that the model exists and is currently selected, parses it outside the server tick, and encodes it with `GeometryTransferCodec`.
 
-The transfer contains bounded, compressed geometry, scale properties, retained animation clips, and animation-controller data required by the compatibility renderer. Clip timing, blend weights, timelines, controller variables, remap curves, sound references, and particle declarations are encoded with explicit bounds. It never contains a `.ysm` package, texture bytes, or audio bytes. Payloads are divided into bounded chunks; the client limits concurrent assemblies, total sizes, timeouts, and decompressed data before accepting a `ModelBundle`. Official YSM remains responsible for providing and caching the corresponding multiplayer texture and model-local resources on the client.
+The transfer contains bounded, compressed geometry, scale properties, retained animation clips, animation-controller data, and every declared texture required by the compatibility renderer. Clip timing, blend weights, timelines, controller variables, remap curves, sound references, particle declarations, texture count, individual texture size, and total texture size are encoded with explicit bounds. It never contains the original `.ysm` package or model-local audio bytes. Payloads are divided into bounded chunks; the client limits concurrent assemblies, total sizes, timeouts, hashes, and decompressed data before accepting a `ModelBundle`.
+
+`ModelRequestMessage` may include the SHA-256 of a remote disk-cache entry. The server replies with full `DATA`, `UNCHANGED`, or `UNAVAILABLE` status. An `UNCHANGED` response only authorizes the matching payload from the current server namespace; a missing, corrupt, or mismatched entry is removed and requested again without a hash. The compatibility network protocol and serialized transfer format remain fixed at version `1` until the first public release.
 
 Some official packages represent an animation with no finite declared end by using positive infinity. The encoder normalizes that declaration to zero; the runtime derives an effective duration from retained keyframes where possible. The decoder continues to reject non-finite values received from the network.
 
 ## Caching and reloads
 
-`CombatMeshCache` converts models lazily on a bounded worker pool. Completed meshes are registered in memory and kept in a configurable least-recently-used cache. Failed conversions are retried only after the model source changes. GPU resources and temporary texture leases are released when entries are evicted.
+`CombatMeshCache` converts models lazily on a bounded worker pool. Completed meshes and their fallback texture sources are session-local and kept in a least-recently-used cache controlled by `clientModelMemoryCacheSize`. Failed conversions are retried only after the model source changes. GPU resources and temporary texture leases are released when entries are evicted.
 
-Resource reloads, YSM model reload commands, disconnects, and server shutdowns invalidate the related selection, mesh, texture, and transfer state. Generation counters prevent work completed after invalidation from re-entering an active cache.
+Persistent data is split below `config/ysm_epicfight_compat/cache`: `client` stores parsed local `ModelBundle` payloads, `remote` stores payloads validated against the current multiplayer server, and `server` stores generated transfer payloads. Client and remote entries use a compatibility-owned binary envelope with hashed names, a format marker, source or server-validation SHA-256, payload SHA-256, and compressed model data. They are not standalone PNG, JSON, or `.ysm` files. Server entries use the same integrity envelope without claiming content secrecy. No cache is encryption or DRM.
+
+The independent `clientModelDiskCacheMiB`, `remoteModelDiskCacheMiB`, and `serverModelDiskCacheMiB` limits default to 64, 64, and 256 MiB. Each directory evicts its least-recently-used files independently. A zero limit disables reads and writes and removes existing entries during maintenance. An entry larger than its own limit remains usable in the current memory session but is not persisted. Disabling `serverModelDiskCacheEnabled` bypasses only the persistent server layer; the bounded session memory cache and per-model coalescing of simultaneous requests remain active.
+
+Local and server cache entries are accepted only when their source-content digest still matches. A changed model is parsed and encoded once, then atomically replaces the previous entry. All writes use a temporary regular file followed by an atomic move where supported. Cache traversal refuses symbolic links, corrupt entries are removed, and file I/O, hashing, decoding, and eviction run outside the render and server tick paths.
+
+Resource reloads, YSM model reload commands, disconnects, and server shutdowns invalidate the related selection, mesh, texture, and in-flight transfer state while keeping valid disk entries. Generation counters prevent work completed after invalidation from re-entering an active cache.
 
 ## First-person and equipment layers
 
@@ -84,7 +92,7 @@ During client load, `YSMCompatibilityWarningFilter` identifies only official YSM
 
 ## Client configuration
 
-`CombatOverlayMixin` delegates each official-YSM overlay frame to `CombatOverlayPolicy`. The client option suppresses the top-left YSM player overlay only while Epic Fight battle mode is active and is read for every overlay frame, so a live configuration reload takes effect without restarting. Configured 2.2.3 or later is an optional client dependency that exposes this option in game; no Configured classes are linked from the compatibility jar, so its absence only removes the settings screen.
+The client config is stored at `config/ysm_epicfight_compat/ysm_epicfight_compat-client.toml`; the global integrated/dedicated-server cache config is stored beside it as `ysm_epicfight_compat-common.toml`. The previous root-level client TOML is intentionally not migrated. `CombatOverlayMixin` delegates each official-YSM overlay frame to `CombatOverlayPolicy`. The client option suppresses the top-left YSM player overlay only while Epic Fight battle mode is active and is read for every overlay frame, so a live configuration reload takes effect without restarting. Configured 2.2.3 or later is an optional client dependency that exposes client options in game; no Configured classes are linked from the compatibility jar, so its absence only removes the settings screen.
 
 ## Source layout
 
@@ -92,7 +100,7 @@ During client load, `YSMCompatibilityWarningFilter` identifies only official YSM
 | --- | --- |
 | Model and texture input | `assets`, `assets.binary`, `geometry` |
 | Animation, Molang, controllers, sound, and particles | `animation` |
-| Rig mapping, conversion, and cache | `mesh` |
+| Rig mapping, conversion, and cache | `mesh`, `cache` |
 | Epic Fight rendering and layers | `render`, `render.layer`, `event`, `mixin` |
 | Selection and geometry synchronization | `network`, `network.geometry`, `network.message` |
 | Client preferences and warning handling | `config`, `compat` |

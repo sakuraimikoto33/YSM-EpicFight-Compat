@@ -16,6 +16,7 @@ YSM Epic Fight Compat is a Forge mod that renders player models selected in the 
 
 - Converts YSM folder models and `.ysm` packages, including encrypted packages, into Epic Fight combat meshes.
 - Uses the model and texture selected by each player in single-player and multiplayer.
+- Keeps parsed local models, validated remote models, and generated server transfer data in separate bounded disk caches without writing model JSON or standalone texture images.
 - Supports Epic Fight's third-person and first-person combat rendering.
 - Keeps Epic Fight in control of combat poses while applying YSM auxiliary-bone, automatic, conditional, riding, roulette, and animation-controller motion where compatible.
 - Evaluates the supported official YSM Molang math functions, read-only queries, auxiliary physics functions, and model variables, including the `v.*`/`variable.*` and `v.roaming.*`/`variable.roaming.*` aliases.
@@ -33,7 +34,7 @@ When a converted model is active, armor, head equipment, and elytra are hidden b
 
 Install this mod and all requirements in the `mods` directory. For multiplayer, install YSM Epic Fight Compat on both the dedicated server and every participating client so that player selections and server-provided models can be resolved consistently.
 
-[Configured](https://www.curseforge.com/minecraft/mc-mods/configured) is optional. When it is installed, the client option for YSM's battle-mode overlay can be changed in game and takes effect without restarting. The mod starts normally without Configured, but that settings screen is unavailable.
+[Configured](https://www.curseforge.com/minecraft/mc-mods/configured) is optional. When it is installed, client options such as YSM's battle-mode overlay and model-cache limits can be changed in game. The mod starts normally without Configured, but that settings screen is unavailable.
 
 ## Building
 
