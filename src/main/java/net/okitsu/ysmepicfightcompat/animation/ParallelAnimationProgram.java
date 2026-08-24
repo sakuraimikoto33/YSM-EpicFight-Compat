@@ -15,6 +15,7 @@ import java.util.Arrays;
 import java.util.Collections;
 import java.util.Comparator;
 import java.util.HashMap;
+import java.util.IdentityHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
@@ -160,6 +161,7 @@ public final class ParallelAnimationProgram {
     }
 
     private final AuxiliaryBoneLayout layout;
+    private final Set<GeometryDocument.Bone> epicFightPoseControls;
     private final String modelId;
     private final List<VisibilityBone> visibilityBones;
     private final List<ClipProgram> parallelClips;
@@ -197,6 +199,7 @@ public final class ParallelAnimationProgram {
                                     float horizontalScale, float verticalScale) {
         this.modelId = modelId == null ? "" : modelId;
         this.layout = layout;
+        this.epicFightPoseControls = epicFightPoseControls(layout);
         this.horizontalScale = positiveScale(horizontalScale);
         this.verticalScale = positiveScale(verticalScale);
         visibilityBones = visibilityBones(geometry);
@@ -903,7 +906,7 @@ public final class ParallelAnimationProgram {
                 // Official models also use non-geometry "molang" bones as ordered
                 // expression runners. Retain them, but never give them a pose index.
                 bones.add(new BoneProgram(visibility == null ? -1 : visibility,
-                        auxiliary == null || HumanoidRig.isMajorBone(auxiliary.bone())
+                        auxiliary == null || epicFightPoseControls.contains(auxiliary.bone())
                                 ? -1 : auxiliary.auxiliaryIndex(), tracks));
             });
             if (!bones.isEmpty() || !clip.timeline().isEmpty()
@@ -972,14 +975,32 @@ public final class ParallelAnimationProgram {
         clip.boneTracks().forEach((name, tracks) -> {
             Integer visibility = visibilityByName.get(normalize(name));
             AuxiliaryBoneLayout.Entry pose = layout.entryForBoneName(name);
-            boolean major = pose != null && HumanoidRig.isMajorBone(pose.bone());
+            boolean epicFightOwned = pose != null
+                    && epicFightPoseControls.contains(pose.bone());
             bones.add(new BoneProgram(visibility == null ? -1 : visibility,
-                    pose == null || auxiliaryOnly && major ? -1 : pose.auxiliaryIndex(), tracks));
+                    pose == null || auxiliaryOnly && epicFightOwned
+                            ? -1 : pose.auxiliaryIndex(), tracks));
         });
         return bones.isEmpty() && clip.timeline().isEmpty() && clip.soundEffects().isEmpty()
                 && clip.particleEffects().isEmpty()
                 ? null
                 : clipProgram(clip, bones);
+    }
+
+    private static Set<GeometryDocument.Bone> epicFightPoseControls(
+            AuxiliaryBoneLayout layout) {
+        Set<GeometryDocument.Bone> result = Collections.newSetFromMap(
+                new IdentityHashMap<>());
+        for (AuxiliaryBoneLayout.Entry entry : layout.entries()) {
+            if (!HumanoidRig.isMajorBone(entry.bone())) {
+                continue;
+            }
+            for (GeometryDocument.Bone bone = entry.bone(); bone != null;
+                 bone = bone.parent()) {
+                result.add(bone);
+            }
+        }
+        return Collections.unmodifiableSet(result);
     }
 
     private static ClipProgram clipProgram(AnimationClip clip, List<BoneProgram> bones) {

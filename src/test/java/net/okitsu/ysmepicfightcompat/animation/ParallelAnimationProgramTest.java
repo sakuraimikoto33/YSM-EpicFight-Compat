@@ -143,6 +143,73 @@ class ParallelAnimationProgramTest {
     }
 
     @Test
+    void ignoresAutomaticTransformsOnWrappersAboveEpicFightBones() {
+        GeometryDocument geometry = wrappedRootAndTail();
+        AuxiliaryBoneLayout layout = AuxiliaryBoneLayout.create(geometry);
+        AnimationClip fly = new AnimationClip("fly");
+        fly.playback(AnimationClip.Playback.REPEAT);
+        fly.boneTracks().put("MRoot", rotation(0.0D, 0.0D, 90.0D));
+        fly.boneTracks().put("tail", rotation(0.0D, 0.0D, 20.0D));
+        ParallelAnimationProgram program = new ParallelAnimationProgram(
+                geometry, Map.of(fly.name(), fly), layout, 1.0F, 1.0F);
+
+        ParallelAnimationProgram.Frame frame = program.sampleAutomaticAt(
+                0.0D, List.of("fly"), new NeutralEnvironment());
+
+        assertIdentity(frame.parallelDeltas()[layout.entryForBoneName("MRoot").auxiliaryIndex()]);
+        assertIdentity(frame.parallelDeltas()[layout.entryForBoneName("Root").auxiliaryIndex()]);
+        assertIdentity(frame.parallelDeltas()[layout.entryForBoneName("MHead").auxiliaryIndex()]);
+        assertIdentity(frame.parallelDeltas()[layout.entryForBoneName("Head").auxiliaryIndex()]);
+        assertMatrix(new Matrix4f().rotateZ((float) Math.toRadians(20.0D)),
+                frame.parallelDeltas()[layout.entryForBoneName("tail").auxiliaryIndex()]);
+        assertFalse(frame.replaceEpicFightPose());
+    }
+
+    @Test
+    void ignoresParallelTransformsOnWrappersAboveEpicFightBones() {
+        GeometryDocument geometry = wrappedRootAndTail();
+        AuxiliaryBoneLayout layout = AuxiliaryBoneLayout.create(geometry);
+        AnimationClip parallel = new AnimationClip("parallel0");
+        parallel.boneTracks().put("MRoot", rotation(0.0D, 0.0D, 90.0D));
+        parallel.boneTracks().put("tail", rotation(0.0D, 0.0D, 20.0D));
+        ParallelAnimationProgram program = new ParallelAnimationProgram(
+                geometry, Map.of(parallel.name(), parallel), layout, 1.0F, 1.0F);
+
+        ParallelAnimationProgram.Frame frame = program.sampleAt(
+                0.0D, new NeutralEnvironment());
+
+        assertIdentity(frame.parallelDeltas()[layout.entryForBoneName("MRoot").auxiliaryIndex()]);
+        assertIdentity(frame.parallelDeltas()[layout.entryForBoneName("Root").auxiliaryIndex()]);
+        assertIdentity(frame.parallelDeltas()[layout.entryForBoneName("MHead").auxiliaryIndex()]);
+        assertIdentity(frame.parallelDeltas()[layout.entryForBoneName("Head").auxiliaryIndex()]);
+        assertMatrix(new Matrix4f().rotateZ((float) Math.toRadians(20.0D)),
+                frame.parallelDeltas()[layout.entryForBoneName("tail").auxiliaryIndex()]);
+    }
+
+    @Test
+    void keepsWrapperTransformsForWholeModelRouletteAnimations() {
+        GeometryDocument geometry = wrappedRootAndTail();
+        AuxiliaryBoneLayout layout = AuxiliaryBoneLayout.create(geometry);
+        AnimationClip roulette = new AnimationClip("extra0");
+        roulette.boneTracks().put("MRoot", rotation(0.0D, 0.0D, 90.0D));
+        ParallelAnimationProgram program = new ParallelAnimationProgram(
+                geometry, Map.of(roulette.name(), roulette), layout, 1.0F, 1.0F);
+
+        ParallelAnimationProgram.Frame frame = program.sampleAt(
+                0.0D, "extra0", 0.0D, new NeutralEnvironment());
+
+        Matrix4f expected = new Matrix4f().rotateZ((float) Math.toRadians(90.0D));
+        assertMatrix(expected,
+                frame.wholeModelDeltas()[layout.entryForBoneName("MRoot").auxiliaryIndex()]);
+        assertMatrix(expected,
+                frame.wholeModelDeltas()[layout.entryForBoneName("Root").auxiliaryIndex()]);
+        assertMatrix(expected,
+                frame.wholeModelDeltas()[layout.entryForBoneName("MHead").auxiliaryIndex()]);
+        assertMatrix(expected,
+                frame.wholeModelDeltas()[layout.entryForBoneName("Head").auxiliaryIndex()]);
+    }
+
+    @Test
     void appliesControllerAnimationsOnlyToAuxiliaryBones() {
         GeometryDocument geometry = headAndEar();
         AnimationClip controlled = new AnimationClip("custom.pose");
@@ -442,6 +509,26 @@ class ParallelAnimationProgramTest {
         ear.pivot(0.0F, 1.0F, 0.0F);
         geometry.add(head);
         geometry.add(ear);
+        geometry.linkHierarchy();
+        return geometry;
+    }
+
+    private static GeometryDocument wrappedRootAndTail() {
+        GeometryDocument geometry = new GeometryDocument();
+        GeometryDocument.Bone wrapper = new GeometryDocument.Bone("MRoot");
+        GeometryDocument.Bone root = new GeometryDocument.Bone("Root");
+        GeometryDocument.Bone headWrapper = new GeometryDocument.Bone("MHead");
+        GeometryDocument.Bone head = new GeometryDocument.Bone("Head");
+        GeometryDocument.Bone tail = new GeometryDocument.Bone("tail");
+        root.parentName("MRoot");
+        headWrapper.parentName("Root");
+        head.parentName("MHead");
+        tail.parentName("MHead");
+        geometry.add(wrapper);
+        geometry.add(root);
+        geometry.add(headWrapper);
+        geometry.add(head);
+        geometry.add(tail);
         geometry.linkHierarchy();
         return geometry;
     }
