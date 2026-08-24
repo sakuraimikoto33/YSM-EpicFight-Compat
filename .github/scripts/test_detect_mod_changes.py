@@ -5,7 +5,15 @@ import subprocess
 import tempfile
 import unittest
 
-from detect_mod_changes import detect_changes, is_build_relevant_path
+from detect_mod_changes import (
+    ArtifactReference,
+    ChangeDecision,
+    _append_summary,
+    artifact_name_prefix,
+    detect_changes,
+    is_build_relevant_path,
+    select_latest_artifact,
+)
 
 
 class TemporaryRepository:
@@ -69,6 +77,94 @@ class PathClassificationTest(unittest.TestCase):
         ):
             with self.subTest(path=path):
                 self.assertTrue(is_build_relevant_path(path))
+
+
+class ArtifactReferenceTest(unittest.TestCase):
+    def test_artifact_name_prefix_matches_upload_name(self) -> None:
+        self.assertEqual(
+            "ysm-epicfight-compat-mc-1.20.1-",
+            artifact_name_prefix("mc/1.20.1"),
+        )
+
+    def test_latest_matching_unexpired_branch_artifact_is_selected(self) -> None:
+        artifacts = [
+            {},
+            {
+                "id": 10,
+                "name": "ysm-epicfight-compat-mc-1.20.1-old",
+                "expired": False,
+                "created_at": "2026-01-01T00:00:00Z",
+                "workflow_run": {"id": 100, "head_branch": "mc/1.20.1"},
+            },
+            {
+                "id": 11,
+                "name": "ysm-epicfight-compat-mc-1.20.1-expired",
+                "expired": True,
+                "created_at": "2026-03-01T00:00:00Z",
+                "workflow_run": {"id": 101, "head_branch": "mc/1.20.1"},
+            },
+            {
+                "id": 12,
+                "name": "ysm-epicfight-compat-mc-1.21.1-other",
+                "expired": False,
+                "created_at": "2026-04-01T00:00:00Z",
+                "workflow_run": {"id": 102, "head_branch": "mc/1.21.1"},
+            },
+            {
+                "id": 13,
+                "name": "ysm-epicfight-compat-mc-1.20.1-latest",
+                "expired": False,
+                "created_at": "2026-02-01T00:00:00Z",
+                "workflow_run": {"id": 103, "head_branch": "mc/1.20.1"},
+            },
+        ]
+
+        artifact = select_latest_artifact(artifacts, "mc/1.20.1")
+
+        self.assertIsNotNone(artifact)
+        assert artifact is not None
+        self.assertEqual(13, artifact.artifact_id)
+        self.assertEqual(
+            "https://github.com/example/repository/actions/runs/103/artifacts/13",
+            artifact.web_url("https://github.com", "example/repository"),
+        )
+
+    def test_skipped_build_summary_contains_artifact_link(self) -> None:
+        decision = ChangeDecision(False, 2, (), "documentation only")
+        artifact = ArtifactReference(
+            13,
+            "ysm-epicfight-compat-mc-1.20.1-latest",
+            103,
+            "2026-02-01T00:00:00Z",
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            summary_path = Path(directory) / "summary.md"
+            _append_summary(
+                summary_path,
+                decision,
+                artifact,
+                artifact.web_url("https://github.com", "example/repository"),
+            )
+
+            summary = summary_path.read_text(encoding="utf-8")
+
+        self.assertIn("## Mod build decision", summary)
+        self.assertIn("- Build required: **false**", summary)
+        self.assertIn(
+            "[ysm-epicfight-compat-mc-1.20.1-latest]"
+            "(https://github.com/example/repository/actions/runs/103/artifacts/13)",
+            summary,
+        )
+
+    def test_required_build_summary_does_not_contain_artifact_entry(self) -> None:
+        decision = ChangeDecision(True, 1, ("src/Test.java",), "mod changed")
+        with tempfile.TemporaryDirectory() as directory:
+            summary_path = Path(directory) / "summary.md"
+            _append_summary(summary_path, decision, artifact_note="unused")
+
+            summary = summary_path.read_text(encoding="utf-8")
+
+        self.assertNotIn("Latest artifact", summary)
 
 
 class PushedHistoryTest(unittest.TestCase):

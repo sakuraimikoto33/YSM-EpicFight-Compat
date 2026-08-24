@@ -32,6 +32,7 @@ jobs:
         env:
           BEFORE_SHA: ${{ github.event.before }}
           AFTER_SHA: ${{ github.event.after }}
+          GITHUB_TOKEN: ${{ github.token }}
         run: >-
           python3 .github/scripts/detect_mod_changes.py
           --before "$BEFORE_SHA"
@@ -39,6 +40,11 @@ jobs:
           --fetch-missing-before origin
           --github-output "$GITHUB_OUTPUT"
           --github-step-summary "$GITHUB_STEP_SUMMARY"
+          --github-repository "${{ github.repository }}"
+          --github-ref-name "${{ github.ref_name }}"
+          --github-api-url "${{ github.api_url }}"
+          --github-server-url "${{ github.server_url }}"
+          --github-token-env GITHUB_TOKEN
 
   build:
     name: Build ${{ github.ref_name }}
