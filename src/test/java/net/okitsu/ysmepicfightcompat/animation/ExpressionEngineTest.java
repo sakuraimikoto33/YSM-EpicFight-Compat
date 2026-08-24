@@ -23,6 +23,39 @@ class ExpressionEngineTest {
     }
 
     @Test
+    void oneSidedOfficialYsmConditionalUsesZeroForItsOmittedFalseBranch() {
+        TestEnvironment environment = new TestEnvironment();
+        int headYaw = ExpressionEngine.querySlot("ysm.head_yaw");
+
+        environment.values.put(headYaw, -50.0D);
+        assertEquals(-25.0D, ExpressionEngine.compile(
+                "-75+(ysm.head_yaw<=0?-ysm.head_yaw)").evaluate(environment), 0.0001D);
+        assertEquals(0.0D, ExpressionEngine.compile(
+                "(ysm.head_yaw>0?-ysm.head_yaw)").evaluate(environment), 0.0001D);
+
+        environment.values.put(headYaw, 50.0D);
+        assertEquals(-75.0D, ExpressionEngine.compile(
+                "-75+(ysm.head_yaw<=0?-ysm.head_yaw)").evaluate(environment), 0.0001D);
+        assertEquals(-50.0D, ExpressionEngine.compile(
+                "(ysm.head_yaw>0?-ysm.head_yaw)").evaluate(environment), 0.0001D);
+    }
+
+    @Test
+    void sumsOneSidedConditionalsUsedByOfficialBowReleaseChannels() {
+        String releaseChannel = "(v.qh==1?(-167.20517))"
+                + "+(v.qh==2?(-60))+(v.jump?(-167.20517));";
+        TestEnvironment environment = new TestEnvironment();
+
+        environment.writeVariable(ExpressionEngine.slot("v.qh"), 2.0D);
+        assertEquals(-60.0D,
+                ExpressionEngine.compile(releaseChannel).evaluate(environment), 0.0001D);
+
+        environment.writeVariable(ExpressionEngine.slot("v.qh"), 0.0D);
+        assertEquals(0.0D,
+                ExpressionEngine.compile(releaseChannel).evaluate(environment), 0.0001D);
+    }
+
+    @Test
     void coalesceDistinguishesUnsetVariablesFromAssignedZero() {
         TestEnvironment environment = new TestEnvironment();
         assertEquals(7.0D,

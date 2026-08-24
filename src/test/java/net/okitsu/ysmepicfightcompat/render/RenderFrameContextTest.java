@@ -18,13 +18,15 @@ class RenderFrameContextTest {
 
     @Test
     void restoresTheOuterFrameAfterANestedRender() {
-        RenderFrameContext.Frame outer = RenderFrameContext.pushThirdPerson(null);
+        RenderFrameContext.Frame outer = RenderFrameContext.pushThirdPerson(null, 42.5F);
         RenderFrameContext.Frame inner = RenderFrameContext.pushFirstPerson(
-                null, Map.of("rightArm", true), false);
+                null, Map.of("rightArm", true), false, -15.0F);
 
         assertSame(inner, RenderFrameContext.current());
+        assertEquals(-15.0F, inner.epicModelYaw());
         RenderFrameContext.pop(inner);
         assertSame(outer, RenderFrameContext.current());
+        assertEquals(42.5F, outer.epicModelYaw());
         RenderFrameContext.pop(outer);
         assertNull(RenderFrameContext.current());
     }
@@ -44,5 +46,13 @@ class RenderFrameContextTest {
         assertEquals(Map.of("leftArm", true), outer.visibleParts());
         RenderFrameContext.pop(inner);
         assertNull(RenderFrameContext.current());
+    }
+
+    @Test
+    void rejectsANonFiniteEpicModelYaw() {
+        RenderFrameContext.Frame frame = RenderFrameContext.pushThirdPerson(
+                null, Float.NaN);
+
+        assertNull(frame.epicModelYaw());
     }
 }

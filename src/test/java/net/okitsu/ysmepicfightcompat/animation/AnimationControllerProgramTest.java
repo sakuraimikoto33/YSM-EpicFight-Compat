@@ -7,8 +7,10 @@ import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class AnimationControllerProgramTest {
@@ -80,6 +82,7 @@ class AnimationControllerProgramTest {
         List<AnimationControllerProgram.ActiveAnimation> active = program.select(
                 0.0D, environment, new AnimationControllerProgram.RuntimeState());
 
+        assertEquals("player.parallel_4", active.get(0).controllerName());
         assertEquals(1.0F, active.get(0).weight(), 0.0001F);
         assertEquals(1.0D, active.get(0).stateVariables().get(
                 ExpressionEngine.slot("variable.speed")), 0.0001D);
@@ -212,6 +215,24 @@ class AnimationControllerProgramTest {
                 Map.of(controller.name(), controller), Map.of());
 
         assertTrue(program.isEmpty());
+    }
+
+    @Test
+    void runsOnlyExplicitlyAllowedCustomPropControllers() {
+        AnimationController.State state = state("default", List.of(), List.of(),
+                List.of("v.ran=1;"), List.of(),
+                new AnimationController.BlendTransition(0.0F, List.of()), false);
+        AnimationController controller = controller("player.post_swing", state);
+        AnimationControllerProgram allowed = new AnimationControllerProgram(
+                Map.of(controller.name(), controller), Map.of(),
+                Set.of(controller.name()));
+        TestEnvironment environment = new TestEnvironment();
+
+        allowed.select(0.0D, environment,
+                new AnimationControllerProgram.RuntimeState());
+
+        assertFalse(allowed.isEmpty());
+        assertEquals(1.0D, environment.value("v.ran"), 0.0001D);
     }
 
     private static AnimationController controller(String name,

@@ -70,7 +70,8 @@ public final class CombatPlayerRenderer extends PHumanoidRenderer<
                        AbstractClientPlayerPatch<AbstractClientPlayer> patch,
                        LivingEntityRenderer<AbstractClientPlayer, PlayerModel<AbstractClientPlayer>> renderer,
                        MultiBufferSource buffers, PoseStack matrices, int light, float partialTick) {
-        RenderFrameContext.Frame scope = RenderFrameContext.pushThirdPerson(entity);
+        RenderFrameContext.Frame scope = RenderFrameContext.pushThirdPerson(
+                entity, patch.getAccurateYRot(partialTick));
         try {
             super.render(entity, patch, renderer, buffers, matrices, light, partialTick);
         } finally {

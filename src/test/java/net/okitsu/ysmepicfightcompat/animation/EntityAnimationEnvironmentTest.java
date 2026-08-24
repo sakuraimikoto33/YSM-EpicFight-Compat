@@ -1,15 +1,34 @@
 package net.okitsu.ysmepicfightcompat.animation;
 
 import net.minecraft.core.Direction;
+import net.minecraft.world.InteractionHand;
 import net.minecraft.world.phys.Vec3;
 import org.junit.jupiter.api.Test;
 
 import java.util.Random;
+import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
 
 class EntityAnimationEnvironmentTest {
+    @Test
+    void limitsAttackSoundOwnershipToSwingScopesAndTheMatchingHand() {
+        assertEquals(InteractionHand.MAIN_HAND,
+                EntityAnimationEnvironment.attackHandForScope(
+                        "controller/player.post_swing/state/1/0",
+                        Set.of(InteractionHand.MAIN_HAND)));
+        assertEquals(InteractionHand.OFF_HAND,
+                EntityAnimationEnvironment.attackHandForScope(
+                        "controller/player.post_swing_offhand/state/1/0",
+                        Set.of(InteractionHand.MAIN_HAND, InteractionHand.OFF_HAND)));
+        assertNull(EntityAnimationEnvironment.attackHandForScope(
+                "controller/player.post_hold/state/1/0",
+                Set.of(InteractionHand.MAIN_HAND)));
+        assertNull(EntityAnimationEnvironment.attackHandForScope(
+                "swing:sword", Set.of(InteractionHand.OFF_HAND)));
+    }
+
     @Test
     void matchesOfficialYsmHeadQueryDirections() {
         assertEquals(-30.0F, EntityAnimationEnvironment.officialHeadPitch(30.0F));
@@ -18,6 +37,30 @@ class EntityAnimationEnvironmentTest {
                 EntityAnimationEnvironment.officialHeadYaw(65.0F, 20.0F));
         assertEquals(-85.0F,
                 EntityAnimationEnvironment.officialHeadYaw(170.0F, 0.0F));
+    }
+
+    @Test
+    void customBowAimUsesProjectileYawLocallyAndInterpolatedViewRemotely() {
+        assertEquals(35.0F, EntityAnimationEnvironment.customBowAimYaw(
+                35.0F, 28.0F, true));
+        assertEquals(28.0F, EntityAnimationEnvironment.customBowAimYaw(
+                35.0F, 28.0F, false));
+    }
+
+    @Test
+    void customBowAimUsesEpicFightsActualOuterModelYaw() {
+        assertEquals(0.0F,
+                EntityAnimationEnvironment.customBowRelativeHeadYaw(
+                        190.0F, 185.0F, true, 190.0F), 0.00001F);
+        assertEquals(5.0F,
+                EntityAnimationEnvironment.customBowRelativeHeadYaw(
+                        190.0F, 185.0F, false, 190.0F), 0.00001F);
+        assertEquals(-85.0F,
+                EntityAnimationEnvironment.customBowRelativeHeadYaw(
+                        -170.0F, -170.0F, true, 95.0F), 0.00001F);
+        assertEquals(85.0F,
+                EntityAnimationEnvironment.customBowRelativeHeadYaw(
+                        170.0F, 170.0F, true, -95.0F), 0.00001F);
     }
 
     @Test

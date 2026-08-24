@@ -1,25 +1,33 @@
 package net.okitsu.ysmepicfightcompat.animation;
 
 import net.minecraft.client.Minecraft;
+import net.minecraft.util.Mth;
+import net.minecraft.world.InteractionHand;
 import net.minecraft.world.entity.LivingEntity;
 import net.okitsu.ysmepicfightcompat.CompatMod;
 import net.okitsu.ysmepicfightcompat.geometry.GeometryDocument;
 import net.okitsu.ysmepicfightcompat.mesh.AuxiliaryBoneLayout;
 import net.okitsu.ysmepicfightcompat.mesh.HumanoidRig;
+import net.okitsu.ysmepicfightcompat.network.ClientHeldItemModelPreferences;
 import org.joml.Matrix4f;
+import org.joml.Vector3f;
 import yesman.epicfight.api.utils.math.OpenMatrix4f;
 
+import javax.annotation.Nullable;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.Comparator;
+import java.util.EnumMap;
 import java.util.HashMap;
 import java.util.IdentityHashMap;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import java.util.WeakHashMap;
 import java.util.concurrent.CompletableFuture;
@@ -30,6 +38,8 @@ import java.util.concurrent.Executors;
 public final class ParallelAnimationProgram {
     private static final float HIDDEN_SCALE = 0.01F;
     private static final float EPSILON = 0.0001F;
+    /** Official YSM controller ending transition: three Minecraft ticks. */
+    private static final double FULL_BODY_END_TRANSITION_SECONDS = 3.0D / 20.0D;
     private static final Set<String> WHOLE_MODEL_MOUNTED_STATES = Set.of(
             "boat", "ride_pig", "ride", "sit");
     private static final ExecutorService ANIMATION_WORKERS = Executors.newFixedThreadPool(
@@ -41,7 +51,13 @@ public final class ParallelAnimationProgram {
 
     /** Values are reused and remain valid only until the owning entity's next sample. */
     public record Frame(OpenMatrix4f[] parallelDeltas, OpenMatrix4f[] wholeModelDeltas,
-                        boolean replaceEpicFightPose, Set<String> hiddenBones) {
+                        OpenMatrix4f[] heldItemDeltas,
+                        boolean replaceEpicFightPose, boolean[] replaceEpicFightAnchors,
+                        boolean[] suppressParallelDeltas,
+                        int[] heldItemAnchorJoints,
+                        @Nullable OpenMatrix4f[] fullBodyBlendSource,
+                        float fullBodyBlendWeight,
+                        Set<String> hiddenBones) {
     }
 
     private record VisibilityBone(GeometryDocument.Bone bone, int parentIndex) {
@@ -54,9 +70,54 @@ public final class ParallelAnimationProgram {
                                AnimationClip.BoneTracks tracks) {
     }
 
+    /** Epic Fight seam that owns a selectively authored YSM pose subtree. */
+    private record HeldAttachment(int anchorJoint, int[] relativePath,
+                                  Matrix4f bindRebase) {
+        private HeldAttachment {
+            relativePath = relativePath.clone();
+            bindRebase = new Matrix4f(bindRebase);
+        }
+    }
+
     private record ClipProgram(AnimationClip clip, float duration,
                                List<BoneProgram> bones, Set<Integer> variableSlots,
-                               Set<Integer> querySlots, boolean asyncSafe) {
+                               Set<Integer> querySlots, boolean asyncSafe,
+                               Set<Integer> replacementIndices,
+                               Set<Integer> propReplacementIndices,
+                               Map<Integer, HeldAttachment> heldAttachments) {
+    }
+
+    private record FullBodyObservation(AutomaticAnimationSelector.ActiveClip active,
+                                       InteractionHand hand,
+                                       AnimationConditionMatcher.ItemAction action) {
+    }
+
+    private record FullBodyEnding(AutomaticAnimationSelector.ActiveClip active,
+                                  InteractionHand hand, double startedAt, float weight,
+                                  @Nullable PoseLayerSnapshot snapshot,
+                                  @Nullable FullBodyCompositeSnapshot compositeSnapshot) {
+    }
+
+    private record FullBodySwingPlayback(String clipName, InteractionHand hand,
+                                         double startedAt, double duration) {
+    }
+
+    static final class FullBodySwingState {
+        private FullBodySwingPlayback playback;
+        private boolean rawSwingConsumed;
+        private boolean endpointPublished;
+
+        void reset() {
+            playback = null;
+            rawSwingConsumed = false;
+            endpointPublished = false;
+        }
+    }
+
+    private record PoseLayer(int stage, int order,
+                             AutomaticAnimationSelector.ActiveClip automatic,
+                             AnimationControllerProgram.ActiveAnimation controlled,
+                             FullBodyEnding ending) {
     }
 
     private record AsyncResult(Frame frame, EvaluationScratch scratch) {
@@ -166,10 +227,15 @@ public final class ParallelAnimationProgram {
     private final List<VisibilityBone> visibilityBones;
     private final List<ClipProgram> parallelClips;
     private final Map<String, ClipProgram> automaticClips;
+    private final Map<String, ClipProgram> automaticFullBodyClips;
     private final Map<String, ClipProgram> controllerClips;
+    private final Map<String, ClipProgram> controllerAuxiliaryClips;
     private final Map<String, ClipProgram> rouletteClips;
     private final AutomaticAnimationSelector automaticSelector;
+    private final CustomHeldItemPolicy customHeldItems;
     private final AnimationControllerProgram controllerProgram;
+    private final Map<String, Set<InteractionHand>> heldItemControllerHands;
+    private final boolean authoredSwingControllerSound;
     private final float horizontalScale;
     private final float verticalScale;
     private final Map<LivingEntity, RuntimeState> states = new WeakHashMap<>();
@@ -208,7 +274,15 @@ public final class ParallelAnimationProgram {
             visibilityByName.putIfAbsent(normalize(visibilityBones.get(index).bone().name()), index);
         }
         parallelClips = compileParallelClips(animations, visibilityByName);
+        customHeldItems = CustomHeldItemPolicy.create(geometry, animations);
         automaticClips = compileAutomaticClips(animations, visibilityByName);
+        automaticFullBodyClips = animations.values().stream()
+                .map(AnimationClip::name)
+                .anyMatch(customHeldItems::replacesBodyPose)
+                ? compileAutomaticFullBodyClips(animations, visibilityByName)
+                : Map.of();
+        controllerAuxiliaryClips = compileControllerAuxiliaryClips(
+                animations, visibilityByName);
         controllerClips = compileControllerClips(animations, visibilityByName);
         rouletteClips = compileRouletteClips(animations, visibilityByName);
         Map<String, AutomaticAnimationSelector.ClipInfo> automaticInfo = new HashMap<>();
@@ -222,10 +296,102 @@ public final class ParallelAnimationProgram {
                     duration(clip), clip.playback(),
                     controllerClips.containsKey(name)));
         });
-        controllerProgram = new AnimationControllerProgram(controllers, controllerInfo);
+        heldItemControllerHands = customHeldItemControllerHands(controllers);
+        Set<String> heldItemControllers = heldItemControllerHands.keySet();
+        authoredSwingControllerSound = authoredSwingControllerSound(
+                controllers, heldItemControllers, animations);
+        controllerProgram = new AnimationControllerProgram(
+                controllers, controllerInfo, heldItemControllers);
 
         auxiliaryCount = layout.entries().size();
         testScratch = new EvaluationScratch(visibilityBones.size(), auxiliaryCount);
+    }
+
+    private Map<String, Set<InteractionHand>> customHeldItemControllerHands(
+            Map<String, AnimationController> controllers) {
+        if (controllers == null || controllers.isEmpty()) {
+            return Map.of();
+        }
+        EnumMap<InteractionHand, Set<Integer>> indicesByHand =
+                new EnumMap<>(InteractionHand.class);
+        for (InteractionHand hand : InteractionHand.values()) {
+            LinkedHashSet<Integer> indices = new LinkedHashSet<>();
+            for (String root : customHeldItems.allReplacementRoots(hand)) {
+                AuxiliaryBoneLayout.Entry entry = layout.entryForBoneName(root);
+                if (entry != null) {
+                    indices.add(entry.auxiliaryIndex());
+                }
+            }
+            indicesByHand.put(hand, Set.copyOf(indices));
+        }
+        Map<String, Set<InteractionHand>> result = new LinkedHashMap<>();
+        controllers.forEach((name, controller) -> {
+            LinkedHashSet<Integer> affected = new LinkedHashSet<>();
+            controller.states().values().stream()
+                    .flatMap(state -> state.animations().stream())
+                    .map(reference -> controllerClips.get(normalize(reference.name())))
+                    .filter(Objects::nonNull)
+                    .forEach(program -> affected.addAll(program.replacementIndices()));
+            LinkedHashSet<InteractionHand> hands = new LinkedHashSet<>();
+            indicesByHand.forEach((hand, indices) -> {
+                if (indices.stream().anyMatch(affected::contains)) {
+                    hands.add(hand);
+                }
+            });
+            if (!hands.isEmpty()) {
+                result.put(normalize(name), Set.copyOf(hands));
+            }
+        });
+        return Map.copyOf(result);
+    }
+
+    static boolean authoredSwingControllerSound(
+            Map<String, AnimationController> controllers,
+            Set<String> allowedControllers,
+            Map<String, AnimationClip> animations) {
+        if (controllers == null || controllers.isEmpty()
+                || allowedControllers == null || allowedControllers.isEmpty()) {
+            return false;
+        }
+        Map<String, AnimationClip> normalizedAnimations = new HashMap<>();
+        if (animations != null) {
+            animations.forEach((name, clip) -> {
+                if (clip != null) {
+                    normalizedAnimations.putIfAbsent(normalize(name), clip);
+                    normalizedAnimations.putIfAbsent(normalize(clip.name()), clip);
+                }
+            });
+        }
+        for (Map.Entry<String, AnimationController> entry : controllers.entrySet()) {
+            String name = normalize(entry.getKey());
+            AnimationController controller = entry.getValue();
+            if (controller == null || !allowedControllers.contains(name)
+                    || !name.contains("swing")) {
+                continue;
+            }
+            for (AnimationController.State state : controller.states().values()) {
+                if (!state.soundEffects().isEmpty()
+                        || containsPlaySound(state.onEntry())
+                        || containsPlaySound(state.onExit())) {
+                    return true;
+                }
+                for (AnimationController.AnimationReference reference
+                        : state.animations()) {
+                    if (hasSoundOutput(normalizedAnimations.get(
+                            normalize(reference.name())))) {
+                        return true;
+                    }
+                }
+            }
+        }
+        return false;
+    }
+
+    private static boolean containsPlaySound(List<String> statements) {
+        return statements != null && statements.stream()
+                .filter(statement -> statement != null)
+                .map(statement -> statement.toLowerCase(Locale.ROOT))
+                .anyMatch(statement -> statement.contains("ysm.play_sound"));
     }
 
     public boolean isEmpty() {
@@ -233,7 +399,80 @@ public final class ParallelAnimationProgram {
                 && controllerProgram.isEmpty() && rouletteClips.isEmpty();
     }
 
+    /** Whether this model replaces Epic Fight's item rendering for the current hand item. */
+    public boolean replacesHeldItem(LivingEntity entity, InteractionHand hand) {
+        return ClientHeldItemModelPreferences.usesYsm(entity, hand)
+                && customHeldItems.replaces(entity, hand);
+    }
+
+    /** Item-definition lookup used by server sound notifications before render catches up. */
+    public boolean replacesAttackItem(LivingEntity entity, InteractionHand hand) {
+        return ClientHeldItemModelPreferences.usesYsm(entity, hand)
+                && customHeldItems.replacesAttackItem(entity, hand);
+    }
+
+    /** Whether the current replacement attack has an authored sound route. */
+    public boolean hasAttackSoundRoute(LivingEntity entity, InteractionHand hand) {
+        if (!replacesAttackItem(entity, hand)) {
+            return false;
+        }
+        RuntimeState state = states.get(entity);
+        if (state != null && state.attackSoundRouteHands.contains(hand)) {
+            return true;
+        }
+        for (Map.Entry<String, ClipProgram> entry : automaticClips.entrySet()) {
+            String name = entry.getKey();
+            if (customHeldItems.replacementHand(name) == hand
+                    && customHeldItems.clipAction(name)
+                    == AnimationConditionMatcher.ItemAction.SWING
+                    && customHeldItems.matchesClipItem(entity, name)
+                    && (hasSoundOutput(entry.getValue())
+                    || authoredSwingControllerSound)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /** Advances outputs for a ready model that was not sampled by rendering this tick. */
+    public void advanceOutputs(LivingEntity entity, boolean firstPerson) {
+        RuntimeState state = states.get(entity);
+        if (state != null && state.lastTickCount >= entity.tickCount) {
+            return;
+        }
+        sample(entity, 0.0F, firstPerson, null);
+    }
+
+    /** Bone-subtree roots that replace the current logical hand item. */
+    public Set<String> heldItemReplacementRoots(LivingEntity entity, InteractionHand hand) {
+        return ClientHeldItemModelPreferences.usesYsm(entity, hand)
+                ? customHeldItems.replacementRoots(entity, hand) : Set.of();
+    }
+
+    /** Whether the current custom bow action replaces Epic Fight's complete body pose. */
+    public boolean replacesBodyPose(LivingEntity entity) {
+        Set<InteractionHand> enabledHands = ysmReplacementHands(entity);
+        if (enabledHands.isEmpty()) {
+            return false;
+        }
+        RuntimeState state = states.get(entity);
+        boolean active = enabledHands.stream().anyMatch(hand ->
+                customHeldItems.replacesBodyPose(entity, hand));
+        if (active || state == null) {
+            return active;
+        }
+        return state.fullBodyEnding != null
+                && enabledHands.contains(state.fullBodyEnding.hand())
+                || state.fullBodyObservation != null
+                && enabledHands.contains(state.fullBodyObservation.hand());
+    }
+
     public Frame sample(LivingEntity entity, float partialTick, boolean firstPerson) {
+        return sample(entity, partialTick, firstPerson, null);
+    }
+
+    public Frame sample(LivingEntity entity, float partialTick, boolean firstPerson,
+                        @Nullable Float epicModelYaw) {
         RuntimeState state = states.computeIfAbsent(entity,
                 value -> new RuntimeState(value, modelId,
                         new EvaluationScratch(visibilityBones.size(), auxiliaryCount)));
@@ -253,7 +492,6 @@ public final class ParallelAnimationProgram {
                 : Math.min(0.25D, Math.max(0.0D, now - state.lastNow));
         state.lastTickCount = entity.tickCount;
         state.lastNow = now;
-        state.environment.update(stablePartialTick, firstPerson, deltaTime);
         OfficialRoamingVariables.RouletteState roulette =
                 OfficialRoamingVariables.rouletteState(entity);
         double rouletteElapsed = state.rouletteElapsed(roulette, now);
@@ -261,18 +499,46 @@ public final class ParallelAnimationProgram {
                 ? rouletteClip(roulette.animationName()) : null;
         state.selectRouletteClip(rouletteClip);
         state.reportRoulette(entity, roulette, rouletteClip != null);
+        Set<InteractionHand> enabledReplacementHands = ysmReplacementHands(entity);
+        state.restrictFullBodyHands(enabledReplacementHands);
+        List<AutomaticAnimationSelector.ActiveClip> rawAutomatic =
+                filterDisabledItemReplacementClips(entity,
+                        automaticSelector.select(entity, now, state.automaticState),
+                        enabledReplacementHands);
+        state.fullBodyInputHands = customFullBodyInputHands(rawAutomatic);
         List<AutomaticAnimationSelector.ActiveClip> automatic =
-                automaticSelector.select(entity, now, state.automaticState);
+                updateFullBodySwingPlayback(rawAutomatic, now,
+                        state.fullBodySwingState);
+        FullBodyEnding fullBodyEnding = updateFullBodyEnding(state, automatic, now);
+        Set<InteractionHand> fullBodyHands = customFullBodyHands(automatic);
+        boolean customBowHeadYaw = shouldUseCustomBowHeadYaw(
+                !fullBodyHands.isEmpty(), fullBodyEnding != null,
+                fullBodyEnding != null && fullBodyEnding.compositeSnapshot() != null);
+        Float visualFacingYaw = customBowHeadYaw
+                ? entity.getViewYRot(stablePartialTick) : null;
+        state.environment.update(stablePartialTick, firstPerson, deltaTime);
+        state.environment.customBowAim(visualFacingYaw, epicModelYaw);
+        Set<InteractionHand> attackReplacementHands = customAttackSoundHands(entity);
+        state.environment.attackReplacementHands(attackReplacementHands);
+        state.reportFullBody(entity, automatic, fullBodyEnding, fullBodyHands,
+                stablePartialTick, visualFacingYaw, epicModelYaw);
         state.prepareAutomaticTimelines(automatic, automaticSelector.names());
         List<AnimationControllerProgram.ActiveAnimation> controlled =
-                controllerProgram.select(now, state.environment, state.controllerState);
+                controllerProgram.select(now, state.environment, state.controllerState,
+                        name -> controllerOutputsEnabled(
+                                name, enabledReplacementHands));
+        state.attackSoundRouteHands = attackSoundRouteHands(
+                automatic, controlled, attackReplacementHands);
         state.prepareControllerTimelines(controllerProgram.activeKeys(controlled));
         collectCompletedEvaluation(state);
         boolean workerEligible = entity != Minecraft.getInstance().player
+                && customFullBodyHands(automatic).isEmpty()
+                && fullBodyEnding == null
                 && asyncSafe(automatic, controlled, rouletteClip);
         if (!workerEligible) {
             discardPendingEvaluation(state);
-            evaluate(elapsed, automatic, controlled, rouletteClip, rouletteElapsed,
+            evaluate(elapsed, automatic, controlled, fullBodyEnding,
+                    rouletteClip, rouletteElapsed,
                     state.environment, state, state.scratch);
             state.publishedFrame = frame(state.scratch);
             state.publishedScratch = state.scratch;
@@ -280,7 +546,8 @@ public final class ParallelAnimationProgram {
             fireActiveTimelines(elapsed, automatic, controlled, rouletteClip,
                     rouletteElapsed, state.environment, state);
             if (state.publishedFrame == null) {
-                evaluate(elapsed, automatic, controlled, rouletteClip, rouletteElapsed,
+                evaluate(elapsed, automatic, controlled, null,
+                        rouletteClip, rouletteElapsed,
                         state.environment, null, state.scratch);
                 state.publishedFrame = frame(state.scratch);
                 state.publishedScratch = state.scratch;
@@ -317,7 +584,8 @@ public final class ParallelAnimationProgram {
         List<AnimationControllerProgram.ActiveAnimation> controlledCopy = List.copyOf(controlled);
         state.lastScheduledAt = now;
         state.pendingEvaluation = CompletableFuture.supplyAsync(() -> {
-            evaluate(elapsed, automaticCopy, controlledCopy, rouletteClip, rouletteElapsed,
+            evaluate(elapsed, automaticCopy, controlledCopy, null,
+                    rouletteClip, rouletteElapsed,
                     snapshot, null, working);
             return new AsyncResult(frame(working), working);
         }, ANIMATION_WORKERS);
@@ -419,13 +687,15 @@ public final class ParallelAnimationProgram {
     }
 
     Frame sampleAt(double elapsed, ExpressionEngine.Environment environment) {
-        evaluate(elapsed, List.of(), List.of(), null, 0.0D, environment, null, testScratch);
+        evaluate(elapsed, List.of(), List.of(), null,
+                null, 0.0D, environment, null, testScratch);
         return frame(testScratch);
     }
 
     Frame sampleAt(double elapsed, String rouletteAnimation, double rouletteElapsed,
                    ExpressionEngine.Environment environment) {
-        evaluate(elapsed, List.of(), List.of(), rouletteClip(rouletteAnimation), rouletteElapsed,
+        evaluate(elapsed, List.of(), List.of(), null,
+                rouletteClip(rouletteAnimation), rouletteElapsed,
                 environment, null, testScratch);
         return frame(testScratch);
     }
@@ -436,7 +706,8 @@ public final class ParallelAnimationProgram {
                 .map(ParallelAnimationProgram::normalize)
                 .map(name -> new AutomaticAnimationSelector.ActiveClip(name, elapsed, false))
                 .toList();
-        evaluate(elapsed, active, List.of(), null, 0.0D, environment, null, testScratch);
+        evaluate(elapsed, active, List.of(), null,
+                null, 0.0D, environment, null, testScratch);
         return frame(testScratch);
     }
 
@@ -444,13 +715,227 @@ public final class ParallelAnimationProgram {
                               AnimationControllerProgram.RuntimeState controllerState) {
         List<AnimationControllerProgram.ActiveAnimation> controlled =
                 controllerProgram.select(now, environment, controllerState);
-        evaluate(now, List.of(), controlled, null, 0.0D, environment, null, testScratch);
+        evaluate(now, List.of(), controlled, null,
+                null, 0.0D, environment, null, testScratch);
+        return frame(testScratch);
+    }
+
+    private Set<InteractionHand> ysmReplacementHands(LivingEntity entity) {
+        LinkedHashSet<InteractionHand> result = new LinkedHashSet<>();
+        for (InteractionHand hand : InteractionHand.values()) {
+            if (ClientHeldItemModelPreferences.usesYsm(entity, hand)
+                    && customHeldItems.replacesAttackItem(entity, hand)) {
+                result.add(hand);
+            }
+        }
+        return Set.copyOf(result);
+    }
+
+    private List<AutomaticAnimationSelector.ActiveClip>
+    filterDisabledItemReplacementClips(
+            LivingEntity entity,
+            List<AutomaticAnimationSelector.ActiveClip> automatic,
+            Set<InteractionHand> enabledHands) {
+        if (automatic.isEmpty()) {
+            return automatic;
+        }
+        List<AutomaticAnimationSelector.ActiveClip> result = new ArrayList<>(automatic.size());
+        for (AutomaticAnimationSelector.ActiveClip active : automatic) {
+            InteractionHand hand = customHeldItems.replacementHand(active.name());
+            boolean disabledReplacement = hand != null
+                    && !enabledHands.contains(hand)
+                    && customHeldItems.replacesAttackItem(entity, hand);
+            if (!disabledReplacement) {
+                result.add(active);
+            }
+        }
+        return result.size() == automatic.size() ? automatic : List.copyOf(result);
+    }
+
+    private boolean controllerOutputsEnabled(
+            String controllerName, Set<InteractionHand> enabledHands) {
+        Set<InteractionHand> hands = heldItemControllerHands.get(normalize(controllerName));
+        return hands == null || hands.stream().anyMatch(enabledHands::contains);
+    }
+
+    private Set<InteractionHand> customAttackSoundHands(LivingEntity entity) {
+        LinkedHashSet<InteractionHand> result = new LinkedHashSet<>();
+        for (InteractionHand hand : InteractionHand.values()) {
+            if (ClientHeldItemModelPreferences.usesYsm(entity, hand)
+                    && customHeldItems.replaces(entity, hand)
+                    && AnimationConditionMatcher.swingSignal(entity, hand).active()) {
+                result.add(hand);
+            }
+        }
+        return Set.copyOf(result);
+    }
+
+    private Set<InteractionHand> attackSoundRouteHands(
+            List<AutomaticAnimationSelector.ActiveClip> automatic,
+            List<AnimationControllerProgram.ActiveAnimation> controlled,
+            Set<InteractionHand> replacementHands) {
+        if (replacementHands.isEmpty()) {
+            return Set.of();
+        }
+        LinkedHashSet<InteractionHand> result = new LinkedHashSet<>();
+        for (AutomaticAnimationSelector.ActiveClip active : automatic) {
+            InteractionHand hand = customHeldItems.replacementHand(active.name());
+            ClipProgram program = automaticClips.get(active.name());
+            if (hand != null && replacementHands.contains(hand)
+                    && customHeldItems.clipAction(active.name())
+                    == AnimationConditionMatcher.ItemAction.SWING
+                    && hasSoundOutput(program)) {
+                result.add(hand);
+            }
+        }
+        for (AnimationControllerProgram.ActiveAnimation active : controlled) {
+            InteractionHand hand = EntityAnimationEnvironment.attackHandForScope(
+                    "controller/" + active.controllerName(), replacementHands);
+            if (hand != null && emitsControllerOutputs(active.weight())
+                    && hasSoundOutput(controllerClips.get(active.name()))) {
+                result.add(hand);
+            }
+        }
+        return Set.copyOf(result);
+    }
+
+    private static boolean hasSoundOutput(ClipProgram program) {
+        return program != null && hasSoundOutput(program.clip());
+    }
+
+    private static boolean hasSoundOutput(AnimationClip clip) {
+        if (clip == null) {
+            return false;
+        }
+        if (!clip.soundEffects().isEmpty()) {
+            return true;
+        }
+        return clip.timeline().stream()
+                .flatMap(event -> event.statements().stream())
+                .map(statement -> statement.toLowerCase(Locale.ROOT))
+                .anyMatch(statement -> statement.contains("ysm.play_sound"));
+    }
+
+    static boolean emitsControllerOutputs(float weight) {
+        return Float.isFinite(weight) && Math.abs(weight) > EPSILON;
+    }
+
+    Frame sampleAutomaticWithEndingAt(
+            double elapsed, List<String> animationNames,
+            String endingAnimation, double endingElapsed, float endingWeight,
+            ExpressionEngine.Environment environment) {
+        return sampleAutomaticWithEndingAt(elapsed, animationNames,
+                endingAnimation, endingElapsed, endingWeight,
+                environment, environment);
+    }
+
+    Frame sampleAutomaticWithEndingAt(
+            double elapsed, List<String> animationNames,
+            String endingAnimation, double endingElapsed, float endingWeight,
+            ExpressionEngine.Environment capturedEnvironment,
+            ExpressionEngine.Environment environment) {
+        List<AutomaticAnimationSelector.ActiveClip> active = animationNames.stream()
+                .map(ParallelAnimationProgram::normalize)
+                .map(name -> new AutomaticAnimationSelector.ActiveClip(
+                        name, elapsed, false))
+                .toList();
+        String endingName = normalize(endingAnimation);
+        InteractionHand hand = customHeldItems.replacementHand(endingName);
+        PoseLayerSnapshot snapshot = captureAutomaticLayer(
+                endingName, endingElapsed, capturedEnvironment);
+        FullBodyEnding ending = hand == null ? null : new FullBodyEnding(
+                new AutomaticAnimationSelector.ActiveClip(
+                        endingName, endingElapsed, false),
+                hand, 0.0D, endingWeight, snapshot, null);
+        evaluate(elapsed, active, List.of(), ending,
+                null, 0.0D, environment, null, testScratch);
+        return frame(testScratch);
+    }
+
+    Frame sampleAutomaticOwnershipEndingAt(
+            double sourceElapsed, List<String> sourceAnimations,
+            double targetElapsed, List<String> targetAnimations,
+            String endingAnimation, float endingWeight,
+            ExpressionEngine.Environment sourceEnvironment,
+            ExpressionEngine.Environment targetEnvironment) {
+        String endingName = normalize(endingAnimation);
+        InteractionHand hand = customHeldItems.replacementHand(endingName);
+        PoseLayerSnapshot actionSnapshot = captureAutomaticLayer(
+                endingName, sourceElapsed, sourceEnvironment);
+        List<AutomaticAnimationSelector.ActiveClip> source = sourceAnimations.stream()
+                .map(ParallelAnimationProgram::normalize)
+                .map(name -> new AutomaticAnimationSelector.ActiveClip(
+                        name, sourceElapsed, false))
+                .toList();
+        evaluate(sourceElapsed, source, List.of(), null,
+                null, 0.0D, sourceEnvironment, null, testScratch);
+        FullBodyCompositeSnapshot composite = new FullBodyCompositeSnapshot(
+                testScratch.wholeModelPose.positions.length);
+        composite.capture(testScratch);
+
+        List<AutomaticAnimationSelector.ActiveClip> target = targetAnimations.stream()
+                .map(ParallelAnimationProgram::normalize)
+                .map(name -> new AutomaticAnimationSelector.ActiveClip(
+                        name, targetElapsed, false))
+                .toList();
+        FullBodyEnding ending = hand == null ? null : new FullBodyEnding(
+                new AutomaticAnimationSelector.ActiveClip(
+                        endingName, sourceElapsed, false),
+                hand, 0.0D, endingWeight, actionSnapshot,
+                composite.copyIfValid());
+        evaluate(targetElapsed, target, List.of(), ending,
+                null, 0.0D, targetEnvironment, null, testScratch);
+        return frame(testScratch);
+    }
+
+    @Nullable
+    private PoseLayerSnapshot captureAutomaticLayer(
+            String animationName, double elapsed,
+            ExpressionEngine.Environment environment) {
+        ClipProgram selectiveProgram = automaticClips.get(animationName);
+        if (selectiveProgram == null) {
+            return null;
+        }
+        ClipProgram program = automaticFullBodyClips.getOrDefault(
+                animationName, selectiveProgram);
+        float localTime = automaticTime(program, elapsed);
+        if (localTime < 0.0F) {
+            return null;
+        }
+        resetScratch(testScratch);
+        PoseLayerSnapshot snapshot = new PoseLayerSnapshot(
+                testScratch.wholeModelPose.positions.length,
+                testScratch.visibilityScales.length);
+        boolean applied = evaluateProgram(program, localTime, environment,
+                null, testScratch.wholeModelPose, ApplyMode.OVERRIDE,
+                testScratch, snapshot);
+        return applied ? snapshot : null;
+    }
+
+    Frame sampleAutomaticAndControllersAt(
+            double now, List<String> animationNames,
+            ExpressionEngine.Environment environment,
+            AnimationControllerProgram.RuntimeState controllerState) {
+        List<AutomaticAnimationSelector.ActiveClip> automatic = animationNames.stream()
+                .map(ParallelAnimationProgram::normalize)
+                .map(name -> new AutomaticAnimationSelector.ActiveClip(name, now, false))
+                .toList();
+        List<AnimationControllerProgram.ActiveAnimation> controlled =
+                controllerProgram.select(now, environment, controllerState);
+        evaluate(now, automatic, controlled, null,
+                null, 0.0D,
+                environment, null, testScratch);
         return frame(testScratch);
     }
 
     private Frame frame(EvaluationScratch scratch) {
         return new Frame(scratch.parallelPose.output, scratch.wholeModelPose.output,
-                scratch.replaceEpicFightPose, scratch.hiddenView);
+                scratch.heldItemPose.output,
+                scratch.replaceEpicFightPose, scratch.replaceEpicFightAnchors,
+                scratch.suppressParallelDeltas,
+                scratch.heldItemAnchorJoints,
+                scratch.fullBodyBlendSource, scratch.fullBodyBlendWeight,
+                scratch.hiddenView);
     }
 
     private void fireActiveTimelines(
@@ -458,6 +943,7 @@ public final class ParallelAnimationProgram {
             List<AnimationControllerProgram.ActiveAnimation> controlled,
             ClipProgram rouletteClip, double rouletteElapsed,
             ExpressionEngine.Environment environment, RuntimeState runtimeState) {
+        Set<InteractionHand> pausedHoldHands = runtimeState.fullBodyInputHands;
         for (ClipProgram program : parallelClips) {
             if (program.clip().name().startsWith("pre_parallel")) {
                 fireProgramTimeline(program, localTime(program, elapsed), environment,
@@ -467,6 +953,15 @@ public final class ParallelAnimationProgram {
         for (AutomaticAnimationSelector.ActiveClip active : automatic) {
             ClipProgram program = automaticClips.get(active.name());
             if (program == null) {
+                continue;
+            }
+            if (isPausedHoldClip(active.name(), pausedHoldHands)) {
+                // Official YSM pauses and resets a hand's hold controller while its
+                // use/swing controller owns the authored full-body bow pose. Keep the
+                // hold rule available for item suppression, but do not emit its
+                // timeline or let it resume from a stale local time on release.
+                runtimeState.environment.stopSoundScope(program.clip().name());
+                runtimeState.lastLocalTime.remove(program.clip().name());
                 continue;
             }
             if (active.restarted()) {
@@ -484,10 +979,21 @@ public final class ParallelAnimationProgram {
             if (program == null) {
                 continue;
             }
+            float localTime = controllerTime(program, active.elapsed());
+            if (!emitsControllerOutputs(active.weight())) {
+                // Bedrock controllers may list mutually exclusive clips with weights
+                // such as ctrl.idle and !ctrl.idle. Keep the inactive clip's clock
+                // current so reactivation does not replay past events, but never emit
+                // its sounds, particles, or Molang timeline statements.
+                runtimeState.environment.stopSoundScope(active.instanceKey());
+                runtimeState.environment.stopParticleScope(active.instanceKey());
+                runtimeState.lastLocalTime.put(active.instanceKey(), localTime);
+                continue;
+            }
             ExpressionEngine.Environment controllerEnvironment = active.stateVariables().isEmpty()
                     ? environment : new ControllerVariableEnvironment(
                     environment, active.stateVariables());
-            fireProgramTimeline(program, controllerTime(program, active.elapsed()),
+            fireProgramTimeline(program, localTime,
                     controllerEnvironment, runtimeState, active.instanceKey(), true);
         }
         if (rouletteClip != null && rouletteElapsed >= 0.0D) {
@@ -535,46 +1041,53 @@ public final class ParallelAnimationProgram {
     private void evaluate(double elapsed,
                           List<AutomaticAnimationSelector.ActiveClip> automatic,
                           List<AnimationControllerProgram.ActiveAnimation> controlled,
+                          @Nullable FullBodyEnding fullBodyEnding,
                           ClipProgram rouletteClip, double rouletteElapsed,
                           ExpressionEngine.Environment environment,
                           RuntimeState runtimeState, EvaluationScratch scratch) {
         resetScratch(scratch);
+        Set<InteractionHand> fullBodyHands = customFullBodyHands(automatic);
+        Set<InteractionHand> pausedHoldHands = runtimeState == null
+                ? customFullBodyInputHands(automatic)
+                : runtimeState.fullBodyInputHands;
+        boolean liveFullBodyPose = !fullBodyHands.isEmpty();
+        boolean blendFullBodyToEpic = !liveFullBodyPose && fullBodyEnding != null
+                && fullBodyEnding.compositeSnapshot() != null;
+        // USE -> SWING remains one complete authored hierarchy. Once the final action
+        // ends, however, evaluate the ordinary Epic-owned path exactly once and blend
+        // the saved complete YSM skin toward it in AuxiliaryPoseMatrices.
+        boolean customFullBodyPose = liveFullBodyPose
+                || fullBodyEnding != null && !blendFullBodyToEpic;
+        PoseScratch authoredTarget = customFullBodyPose
+                ? scratch.wholeModelPose : scratch.parallelPose;
         for (ClipProgram program : parallelClips) {
             if (program.clip().name().startsWith("pre_parallel")) {
                 evaluateProgram(program, localTime(program, elapsed), environment,
-                        runtimeState, scratch.parallelPose, ApplyMode.PARALLEL, scratch);
+                        runtimeState, authoredTarget, ApplyMode.PARALLEL, scratch);
             }
         }
-        for (AutomaticAnimationSelector.ActiveClip active : automatic) {
-            ClipProgram program = automaticClips.get(active.name());
-            if (program == null) {
-                continue;
+        if (customFullBodyPose) {
+            for (PoseLayer layer : orderedFullBodyLayers(
+                    automatic, controlled, fullBodyEnding)) {
+                if (layer.automatic() != null) {
+                    evaluateAutomaticLayer(layer.automatic(), true, pausedHoldHands,
+                            environment, runtimeState, scratch);
+                } else if (layer.controlled() != null) {
+                    evaluateControllerLayer(layer.controlled(), true,
+                            environment, runtimeState, scratch);
+                } else {
+                    evaluateEndingFullBodyLayer(layer.ending(), environment, scratch);
+                }
             }
-            if (active.restarted() && runtimeState != null) {
-                runtimeState.environment.stopSoundScope(program.clip().name());
-                runtimeState.lastLocalTime.remove(program.clip().name());
+        } else {
+            for (AutomaticAnimationSelector.ActiveClip active : automatic) {
+                evaluateAutomaticLayer(active, false, pausedHoldHands,
+                        environment, runtimeState, scratch);
             }
-            float localTime = automaticTime(program, active.elapsed());
-            if (localTime >= 0.0F) {
-                boolean mounted = isWholeModelMountedClip(active.name());
-                PoseScratch target = mounted ? scratch.wholeModelPose : scratch.parallelPose;
-                boolean applied = evaluateProgram(program, localTime, environment,
-                        runtimeState, target, ApplyMode.OVERRIDE, scratch);
-                scratch.replaceEpicFightPose |= mounted && applied;
+            for (AnimationControllerProgram.ActiveAnimation active : controlled) {
+                evaluateControllerLayer(active, false,
+                        environment, runtimeState, scratch);
             }
-        }
-        for (AnimationControllerProgram.ActiveAnimation active : controlled) {
-            ClipProgram program = controllerClips.get(active.name());
-            if (program == null) {
-                continue;
-            }
-            ExpressionEngine.Environment controllerEnvironment = active.stateVariables().isEmpty()
-                    ? environment : new ControllerVariableEnvironment(
-                    environment, active.stateVariables());
-            evaluateProgram(program, controllerTime(program, active.elapsed()),
-                    controllerEnvironment, runtimeState, scratch.parallelPose,
-                    ApplyMode.OVERRIDE, active.weight(), active.blendViaShortestPath(),
-                    active.instanceKey(), true, scratch);
         }
         if (rouletteClip != null && rouletteElapsed >= 0.0D) {
             float localTime = rouletteTime(rouletteClip, rouletteElapsed);
@@ -589,12 +1102,634 @@ public final class ParallelAnimationProgram {
         for (ClipProgram program : parallelClips) {
             if (!program.clip().name().startsWith("pre_parallel")) {
                 evaluateProgram(program, localTime(program, elapsed), environment,
-                        runtimeState, scratch.parallelPose, ApplyMode.PARALLEL, scratch);
+                        runtimeState, authoredTarget, ApplyMode.PARALLEL, scratch);
             }
         }
         composeVisibility(scratch);
         composeAuxiliaryMatrices(scratch.parallelPose, scratch);
         composeAuxiliaryMatrices(scratch.wholeModelPose, scratch);
+        composeAuxiliaryMatrices(scratch.heldItemPose, scratch);
+        if (liveFullBodyPose && runtimeState != null) {
+            runtimeState.fullBodyCompositeSnapshot.capture(scratch);
+        }
+        if (blendFullBodyToEpic) {
+            FullBodyCompositeSnapshot source = fullBodyEnding.compositeSnapshot();
+            scratch.fullBodyBlendSource = source.skinMatrices;
+            scratch.fullBodyBlendWeight = fullBodyEnding.weight();
+            // Keep a bone drawable while either endpoint is visible; its matrix scale
+            // performs the actual transition without an early visibility pop.
+            scratch.hiddenBones.retainAll(source.hiddenBones);
+        }
+    }
+
+    private void evaluateAutomaticLayer(
+            AutomaticAnimationSelector.ActiveClip active,
+            boolean customFullBodyPose, Set<InteractionHand> pausedHoldHands,
+            ExpressionEngine.Environment environment, RuntimeState runtimeState,
+            EvaluationScratch scratch) {
+        ClipProgram selectiveProgram = automaticClips.get(active.name());
+        if (selectiveProgram == null) {
+            return;
+        }
+        if (isPausedHoldClip(active.name(), pausedHoldHands)) {
+            if (runtimeState != null) {
+                runtimeState.environment.stopSoundScope(selectiveProgram.clip().name());
+                runtimeState.lastLocalTime.remove(selectiveProgram.clip().name());
+            }
+            return;
+        }
+        if (active.restarted() && runtimeState != null) {
+            runtimeState.environment.stopSoundScope(selectiveProgram.clip().name());
+            runtimeState.lastLocalTime.remove(selectiveProgram.clip().name());
+        }
+        ClipProgram program = customFullBodyPose
+                ? automaticFullBodyClips.getOrDefault(active.name(), selectiveProgram)
+                : selectiveProgram;
+        float localTime = automaticTime(program, active.elapsed());
+        if (localTime < 0.0F) {
+            return;
+        }
+        boolean mounted = isWholeModelMountedClip(active.name());
+        boolean wholeModel = mounted || customFullBodyPose;
+        boolean selectiveReplacement = !selectiveProgram.replacementIndices().isEmpty();
+        PoseScratch target = wholeModel ? scratch.wholeModelPose
+                : selectiveReplacement ? scratch.heldItemPose
+                : scratch.parallelPose;
+        AnimationConditionMatcher.ItemAction action =
+                customHeldItems.clipAction(active.name());
+        boolean captureActionPose = customFullBodyPose && runtimeState != null
+                && (action == AnimationConditionMatcher.ItemAction.USE
+                || action == AnimationConditionMatcher.ItemAction.SWING);
+        PoseLayerSnapshot capture = captureActionPose
+                ? runtimeState.fullBodyActionSnapshot : null;
+        if (capture != null) {
+            capture.reset();
+        }
+        boolean applied = evaluateProgram(program, localTime, environment,
+                runtimeState, target, ApplyMode.OVERRIDE, scratch, capture);
+        if (capture != null) {
+            runtimeState.fullBodyActionSnapshotClip = applied
+                    ? normalize(active.name()) : "";
+        }
+        scratch.replaceEpicFightPose |= wholeModel && applied;
+        if (customFullBodyPose) {
+            // The selected state and draw/release clips form one authored hierarchy.
+            // The matching hold clip is paused above, exactly as in official YSM.
+            selectiveProgram.propReplacementIndices().forEach(index ->
+                    scratch.suppressParallelDeltas[index] = true);
+        } else if (selectiveReplacement && applied) {
+            selectiveProgram.replacementIndices().forEach(index -> {
+                scratch.replaceEpicFightAnchors[index] = true;
+                HeldAttachment attachment = selectiveProgram.heldAttachments().get(index);
+                if (attachment != null) {
+                    scratch.heldItemAnchorJoints[index] = attachment.anchorJoint();
+                    scratch.heldItemRelativePaths[index] = attachment.relativePath();
+                    scratch.heldItemBindRebases[index] = attachment.bindRebase();
+                }
+            });
+            selectiveProgram.propReplacementIndices().forEach(index ->
+                    scratch.suppressParallelDeltas[index] = true);
+        }
+    }
+
+    /** Last evaluated output of one official controller layer, before its ending fade. */
+    private static final class PoseLayerSnapshot {
+        private final float[][] positions;
+        private final float[][] rotations;
+        private final float[][] scales;
+        private final boolean[] hasPosition;
+        private final boolean[] hasRotation;
+        private final boolean[] hasScale;
+        private final float[][] visibilityScales;
+        private final boolean[] hasVisibilityScale;
+
+        private PoseLayerSnapshot(int auxiliaryCount, int visibilityCount) {
+            positions = new float[auxiliaryCount][3];
+            rotations = new float[auxiliaryCount][3];
+            scales = new float[auxiliaryCount][3];
+            hasPosition = new boolean[auxiliaryCount];
+            hasRotation = new boolean[auxiliaryCount];
+            hasScale = new boolean[auxiliaryCount];
+            visibilityScales = new float[visibilityCount][3];
+            hasVisibilityScale = new boolean[visibilityCount];
+            reset();
+        }
+
+        private void reset() {
+            Arrays.fill(hasPosition, false);
+            Arrays.fill(hasRotation, false);
+            Arrays.fill(hasScale, false);
+            Arrays.fill(hasVisibilityScale, false);
+            for (float[] scale : scales) {
+                Arrays.fill(scale, 1.0F);
+            }
+            for (float[] scale : visibilityScales) {
+                Arrays.fill(scale, 1.0F);
+            }
+        }
+
+        private void capturePosition(int index, float[] value) {
+            System.arraycopy(value, 0, positions[index], 0, 3);
+            hasPosition[index] = true;
+        }
+
+        private void captureRotation(int index, float[] value) {
+            System.arraycopy(value, 0, rotations[index], 0, 3);
+            hasRotation[index] = true;
+        }
+
+        private void captureScale(int index, float[] value) {
+            System.arraycopy(value, 0, scales[index], 0, 3);
+            hasScale[index] = true;
+        }
+
+        private void captureVisibilityScale(int index, float[] value) {
+            System.arraycopy(value, 0, visibilityScales[index], 0, 3);
+            hasVisibilityScale[index] = true;
+        }
+
+        private PoseLayerSnapshot copy() {
+            PoseLayerSnapshot result = new PoseLayerSnapshot(
+                    positions.length, visibilityScales.length);
+            for (int index = 0; index < positions.length; index++) {
+                if (hasPosition[index]) {
+                    result.capturePosition(index, positions[index]);
+                }
+                if (hasRotation[index]) {
+                    result.captureRotation(index, rotations[index]);
+                }
+                if (hasScale[index]) {
+                    result.captureScale(index, scales[index]);
+                }
+            }
+            for (int index = 0; index < visibilityScales.length; index++) {
+                if (hasVisibilityScale[index]) {
+                    result.captureVisibilityScale(index, visibilityScales[index]);
+                }
+            }
+            return result;
+        }
+    }
+
+    /**
+     * Complete private-bone skin produced by the last full-body YSM frame. The snapshot is
+     * immutable after publication so the final controller ending can blend it toward the live
+     * Epic Fight pose without evaluating Molang a second time.
+     */
+    private static final class FullBodyCompositeSnapshot {
+        private final OpenMatrix4f[] skinMatrices;
+        private Set<String> hiddenBones = Set.of();
+        private boolean valid;
+
+        private FullBodyCompositeSnapshot(int auxiliaryCount) {
+            skinMatrices = openMatrices(auxiliaryCount);
+        }
+
+        private void capture(EvaluationScratch scratch) {
+            for (int index = 0; index < skinMatrices.length; index++) {
+                OpenMatrix4f target = skinMatrices[index];
+                target.setIdentity();
+                if (!scratch.suppressParallelDeltas[index]) {
+                    target.mulBack(scratch.parallelPose.output[index]);
+                }
+                target.mulFront(scratch.wholeModelPose.output[index]);
+            }
+            hiddenBones = Set.copyOf(scratch.hiddenView);
+            valid = true;
+        }
+
+        @Nullable
+        private FullBodyCompositeSnapshot copyIfValid() {
+            if (!valid) {
+                return null;
+            }
+            FullBodyCompositeSnapshot copy = new FullBodyCompositeSnapshot(
+                    skinMatrices.length);
+            for (int index = 0; index < skinMatrices.length; index++) {
+                copy.skinMatrices[index].load(skinMatrices[index]);
+            }
+            copy.hiddenBones = hiddenBones;
+            copy.valid = true;
+            return copy;
+        }
+
+        private void reset() {
+            hiddenBones = Set.of();
+            valid = false;
+        }
+    }
+
+    private void evaluateControllerLayer(
+            AnimationControllerProgram.ActiveAnimation active,
+            boolean customFullBodyPose,
+            ExpressionEngine.Environment environment, RuntimeState runtimeState,
+            EvaluationScratch scratch) {
+        ClipProgram fullProgram = controllerClips.get(active.name());
+        if (fullProgram == null) {
+            return;
+        }
+        boolean heldItemController = !customFullBodyPose
+                && fullProgram.replacementIndices().stream()
+                .anyMatch(index -> scratch.replaceEpicFightAnchors[index]);
+        ClipProgram program = customFullBodyPose || heldItemController ? fullProgram
+                : controllerAuxiliaryClips.get(active.name());
+        if (program == null) {
+            return;
+        }
+        ExpressionEngine.Environment controllerEnvironment = active.stateVariables().isEmpty()
+                ? environment : new ControllerVariableEnvironment(
+                environment, active.stateVariables());
+        evaluateProgram(program, controllerTime(program, active.elapsed()),
+                controllerEnvironment, runtimeState,
+                customFullBodyPose ? scratch.wholeModelPose
+                        : heldItemController ? scratch.heldItemPose
+                        : scratch.parallelPose,
+                ApplyMode.OVERRIDE, active.weight(), active.blendViaShortestPath(),
+                active.instanceKey(), true, scratch);
+    }
+
+    private static List<PoseLayer> orderedFullBodyLayers(
+            List<AutomaticAnimationSelector.ActiveClip> automatic,
+            List<AnimationControllerProgram.ActiveAnimation> controlled,
+            @Nullable FullBodyEnding ending) {
+        List<PoseLayer> result = new ArrayList<>(automatic.size()
+                + controlled.size() + (ending == null ? 0 : 1));
+        int order = 0;
+        for (AutomaticAnimationSelector.ActiveClip active : automatic) {
+            result.add(new PoseLayer(automaticStage(active.name()), order++,
+                    active, null, null));
+        }
+        if (ending != null) {
+            // The official use controller is later than the swing controller. During
+            // its three-tick ending transition it therefore blends the last draw pose
+            // over the newly-started release pose, then yields completely to release.
+            result.add(new PoseLayer(automaticStage(ending.active().name()), order++,
+                    null, null, ending));
+        }
+        for (AnimationControllerProgram.ActiveAnimation active : controlled) {
+            result.add(new PoseLayer(controllerStage(active.controllerName()), order++,
+                    null, active, null));
+        }
+        result.sort(Comparator.comparingInt(PoseLayer::stage)
+                .thenComparingInt(PoseLayer::order));
+        return result;
+    }
+
+    private void evaluateEndingFullBodyLayer(
+            @Nullable FullBodyEnding ending,
+            ExpressionEngine.Environment environment,
+            EvaluationScratch scratch) {
+        if (ending == null || ending.weight() <= EPSILON) {
+            return;
+        }
+        ClipProgram selectiveProgram = automaticClips.get(ending.active().name());
+        if (selectiveProgram == null) {
+            return;
+        }
+        if (ending.snapshot() != null) {
+            boolean applied = applyEndingSnapshot(
+                    ending.snapshot(), ending.weight(), scratch.wholeModelPose, scratch);
+            scratch.replaceEpicFightPose |= applied;
+            selectiveProgram.propReplacementIndices().forEach(index ->
+                    scratch.suppressParallelDeltas[index] = true);
+            return;
+        }
+        ClipProgram program = automaticFullBodyClips.getOrDefault(
+                ending.active().name(), selectiveProgram);
+        float localTime = automaticTime(program, ending.active().elapsed());
+        if (localTime < 0.0F) {
+            return;
+        }
+        boolean applied = evaluateProgram(program, localTime, environment,
+                null, scratch.wholeModelPose, ApplyMode.OVERRIDE,
+                ending.weight(), true, program.clip().name() + ":ending",
+                false, scratch);
+        scratch.replaceEpicFightPose |= applied;
+        selectiveProgram.propReplacementIndices().forEach(index ->
+                scratch.suppressParallelDeltas[index] = true);
+    }
+
+    private static boolean applyEndingSnapshot(PoseLayerSnapshot snapshot, float weight,
+                                               PoseScratch pose,
+                                               EvaluationScratch scratch) {
+        boolean applied = false;
+        for (int index = 0; index < snapshot.positions.length; index++) {
+            if (snapshot.hasRotation[index]) {
+                applied = true;
+                for (int axis = 0; axis < 3; axis++) {
+                    float current = pose.hasRotation[index]
+                            ? pose.rotations[index][axis] : 0.0F;
+                    float difference = shortestRadians(
+                            snapshot.rotations[index][axis] - current);
+                    pose.rotations[index][axis] = current + difference * weight;
+                }
+                pose.hasRotation[index] = true;
+            }
+            if (snapshot.hasPosition[index]) {
+                applied = true;
+                for (int axis = 0; axis < 3; axis++) {
+                    float current = pose.hasPosition[index]
+                            ? pose.positions[index][axis] : 0.0F;
+                    pose.positions[index][axis] = current
+                            + (snapshot.positions[index][axis] - current) * weight;
+                }
+                pose.hasPosition[index] = true;
+            }
+            if (snapshot.hasScale[index]) {
+                applied = true;
+                for (int axis = 0; axis < 3; axis++) {
+                    float current = pose.hasScale[index]
+                            ? pose.scales[index][axis] : 1.0F;
+                    pose.scales[index][axis] = current
+                            + (snapshot.scales[index][axis] - current) * weight;
+                }
+                pose.hasScale[index] = true;
+            }
+        }
+        for (int index = 0; index < snapshot.visibilityScales.length; index++) {
+            if (!snapshot.hasVisibilityScale[index]) {
+                continue;
+            }
+            for (int axis = 0; axis < 3; axis++) {
+                float current = scratch.hasVisibilityScale[index]
+                        ? scratch.visibilityScales[index][axis] : 1.0F;
+                scratch.visibilityScales[index][axis] = current
+                        + (snapshot.visibilityScales[index][axis] - current) * weight;
+            }
+            scratch.hasVisibilityScale[index] = true;
+        }
+        return applied;
+    }
+
+    private static int automaticStage(String clipName) {
+        String name = normalize(clipName);
+        if (name.startsWith("hold_mainhand") || name.startsWith("hold_offhand")) {
+            return 25;
+        }
+        if (name.startsWith("swing")) {
+            return 40;
+        }
+        if (name.startsWith("use_mainhand") || name.startsWith("use_offhand")) {
+            return 55;
+        }
+        if (name.startsWith("passenger")) {
+            return 65;
+        }
+        if (name.startsWith("armor_") || name.startsWith("vehicle")) {
+            return 70;
+        }
+        return 10;
+    }
+
+    private static int controllerStage(String controllerName) {
+        String name = normalize(controllerName);
+        if (slot(name, "pre_main")) return 5;
+        if (slot(name, "main")) return 10;
+        if (slot(name, "post_main")) return 15;
+        if (slot(name, "pre_hold")) return 20;
+        if (slot(name, "hold_mainhand") || slot(name, "hold_offhand")) return 25;
+        if (slot(name, "post_hold")) return 30;
+        if (slot(name, "pre_swing")) return 35;
+        if (slot(name, "swing")) return 40;
+        if (slot(name, "post_swing")) return 45;
+        if (slot(name, "pre_use")) return 50;
+        if (slot(name, "use")) return 55;
+        if (slot(name, "post_use")) return 60;
+        if (slot(name, "passenger")) return 65;
+        return 70;
+    }
+
+    private static boolean slot(String controllerName, String slot) {
+        return controllerName.equals(slot) || controllerName.endsWith('.' + slot);
+    }
+
+    private Set<InteractionHand> customFullBodyHands(
+            List<AutomaticAnimationSelector.ActiveClip> automatic) {
+        LinkedHashSet<InteractionHand> result = new LinkedHashSet<>();
+        for (AutomaticAnimationSelector.ActiveClip active : automatic) {
+            ClipProgram program = automaticClips.get(active.name());
+            if (program == null || !customHeldItems.replacesBodyPose(active.name())
+                    || automaticTime(program, active.elapsed()) < 0.0F) {
+                continue;
+            }
+            InteractionHand hand = customHeldItems.replacementHand(active.name());
+            if (hand != null) {
+                result.add(hand);
+            }
+        }
+        return Set.copyOf(result);
+    }
+
+    /** Hands whose live use/rebound input is currently suppressing the hold controller. */
+    Set<InteractionHand> customFullBodyInputHands(
+            List<AutomaticAnimationSelector.ActiveClip> automatic) {
+        LinkedHashSet<InteractionHand> result = new LinkedHashSet<>();
+        for (AutomaticAnimationSelector.ActiveClip active : automatic) {
+            if (!customHeldItems.replacesBodyPose(active.name())) {
+                continue;
+            }
+            AnimationConditionMatcher.ItemAction action =
+                    customHeldItems.clipAction(active.name());
+            InteractionHand hand = customHeldItems.replacementHand(active.name());
+            if (hand != null && (action == AnimationConditionMatcher.ItemAction.USE
+                    || action == AnimationConditionMatcher.ItemAction.SWING)) {
+                result.add(hand);
+            }
+        }
+        return Set.copyOf(result);
+    }
+
+    /**
+     * Keeps an authored bow release playing once after Epic Fight's short rebound signal ends.
+     * The raw list remains the authority for pausing the hold controller; this retained list is
+     * only the controller playback/whole-body ownership view.
+     */
+    List<AutomaticAnimationSelector.ActiveClip> updateFullBodySwingPlayback(
+            List<AutomaticAnimationSelector.ActiveClip> rawAutomatic,
+            double now, FullBodySwingState state) {
+        AutomaticAnimationSelector.ActiveClip rawSwing = null;
+        InteractionHand rawHand = null;
+        ClipProgram rawProgram = null;
+        for (AutomaticAnimationSelector.ActiveClip active : rawAutomatic) {
+            if (!customHeldItems.replacesBodyPose(active.name())
+                    || customHeldItems.clipAction(active.name())
+                    != AnimationConditionMatcher.ItemAction.SWING) {
+                continue;
+            }
+            ClipProgram program = automaticClips.get(active.name());
+            InteractionHand hand = customHeldItems.replacementHand(active.name());
+            if (program != null && hand != null) {
+                rawSwing = active;
+                rawHand = hand;
+                rawProgram = program;
+                break;
+            }
+        }
+
+        FullBodySwingPlayback playback = state.playback;
+        if (rawSwing == null) {
+            state.rawSwingConsumed = false;
+        } else if (rawSwing.restarted()) {
+            state.rawSwingConsumed = false;
+        }
+        if (rawSwing != null && !state.rawSwingConsumed
+                && (playback == null || rawSwing.restarted()
+                || !playback.clipName().equals(normalize(rawSwing.name()))
+                || playback.hand() != rawHand)) {
+            double startedAt = now - Math.max(0.0D, rawSwing.elapsed());
+            playback = new FullBodySwingPlayback(normalize(rawSwing.name()), rawHand,
+                    startedAt, Math.max(0.0D, rawProgram.duration()));
+            state.playback = playback;
+            state.endpointPublished = false;
+        }
+
+        AutomaticAnimationSelector.ActiveClip retained = null;
+        if (playback != null) {
+            double elapsed = Math.max(0.0D, now - playback.startedAt());
+            if (elapsed <= playback.duration() + EPSILON) {
+                boolean restarted = rawSwing != null && rawSwing.restarted();
+                retained = new AutomaticAnimationSelector.ActiveClip(
+                        playback.clipName(), Math.min(elapsed, playback.duration()),
+                        restarted);
+                if (elapsed + EPSILON >= playback.duration()) {
+                    state.endpointPublished = true;
+                }
+            } else if (!state.endpointPublished) {
+                // A render sample may jump across the exact endpoint. Publish the
+                // clamped final pose once so the ownership transition snapshots the
+                // authored endpoint instead of an arbitrary earlier frame.
+                retained = new AutomaticAnimationSelector.ActiveClip(
+                        playback.clipName(), playback.duration(),
+                        rawSwing != null && rawSwing.restarted());
+                state.endpointPublished = true;
+            } else {
+                state.playback = null;
+                state.endpointPublished = false;
+                if (rawSwing != null) {
+                    // A long Epic Fight rebound must not repeatedly restart an authored
+                    // release that has already completed. A new raw restart token clears
+                    // this guard above; raw disappearance clears it for the next action.
+                    state.rawSwingConsumed = true;
+                }
+            }
+        }
+
+        if (rawSwing == null && retained == null) {
+            return rawAutomatic;
+        }
+        List<AutomaticAnimationSelector.ActiveClip> result =
+                new ArrayList<>(rawAutomatic.size() + (rawSwing == null ? 1 : 0));
+        for (AutomaticAnimationSelector.ActiveClip active : rawAutomatic) {
+            if (active == rawSwing) {
+                if (retained != null) {
+                    result.add(retained);
+                }
+            } else {
+                result.add(active);
+            }
+        }
+        if (rawSwing == null && retained != null) {
+            result.add(retained);
+        }
+        return List.copyOf(result);
+    }
+
+    @Nullable
+    private FullBodyEnding updateFullBodyEnding(
+            RuntimeState state,
+            List<AutomaticAnimationSelector.ActiveClip> automatic,
+            double now) {
+        FullBodyObservation current = null;
+        for (AutomaticAnimationSelector.ActiveClip active : automatic) {
+            ClipProgram program = automaticClips.get(active.name());
+            if (program == null || !customHeldItems.replacesBodyPose(active.name())
+                    || automaticTime(program, active.elapsed()) < 0.0F) {
+                continue;
+            }
+            InteractionHand hand = customHeldItems.replacementHand(active.name());
+            AnimationConditionMatcher.ItemAction action =
+                    customHeldItems.clipAction(active.name());
+            if (hand != null && action != null) {
+                current = new FullBodyObservation(active, hand, action);
+                break;
+            }
+        }
+
+        FullBodyObservation previous = state.fullBodyObservation;
+        if (current != null
+                && current.action() == AnimationConditionMatcher.ItemAction.USE) {
+            state.fullBodyEnding = null;
+        } else if (previous != null && shouldStartFullBodyEnding(
+                previous.action(), previous.hand(),
+                current == null ? null : current.action(),
+                current == null ? null : current.hand())) {
+            // Item release can clear isUsingItem one render frame before Epic Fight
+            // exposes the matching swing animation. Start the ending transition at
+            // the disappearance of use instead of requiring both signals at once.
+            PoseLayerSnapshot snapshot = state.fullBodyActionSnapshotClip.equals(
+                    normalize(previous.active().name()))
+                    ? state.fullBodyActionSnapshot.copy() : null;
+            FullBodyCompositeSnapshot compositeSnapshot =
+                    state.fullBodyCompositeSnapshot.copyIfValid();
+            state.fullBodyEnding = new FullBodyEnding(previous.active(),
+                    previous.hand(), now, 1.0F, snapshot, compositeSnapshot);
+        }
+        state.fullBodyObservation = current;
+
+        FullBodyEnding ending = state.fullBodyEnding;
+        if (ending == null) {
+            return null;
+        }
+        float weight = fullBodyEndingWeight(now - ending.startedAt());
+        if (weight <= 0.0F) {
+            state.fullBodyEnding = null;
+            return null;
+        }
+        FullBodyEnding updated = new FullBodyEnding(ending.active(), ending.hand(),
+                ending.startedAt(), weight, ending.snapshot(),
+                ending.compositeSnapshot());
+        state.fullBodyEnding = updated;
+        return updated;
+    }
+
+    static boolean shouldStartFullBodyEnding(
+            AnimationConditionMatcher.ItemAction previousAction,
+            InteractionHand previousHand,
+            @Nullable AnimationConditionMatcher.ItemAction currentAction,
+            @Nullable InteractionHand currentHand) {
+        if (previousAction == AnimationConditionMatcher.ItemAction.USE) {
+            return currentAction == null
+                    || currentAction == AnimationConditionMatcher.ItemAction.SWING
+                    && previousHand == currentHand;
+        }
+        return previousAction == AnimationConditionMatcher.ItemAction.SWING
+                && currentAction == null;
+    }
+
+    static float fullBodyEndingWeight(double elapsedSeconds) {
+        return (float) Math.max(0.0D, Math.min(1.0D,
+                1.0D - elapsedSeconds / FULL_BODY_END_TRANSITION_SECONDS));
+    }
+
+    /**
+     * Keeps the model-authored draw/release pose aimed while it is evaluated live. Once
+     * the final YSM skin has been frozen, its blend target must use ordinary head yaw;
+     * changing that target only after the three-tick blend would create a final-frame snap.
+     */
+    static boolean shouldUseCustomBowHeadYaw(boolean liveFullBodyPose,
+                                             boolean endingActive,
+                                             boolean endingUsesCompositeSnapshot) {
+        return liveFullBodyPose || endingActive && !endingUsesCompositeSnapshot;
+    }
+
+    private boolean isPausedHoldClip(String clipName,
+                                     Set<InteractionHand> fullBodyHands) {
+        for (InteractionHand hand : fullBodyHands) {
+            if (customHeldItems.isHoldClipForHand(clipName, hand)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private boolean evaluateProgram(ClipProgram program, float localTime,
@@ -602,7 +1737,16 @@ public final class ParallelAnimationProgram {
                                     RuntimeState runtimeState, PoseScratch pose,
                                     ApplyMode applyMode, EvaluationScratch scratch) {
         return evaluateProgram(program, localTime, environment, runtimeState, pose,
-                applyMode, 1.0F, false, program.clip().name(), true, scratch);
+                applyMode, 1.0F, false, program.clip().name(), true, scratch, null);
+    }
+
+    private boolean evaluateProgram(ClipProgram program, float localTime,
+                                    ExpressionEngine.Environment environment,
+                                    RuntimeState runtimeState, PoseScratch pose,
+                                    ApplyMode applyMode, EvaluationScratch scratch,
+                                    @Nullable PoseLayerSnapshot capture) {
+        return evaluateProgram(program, localTime, environment, runtimeState, pose,
+                applyMode, 1.0F, false, program.clip().name(), true, scratch, capture);
     }
 
     private boolean evaluateProgram(ClipProgram program, float localTime,
@@ -611,6 +1755,18 @@ public final class ParallelAnimationProgram {
                                     ApplyMode applyMode, float externalWeight,
                                     boolean shortestPath, String timelineKey,
                                     boolean soundOutputEnabled, EvaluationScratch scratch) {
+        return evaluateProgram(program, localTime, environment, runtimeState, pose,
+                applyMode, externalWeight, shortestPath, timelineKey,
+                soundOutputEnabled, scratch, null);
+    }
+
+    private boolean evaluateProgram(ClipProgram program, float localTime,
+                                    ExpressionEngine.Environment environment,
+                                    RuntimeState runtimeState, PoseScratch pose,
+                                    ApplyMode applyMode, float externalWeight,
+                                    boolean shortestPath, String timelineKey,
+                                    boolean soundOutputEnabled, EvaluationScratch scratch,
+                                    @Nullable PoseLayerSnapshot capture) {
         EntityAnimationEnvironment entityEnvironment = entityEnvironment(environment);
         if (entityEnvironment != null) {
             entityEnvironment.clipTime(localTime);
@@ -667,6 +1823,9 @@ public final class ParallelAnimationProgram {
                         }
                     }
                     pose.hasRotation[bone.auxiliaryIndex()] = true;
+                    if (capture != null) {
+                        capture.captureRotation(auxiliary, pose.rotations[auxiliary]);
+                    }
                 }
             }
             if (tracks.position() != null) {
@@ -686,6 +1845,9 @@ public final class ParallelAnimationProgram {
                                 + (target[axis] - previous) * blendWeight;
                     }
                     pose.hasPosition[auxiliary] = true;
+                    if (capture != null) {
+                        capture.capturePosition(auxiliary, pose.positions[auxiliary]);
+                    }
                 }
             }
             if (tracks.scale() != null) {
@@ -705,8 +1867,16 @@ public final class ParallelAnimationProgram {
                         }
                     }
                     scratch.hasVisibilityScale[bone.visibilityIndex()] = true;
+                    if (capture != null) {
+                        capture.captureVisibilityScale(bone.visibilityIndex(),
+                                scratch.visibilityScales[bone.visibilityIndex()]);
+                    }
                     if (bone.auxiliaryIndex() >= 0) {
                         pose.hasScale[bone.auxiliaryIndex()] = true;
+                        if (capture != null) {
+                            capture.captureScale(bone.auxiliaryIndex(),
+                                    pose.scales[bone.auxiliaryIndex()]);
+                        }
                     }
                 }
             }
@@ -723,7 +1893,15 @@ public final class ParallelAnimationProgram {
     private void resetScratch(EvaluationScratch scratch) {
         scratch.parallelPose.reset();
         scratch.wholeModelPose.reset();
+        scratch.heldItemPose.reset();
         scratch.replaceEpicFightPose = false;
+        scratch.fullBodyBlendSource = null;
+        scratch.fullBodyBlendWeight = 0.0F;
+        Arrays.fill(scratch.replaceEpicFightAnchors, false);
+        Arrays.fill(scratch.suppressParallelDeltas, false);
+        Arrays.fill(scratch.heldItemAnchorJoints, -1);
+        Arrays.fill(scratch.heldItemRelativePaths, null);
+        Arrays.fill(scratch.heldItemBindRebases, null);
         Arrays.fill(scratch.hasVisibilityScale, false);
         for (float[] scale : scratch.visibilityScales) {
             Arrays.fill(scale, 1.0F);
@@ -782,9 +1960,24 @@ public final class ParallelAnimationProgram {
             } else {
                 pose.chainDelta[auxiliary].set(pose.deltaModel[auxiliary]);
             }
+            Matrix4f sourceDelta = pose.chainDelta[auxiliary];
+            int[] relativePath = pose == scratch.heldItemPose
+                    ? scratch.heldItemRelativePaths[auxiliary] : null;
+            if (relativePath != null) {
+                Matrix4f bindRebase = scratch.heldItemBindRebases[auxiliary];
+                if (bindRebase == null) {
+                    scratch.attachmentDelta.identity();
+                } else {
+                    scratch.attachmentDelta.set(bindRebase);
+                }
+                for (int pathIndex : relativePath) {
+                    scratch.attachmentDelta.mul(pose.deltaModel[pathIndex]);
+                }
+                sourceDelta = scratch.attachmentDelta;
+            }
             scratch.scaledDelta.identity().scale(
                             horizontalScale, verticalScale, horizontalScale)
-                    .mul(pose.chainDelta[auxiliary])
+                    .mul(sourceDelta)
                     .scale(1.0F / horizontalScale, 1.0F / verticalScale,
                             1.0F / horizontalScale);
             importMatrix(pose.output[auxiliary], scratch.scaledDelta);
@@ -847,7 +2040,14 @@ public final class ParallelAnimationProgram {
         private final float[] effectiveScale;
         private final PoseScratch parallelPose;
         private final PoseScratch wholeModelPose;
+        private final PoseScratch heldItemPose;
+        private final boolean[] replaceEpicFightAnchors;
+        private final boolean[] suppressParallelDeltas;
+        private final int[] heldItemAnchorJoints;
+        private final int[][] heldItemRelativePaths;
+        private final Matrix4f[] heldItemBindRebases;
         private final Matrix4f scaledDelta = new Matrix4f();
+        private final Matrix4f attachmentDelta = new Matrix4f();
         private final Set<String> hiddenBones = new LinkedHashSet<>();
         private final Set<String> hiddenView = Collections.unmodifiableSet(hiddenBones);
         private final double[] sample = new double[3];
@@ -856,6 +2056,9 @@ public final class ParallelAnimationProgram {
         private final double[] p2 = new double[3];
         private final double[] p3 = new double[3];
         private boolean replaceEpicFightPose;
+        @Nullable
+        private OpenMatrix4f[] fullBodyBlendSource;
+        private float fullBodyBlendWeight;
 
         private EvaluationScratch(int visibilityCount, int auxiliaryCount) {
             visibilityScales = new float[visibilityCount][3];
@@ -863,6 +2066,13 @@ public final class ParallelAnimationProgram {
             effectiveScale = new float[visibilityCount];
             parallelPose = new PoseScratch(auxiliaryCount);
             wholeModelPose = new PoseScratch(auxiliaryCount);
+            heldItemPose = new PoseScratch(auxiliaryCount);
+            replaceEpicFightAnchors = new boolean[auxiliaryCount];
+            suppressParallelDeltas = new boolean[auxiliaryCount];
+            heldItemAnchorJoints = new int[auxiliaryCount];
+            heldItemRelativePaths = new int[auxiliaryCount][];
+            heldItemBindRebases = new Matrix4f[auxiliaryCount];
+            Arrays.fill(heldItemAnchorJoints, -1);
         }
     }
 
@@ -923,13 +2133,34 @@ public final class ParallelAnimationProgram {
         for (AnimationClip clip : animations.values()) {
             String name = normalize(clip.name());
             if (!BedrockAnimationParser.isAutomatic(name)
-                    || name.startsWith("pre_parallel") || name.startsWith("parallel")
-                    || BedrockAnimationParser.isHandItemAnimation(name)) {
+                    || name.startsWith("pre_parallel") || name.startsWith("parallel")) {
                 continue;
             }
-            ClipProgram program = compileClip(
-                    clip, visibilityByName, !isWholeModelMountedClip(name));
+            Set<String> replacementRoots = customHeldItems.replacementRoots(name);
+            Set<String> epicItemEffectRoots = customHeldItems.epicItemEffectRoots(name);
+            boolean customReplacement = !replacementRoots.isEmpty();
+            ClipProgram program = compileClip(clip, visibilityByName,
+                    !isWholeModelMountedClip(name) && !customReplacement);
             if (program != null) {
+                if (customReplacement) {
+                    Set<Integer> propIndices = replacementIndices(
+                            clip, replacementRoots, false);
+                    Map<Integer, HeldAttachment> attachments = heldPropAttachments(
+                            replacementRoots, customHeldItems.replacementHand(name));
+                    program = withReplacementIndices(program,
+                            attachments.keySet(), propIndices, attachments);
+                } else if (!epicItemEffectRoots.isEmpty()) {
+                    Map<Integer, HeldAttachment> attachments =
+                            epicBowEffectAttachments(epicItemEffectRoots);
+                    if (!attachments.isEmpty()) {
+                        // This geometry augments Epic Fight's retained bow. It needs the
+                        // left Tool seam, but it must not suppress the item or body pose.
+                        // Suppress only its separate pre_parallel matrix so the use clip's
+                        // visible scale is not multiplied by the initialization scale zero.
+                        program = withReplacementIndices(program,
+                                attachments.keySet(), attachments.keySet(), attachments);
+                    }
+                }
                 result.putIfAbsent(name, program);
             }
         }
@@ -956,8 +2187,55 @@ public final class ParallelAnimationProgram {
         Map<String, ClipProgram> result = new HashMap<>();
         for (AnimationClip clip : animations.values()) {
             String name = normalize(clip.name());
-            if (name.startsWith("pre_parallel") || name.startsWith("parallel")
-                    || BedrockAnimationParser.isHandItemAnimation(name)) {
+            if (name.startsWith("pre_parallel") || name.startsWith("parallel")) {
+                continue;
+            }
+            Set<String> replacementRoots = affectedReplacementRoots(
+                    clip, customHeldItems.allReplacementRoots());
+            ClipProgram program = compileClip(
+                    clip, visibilityByName, replacementRoots.isEmpty());
+            if (program != null) {
+                if (!replacementRoots.isEmpty()) {
+                    Set<Integer> propIndices = replacementIndices(
+                            clip, replacementRoots, false);
+                    program = withReplacementIndices(
+                            program, propIndices, propIndices, Map.of());
+                }
+                result.putIfAbsent(name, program);
+            }
+        }
+        return Map.copyOf(result);
+    }
+
+    /**
+     * Retains the complete official automatic pose for the brief states in which a custom
+     * bow owns the player animation. The normal map deliberately removes Epic Fight-owned
+     * major bones; keeping a second compiled view lets draw/release compose state + hold +
+     * action exactly once without weakening normal combat animation ownership.
+     */
+    private Map<String, ClipProgram> compileAutomaticFullBodyClips(
+            Map<String, AnimationClip> animations, Map<String, Integer> visibilityByName) {
+        Map<String, ClipProgram> result = new HashMap<>();
+        for (AnimationClip clip : animations.values()) {
+            String name = normalize(clip.name());
+            if (!BedrockAnimationParser.isAutomatic(name)
+                    || name.startsWith("pre_parallel") || name.startsWith("parallel")) {
+                continue;
+            }
+            ClipProgram program = compileClip(clip, visibilityByName, false);
+            if (program != null) {
+                result.putIfAbsent(name, program);
+            }
+        }
+        return Map.copyOf(result);
+    }
+
+    private Map<String, ClipProgram> compileControllerAuxiliaryClips(
+            Map<String, AnimationClip> animations, Map<String, Integer> visibilityByName) {
+        Map<String, ClipProgram> result = new HashMap<>();
+        for (AnimationClip clip : animations.values()) {
+            String name = normalize(clip.name());
+            if (name.startsWith("pre_parallel") || name.startsWith("parallel")) {
                 continue;
             }
             ClipProgram program = compileClip(clip, visibilityByName, true);
@@ -966,6 +2244,47 @@ public final class ParallelAnimationProgram {
             }
         }
         return Map.copyOf(result);
+    }
+
+    private Set<String> affectedReplacementRoots(AnimationClip clip,
+                                                 Set<String> candidates) {
+        Set<GeometryDocument.Bone> tracked = Collections.newSetFromMap(
+                new IdentityHashMap<>());
+        for (String name : clip.boneTracks().keySet()) {
+            AuxiliaryBoneLayout.Entry entry = layout.entryForBoneName(name);
+            if (entry != null) {
+                tracked.add(entry.bone());
+            }
+        }
+        if (tracked.isEmpty()) {
+            return Set.of();
+        }
+        LinkedHashSet<String> result = new LinkedHashSet<>();
+        for (String candidate : candidates) {
+            AuxiliaryBoneLayout.Entry root = layout.entryForBoneName(candidate);
+            if (root == null) {
+                continue;
+            }
+            for (GeometryDocument.Bone trackedBone : tracked) {
+                if (isAncestor(trackedBone, root.bone())
+                        || isAncestor(root.bone(), trackedBone)) {
+                    result.add(candidate);
+                    break;
+                }
+            }
+        }
+        return Set.copyOf(result);
+    }
+
+    private static boolean isAncestor(GeometryDocument.Bone ancestor,
+                                      GeometryDocument.Bone bone) {
+        for (GeometryDocument.Bone current = bone; current != null;
+             current = current.parent()) {
+            if (current == ancestor) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private ClipProgram compileClip(AnimationClip clip,
@@ -1016,7 +2335,155 @@ public final class ParallelAnimationProgram {
             collect(bone.tracks().scale(), variables, queries, safe);
         }
         return new ClipProgram(clip, duration(clip), List.copyOf(bones),
-                Set.copyOf(variables), Set.copyOf(queries), safe[0]);
+                Set.copyOf(variables), Set.copyOf(queries), safe[0],
+                Set.of(), Set.of(), Map.of());
+    }
+
+    private static ClipProgram withReplacementIndices(ClipProgram program,
+                                                       Set<Integer> indices,
+                                                       Set<Integer> propIndices,
+                                                       Map<Integer, HeldAttachment> attachments) {
+        return new ClipProgram(program.clip(), program.duration(), program.bones(),
+                program.variableSlots(), program.querySlots(), program.asyncSafe(),
+                Set.copyOf(indices), Set.copyOf(propIndices), Map.copyOf(attachments));
+    }
+
+    /**
+     * Attaches a model-authored prop to Epic Fight's live Tool joint while retaining only
+     * the YSM animation authored below the corresponding hand control. Arm and forearm
+     * tracks must not be applied a second time behind Epic Fight's combat pose.
+     */
+    private Map<Integer, HeldAttachment> heldPropAttachments(
+            Set<String> propRoots, InteractionHand hand) {
+        int toolJoint = hand == InteractionHand.OFF_HAND
+                ? HumanoidRig.LEFT_TOOL : HumanoidRig.RIGHT_TOOL;
+        return heldAttachments(propRoots, toolJoint, false);
+    }
+
+    /** Epic Fight renders two-handed bows from its off-hand (left Tool) correction. */
+    private Map<Integer, HeldAttachment> epicBowEffectAttachments(Set<String> effectRoots) {
+        return heldAttachments(effectRoots, HumanoidRig.LEFT_TOOL, true);
+    }
+
+    private Map<Integer, HeldAttachment> heldAttachments(
+            Set<String> roots, int toolJoint, boolean rebaseBindPosition) {
+        Map<Integer, HeldAttachment> result = new java.util.LinkedHashMap<>();
+        for (String rootName : roots) {
+            AuxiliaryBoneLayout.Entry root = layout.entryForBoneName(rootName);
+            if (root == null) {
+                continue;
+            }
+            Matrix4f bindRebase = rebaseBindPosition
+                    ? attachmentBindRebase(toolJointForAnchor(root.anchorJoint()), toolJoint)
+                    : new Matrix4f();
+            if (bindRebase == null) {
+                // Without both official model pivots, retaining the authored hand seam
+                // is safer than moving an effect through an arbitrary identity Tool pose.
+                continue;
+            }
+            GeometryDocument.Bone seam = nearestMajorAncestor(root.bone());
+            AuxiliaryBoneLayout.Entry seamEntry = seam == null
+                    ? null : layout.entryForBoneName(seam.name());
+            int seamIndex = seamEntry == null ? -1 : seamEntry.auxiliaryIndex();
+            for (AuxiliaryBoneLayout.Entry entry : layout.entries()) {
+                if (isAncestor(root.bone(), entry.bone())) {
+                    result.put(entry.auxiliaryIndex(),
+                            new HeldAttachment(toolJoint,
+                                    relativePath(seamIndex, entry.auxiliaryIndex()),
+                                    bindRebase));
+                }
+            }
+        }
+        return Map.copyOf(result);
+    }
+
+    private static int toolJointForAnchor(int joint) {
+        return joint == HumanoidRig.RIGHT_HAND ? HumanoidRig.RIGHT_TOOL
+                : joint == HumanoidRig.LEFT_HAND ? HumanoidRig.LEFT_TOOL : joint;
+    }
+
+    @Nullable
+    private Matrix4f attachmentBindRebase(int sourceJoint, int targetJoint) {
+        Vector3f source = layout.jointPivot(sourceJoint);
+        Vector3f target = layout.jointPivot(targetJoint);
+        if (source == null || target == null) {
+            return null;
+        }
+        float x = (target.x() - source.x()) / horizontalScale;
+        float y = (target.y() - source.y()) / verticalScale;
+        float z = (target.z() - source.z()) / horizontalScale;
+        if (!Float.isFinite(x) || !Float.isFinite(y) || !Float.isFinite(z)) {
+            return null;
+        }
+        return new Matrix4f().translation(x, y, z);
+    }
+
+    /** Parent-first auxiliary path after the seam, including the selected entry. */
+    private int[] relativePath(int seamIndex, int auxiliaryIndex) {
+        ArrayDeque<Integer> reversed = new ArrayDeque<>();
+        int current = auxiliaryIndex;
+        while (current >= 0 && current != seamIndex) {
+            reversed.push(current);
+            current = layout.entries().get(current).parentAuxiliaryIndex();
+        }
+        if (seamIndex >= 0 && current != seamIndex) {
+            return new int[]{auxiliaryIndex};
+        }
+        int[] result = new int[reversed.size()];
+        int index = 0;
+        while (!reversed.isEmpty()) {
+            result[index++] = reversed.pop();
+        }
+        return result;
+    }
+
+    private static GeometryDocument.Bone nearestMajorAncestor(
+            GeometryDocument.Bone bone) {
+        for (GeometryDocument.Bone parent = bone.parent(); parent != null;
+             parent = parent.parent()) {
+            if (HumanoidRig.isMajorBone(parent)) {
+                return parent;
+            }
+        }
+        return null;
+    }
+
+    private Set<Integer> replacementIndices(AnimationClip clip, Set<String> propRoots,
+                                            boolean includeTrackedBody) {
+        Set<GeometryDocument.Bone> roots = Collections.newSetFromMap(
+                new IdentityHashMap<>());
+        for (String root : propRoots) {
+            AuxiliaryBoneLayout.Entry entry = layout.entryForBoneName(root);
+            if (entry != null) {
+                roots.add(entry.bone());
+            }
+        }
+        if (includeTrackedBody) {
+            for (String name : clip.boneTracks().keySet()) {
+                AuxiliaryBoneLayout.Entry entry = layout.entryForBoneName(name);
+                if (entry != null && HumanoidRig.isMajorBone(entry.bone())) {
+                    roots.add(entry.bone());
+                }
+            }
+        }
+        LinkedHashSet<Integer> result = new LinkedHashSet<>();
+        for (AuxiliaryBoneLayout.Entry entry : layout.entries()) {
+            if (hasAncestor(entry.bone(), roots)) {
+                result.add(entry.auxiliaryIndex());
+            }
+        }
+        return Set.copyOf(result);
+    }
+
+    private static boolean hasAncestor(GeometryDocument.Bone bone,
+                                       Set<GeometryDocument.Bone> ancestors) {
+        for (GeometryDocument.Bone current = bone; current != null;
+             current = current.parent()) {
+            if (ancestors.contains(current)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private static void collect(AnimationClip.Track track, Set<Integer> variables,
@@ -1323,11 +2790,26 @@ public final class ParallelAnimationProgram {
         private EvaluationScratch spareWorkerScratch;
         private CompletableFuture<AsyncResult> pendingEvaluation;
         private double lastScheduledAt = Double.NEGATIVE_INFINITY;
+        private FullBodyObservation fullBodyObservation;
+        private FullBodyEnding fullBodyEnding;
+        private final PoseLayerSnapshot fullBodyActionSnapshot;
+        private final FullBodyCompositeSnapshot fullBodyCompositeSnapshot;
+        private String fullBodyActionSnapshotClip = "";
+        private final FullBodySwingState fullBodySwingState =
+                new FullBodySwingState();
+        private Set<InteractionHand> fullBodyInputHands = Set.of();
+        private Set<InteractionHand> attackSoundRouteHands = Set.of();
+        private String reportedFullBody = "";
 
         private RuntimeState(LivingEntity entity, String modelId,
                              EvaluationScratch scratch) {
             environment = new EntityAnimationEnvironment(entity, variables, assigned, modelId);
             this.scratch = scratch;
+            fullBodyActionSnapshot = new PoseLayerSnapshot(
+                    scratch.wholeModelPose.positions.length,
+                    scratch.visibilityScales.length);
+            fullBodyCompositeSnapshot = new FullBodyCompositeSnapshot(
+                    scratch.wholeModelPose.positions.length);
             startedAt = (entity.tickCount + Minecraft.getInstance().getFrameTime()) / 20.0D;
         }
 
@@ -1354,6 +2836,78 @@ public final class ParallelAnimationProgram {
             publishedScratch = null;
             spareWorkerScratch = null;
             lastScheduledAt = Double.NEGATIVE_INFINITY;
+            fullBodyObservation = null;
+            fullBodyEnding = null;
+            fullBodyActionSnapshot.reset();
+            fullBodyCompositeSnapshot.reset();
+            fullBodyActionSnapshotClip = "";
+            fullBodySwingState.reset();
+            fullBodyInputHands = Set.of();
+            attackSoundRouteHands = Set.of();
+            reportedFullBody = "";
+        }
+
+        private void restrictFullBodyHands(Set<InteractionHand> enabledHands) {
+            boolean disabled = fullBodyObservation != null
+                    && !enabledHands.contains(fullBodyObservation.hand())
+                    || fullBodyEnding != null
+                    && !enabledHands.contains(fullBodyEnding.hand())
+                    || fullBodySwingState.playback != null
+                    && !enabledHands.contains(fullBodySwingState.playback.hand());
+            if (!disabled) {
+                return;
+            }
+            fullBodyObservation = null;
+            fullBodyEnding = null;
+            fullBodyActionSnapshot.reset();
+            fullBodyCompositeSnapshot.reset();
+            fullBodyActionSnapshotClip = "";
+            fullBodySwingState.reset();
+            fullBodyInputHands = Set.of();
+        }
+
+        private void reportFullBody(
+                LivingEntity entity,
+                List<AutomaticAnimationSelector.ActiveClip> automatic,
+                @Nullable FullBodyEnding ending,
+                Set<InteractionHand> hands,
+                float partialTick,
+                @Nullable Float visualFacingYaw,
+                @Nullable Float epicModelYaw) {
+            boolean active = !hands.isEmpty() || ending != null;
+            String clips = active ? automatic.stream()
+                    .map(AutomaticAnimationSelector.ActiveClip::name)
+                    .toList().toString() : "";
+            String endingName = ending == null ? "" : ending.active().name();
+            String signature = active
+                    ? clips + '|' + endingName + '|' + hands : "";
+            if (signature.equals(reportedFullBody)) {
+                return;
+            }
+            boolean wasActive = !reportedFullBody.isEmpty();
+            reportedFullBody = signature;
+            if (!active) {
+                if (wasActive) {
+                    CompatMod.LOG.debug(
+                            "YSM-EF Compat: custom full-body bow pose ended for '{}'",
+                            entity.getScoreboardName());
+                }
+                return;
+            }
+            CompatMod.LOG.debug(
+                    "YSM-EF Compat: custom full-body bow pose player='{}' clips={} hands={} ending='{}' savedActionPose={} visualYaw={} epicModelYaw={} relativeYaw={} bodyYaw={} headYaw={} viewYaw={}",
+                    entity.getScoreboardName(), clips, hands, endingName,
+                    ending != null && ending.snapshot() != null,
+                    visualFacingYaw,
+                    epicModelYaw,
+                    visualFacingYaw == null || epicModelYaw == null
+                            ? null : EntityAnimationEnvironment.customBowRelativeHeadYaw(
+                            entity.getYRot(), visualFacingYaw,
+                            entity instanceof net.minecraft.client.player.LocalPlayer,
+                            epicModelYaw),
+                    Mth.rotLerp(partialTick, entity.yBodyRotO, entity.yBodyRot),
+                    Mth.lerp(partialTick, entity.yHeadRotO, entity.yHeadRot),
+                    entity.getViewYRot(partialTick));
         }
 
         private void prepareAutomaticTimelines(
@@ -1457,6 +3011,7 @@ public final class ParallelAnimationProgram {
     public static void clearSoundOutput() {
         ClientSoundOutput.clear();
         ClientParticleOutput.clear();
+        ClientAttackSoundRouter.clear();
     }
 
     public static void releaseSoundOutput(String modelId) {

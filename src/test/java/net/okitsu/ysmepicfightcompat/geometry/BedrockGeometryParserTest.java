@@ -84,4 +84,70 @@ class BedrockGeometryParserTest {
         assertEquals(62.0F / 128.0F, faces.get(2).textureCoordinates()[0][0]);
         assertEquals(4.0F / 64.0F, faces.get(2).textureCoordinates()[0][1]);
     }
+
+    @Test
+    void zeroSizedUvsDisableCoplanarFacesInsteadOfCreatingZFightGeometry() {
+        GeometryDocument geometry = BedrockGeometryParser.parse("""
+                {"minecraft:geometry":[{
+                  "description":{"texture_width":256,"texture_height":256},
+                  "bones":[{"name":"ysmGlow_magic_circle","cubes":[{
+                    "origin":[0,0,0],"size":[27,27,0],
+                    "uv":{
+                      "north":{"uv":[161,50],"uv_size":[45,45]},
+                      "east":{"uv":[0,0],"uv_size":[0,30]},
+                      "south":{"uv":[256,0],"uv_size":[0,0]},
+                      "west":{"uv":[0,0],"uv_size":[0,30]},
+                      "up":{"uv":[30,0],"uv_size":[-30,0]},
+                      "down":{"uv":[30,0],"uv_size":[-30,0]}
+                    }
+                  }]}]
+                }]}
+                """);
+
+        var faces = geometry.bones().get("ysmGlow_magic_circle").faces();
+        assertEquals(1, faces.size());
+        assertEquals(206.0F / 256.0F, faces.get(0).textureCoordinates()[0][0]);
+        assertEquals(50.0F / 256.0F, faces.get(0).textureCoordinates()[0][1]);
+    }
+
+    @Test
+    void populatedOppositeUvsStillProduceOnlyOneZeroThicknessGlowPlane() {
+        GeometryDocument geometry = BedrockGeometryParser.parse("""
+                {"minecraft:geometry":[{
+                  "description":{"texture_width":256,"texture_height":256},
+                  "bones":[{"name":"ysmGlow_magic_circle","cubes":[{
+                    "origin":[0,0,0],"size":[27,27,0],
+                    "uv":{
+                      "north":{"uv":[161,50],"uv_size":[45,45]},
+                      "south":{"uv":[161,50],"uv_size":[45,45]}
+                    }
+                  }]}]
+                }]}
+                """);
+
+        var faces = geometry.bones().get("ysmGlow_magic_circle").faces();
+        assertEquals(1, faces.size());
+        assertEquals(-1.0F, faces.get(0).normal().z());
+    }
+
+    @Test
+    void zeroAreaEdgeFacesAreDiscardedEvenWhenTheirUvsArePopulated() {
+        GeometryDocument geometry = BedrockGeometryParser.parse("""
+                {"minecraft:geometry":[{
+                  "description":{"texture_width":64,"texture_height":64},
+                  "bones":[{"name":"flat","cubes":[{
+                    "origin":[0,0,0],"size":[8,8,0],
+                    "uv":{
+                      "north":{"uv":[0,0],"uv_size":[8,8]},
+                      "east":{"uv":[8,0],"uv_size":[2,8]},
+                      "west":{"uv":[10,0],"uv_size":[2,8]},
+                      "up":{"uv":[12,0],"uv_size":[8,2]},
+                      "down":{"uv":[20,0],"uv_size":[8,2]}
+                    }
+                  }]}]
+                }]}
+                """);
+
+        assertEquals(1, geometry.bones().get("flat").faces().size());
+    }
 }

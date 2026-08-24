@@ -15,6 +15,12 @@
   "config.ysm_epicfight_compat.server_model_disk_cache_mib.tooltip": "Maximum disk space for generated server model payloads. Zero disables and clears this cache.",
   "config.ysm_epicfight_compat.suppress_battle_overlay": "Hide YSM overlay in battle mode",
   "config.ysm_epicfight_compat.suppress_battle_overlay.tooltip": "Hides official YSM's top-left player overlay while Epic Fight battle mode is active.",
+  "config.ysm_epicfight_compat.use_ysm_held_item_models_by_default": "Use YSM held-item models by default",
+  "config.ysm_epicfight_compat.use_ysm_held_item_models_by_default.tooltip": "Uses model-authored YSM weapons and tools when available. Only the resolved display state, not this setting, is synchronized to other players.",
+  "config.ysm_epicfight_compat.held_item_model_overrides": "Model-specific held-item exceptions",
+  "config.ysm_epicfight_compat.held_item_model_overrides.tooltip": "Each model ID has a list of item IDs or #item_tags that invert the default. Configured automatically adds the currently selected model. These rules stay local; only their resolved display state is synchronized.",
+  "config.ysm_epicfight_compat.held_item_model_entry.tooltip": "Item IDs or #item_tags that invert the default for this YSM model.",
+  "config.ysm_epicfight_compat.held_item_model_entry.invalid": "Enter an item ID such as minecraft:diamond_sword or an item tag such as #forge:tools/bows.",
   "config.ysm_epicfight_compat.warning_acknowledged": "Compatibility warning acknowledged",
   "config.ysm_epicfight_compat.warning_acknowledged.tooltip": "Whether the official YSM and Epic Fight compatibility warning has already been shown."
 }

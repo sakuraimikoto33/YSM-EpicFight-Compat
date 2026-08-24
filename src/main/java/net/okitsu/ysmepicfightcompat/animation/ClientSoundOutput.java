@@ -414,7 +414,6 @@ final class ClientSoundOutput {
 
     private static final class ModelSound extends EntitySound {
         private final StreamSource source;
-        private volatile boolean streamEnded;
 
         private ModelSound(SoundEvent event, LivingEntity entity, float volume,
                            float pitch, boolean looping, StreamSource source) {
@@ -430,54 +429,16 @@ final class ClientSoundOutput {
                 try {
                     AudioStream stream = looping
                             ? new ReopeningAudioStream(source) : source.open();
-                    result.complete(new TrackingAudioStream(stream,
-                            () -> streamEnded = true));
+                    // SoundBufferLibrary closes a decoded stream as soon as its samples
+                    // have been uploaded to OpenAL. That is not the end of audible
+                    // playback, so do not translate stream exhaustion/close into a
+                    // TickableSoundInstance stop. SoundManager owns playback lifetime.
+                    result.complete(stream);
                 } catch (Throwable exception) {
                     result.completeExceptionally(exception);
                 }
             });
             return result;
-        }
-
-        @Override
-        public void tick() {
-            super.tick();
-            if (streamEnded) {
-                release();
-            }
-        }
-    }
-
-    private static final class TrackingAudioStream implements AudioStream {
-        private final AudioStream delegate;
-        private final Runnable ended;
-
-        private TrackingAudioStream(AudioStream delegate, Runnable ended) {
-            this.delegate = delegate;
-            this.ended = ended;
-        }
-
-        @Override
-        public AudioFormat getFormat() {
-            return delegate.getFormat();
-        }
-
-        @Override
-        public ByteBuffer read(int bytes) throws IOException {
-            ByteBuffer result = delegate.read(bytes);
-            if (!result.hasRemaining()) {
-                ended.run();
-            }
-            return result;
-        }
-
-        @Override
-        public void close() throws IOException {
-            try {
-                delegate.close();
-            } finally {
-                ended.run();
-            }
         }
     }
 

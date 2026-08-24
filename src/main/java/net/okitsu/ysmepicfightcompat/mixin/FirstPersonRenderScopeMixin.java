@@ -40,7 +40,8 @@ public abstract class FirstPersonRenderScopeMixin {
                 ? DEFAULT_ARMS : settings.visibilities();
         boolean showUnlisted = settings != null && settings.visibilityOthers();
         RenderFrameContext.Frame scope = RenderFrameContext.pushFirstPerson(
-                player, visibleParts, showUnlisted);
+                player, visibleParts, showUnlisted,
+                patch.getAccurateYRot(partialTick));
         try {
             renderer.render(player, patch, entityRenderer, buffers,
                     matrices, light, partialTick);

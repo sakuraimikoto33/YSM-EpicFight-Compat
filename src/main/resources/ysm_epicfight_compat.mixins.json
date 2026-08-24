@@ -5,12 +5,18 @@
   "plugin": "net.okitsu.ysmmapping.internal.mixin.YsmMappingMixinPlugin",
   "refmapWrapper": "YsmReferenceMapper",
   "compatibilityLevel": "JAVA_17",
+  "mixins": [
+    "AttackAnimationSoundMixin"
+  ],
   "client": [
     "CombatOverlayMixin",
     "CombatFirstPersonMixin",
+    "ConfiguredForgeConfigMixin",
+    "ConfiguredForgeFolderEntryMixin",
     "FirstPersonRenderScopeMixin",
     "FirstPersonArmorGateMixin",
     "HeldItemCorrectionMixin",
+    "PatchedItemInHandLayerMixin",
     "PlayerStateCapabilityMixin",
     "TridentHeldItemCorrectionMixin",
     "YsmConfigurationExpressionMixin"

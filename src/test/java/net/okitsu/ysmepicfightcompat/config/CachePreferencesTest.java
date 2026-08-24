@@ -19,6 +19,12 @@ class CachePreferencesTest {
                 "client", "clientModelDiskCacheMiB")) instanceof ForgeConfigSpec.ValueSpec);
         assertTrue(ClientPreferences.CLIENT_SPEC.getRaw(List.of(
                 "client", "remoteModelDiskCacheMiB")) instanceof ForgeConfigSpec.ValueSpec);
+        assertTrue(ClientPreferences.CLIENT_SPEC.getRaw(List.of(
+                "client", "useYsmHeldItemModelsByDefault"))
+                instanceof ForgeConfigSpec.ValueSpec);
+        assertTrue(ClientPreferences.CLIENT_SPEC.getRaw(List.of(
+                "client", "heldItemModelOverrides"))
+                instanceof ForgeConfigSpec.ValueSpec);
         assertEquals("ysm_epicfight_compat/ysm_epicfight_compat-common.toml",
                 ServerPreferences.CONFIG_FILE);
         assertTrue(ServerPreferences.COMMON_SPEC.getRaw(List.of(

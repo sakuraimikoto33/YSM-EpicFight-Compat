@@ -4,6 +4,7 @@ import net.minecraft.client.Camera;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.multiplayer.ClientLevel;
 import net.minecraft.client.player.AbstractClientPlayer;
+import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.core.registries.BuiltInRegistries;
@@ -11,6 +12,7 @@ import net.minecraft.core.registries.Registries;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.tags.TagKey;
 import net.minecraft.util.Mth;
+import net.minecraft.world.InteractionHand;
 import net.minecraft.world.entity.EquipmentSlot;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.LivingEntity;
@@ -23,6 +25,7 @@ import net.minecraft.world.item.UseAnim;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.phys.Vec3;
 
+import javax.annotation.Nullable;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Random;
@@ -42,6 +45,8 @@ final class EntityAnimationEnvironment implements ExpressionEngine.Environment {
     private final AuxiliaryPhysicsRuntime physics = new AuxiliaryPhysicsRuntime();
     private boolean firstPerson;
     private float partialTick;
+    @Nullable
+    private Float customBowRelativeHeadYaw;
     private double deltaTime;
     private double animationTime;
     private double lifeTime;
@@ -51,6 +56,9 @@ final class EntityAnimationEnvironment implements ExpressionEngine.Environment {
     private Vec3 cachedCameraPosition;
     private String soundScope = "model";
     private boolean soundOutputEnabled = true;
+    private Set<InteractionHand> attackReplacementHands = Set.of();
+    @Nullable
+    private InteractionHand attackSoundHand;
 
     EntityAnimationEnvironment(LivingEntity entity, Map<Integer, Double> variables,
                                Set<Integer> assigned) {
@@ -81,12 +89,41 @@ final class EntityAnimationEnvironment implements ExpressionEngine.Environment {
         ClientParticleOutput.update(entity);
     }
 
+    /**
+     * Makes a complete model-authored bow pose aim from the actual player view while
+     * preserving Epic Fight's outer model rotation. Null values restore official YSM's
+     * ordinary head/body-relative queries.
+     *
+     * <p>The supplied value is the interpolated view yaw selected by the caller. The
+     * local player deliberately uses its current entity yaw instead, because that is
+     * the yaw used by {@code BowItem} when the projectile is launched. The result is
+     * made relative to Epic Fight's actual interpolated model yaw, not vanilla
+     * {@code yBodyRot}; mixing those two bases rotates the authored upper body twice.</p>
+     */
+    void customBowAim(@Nullable Float visualFacingYaw,
+                      @Nullable Float epicModelYaw) {
+        if (visualFacingYaw == null || !Float.isFinite(visualFacingYaw)
+                || epicModelYaw == null || !Float.isFinite(epicModelYaw)) {
+            customBowRelativeHeadYaw = null;
+            return;
+        }
+        customBowRelativeHeadYaw = customBowRelativeHeadYaw(
+                entity.getYRot(), visualFacingYaw,
+                entity instanceof LocalPlayer, epicModelYaw);
+    }
+
     void clipTime(double animationTime) {
         this.animationTime = animationTime;
     }
 
     void soundScope(String soundScope) {
         this.soundScope = soundScope == null || soundScope.isBlank() ? "model" : soundScope;
+        attackSoundHand = attackHandForScope(this.soundScope, attackReplacementHands);
+    }
+
+    void attackReplacementHands(Set<InteractionHand> hands) {
+        attackReplacementHands = hands == null ? Set.of() : Set.copyOf(hands);
+        attackSoundHand = attackHandForScope(soundScope, attackReplacementHands);
     }
 
     boolean soundOutputEnabled() {
@@ -97,10 +134,13 @@ final class EntityAnimationEnvironment implements ExpressionEngine.Environment {
         this.soundOutputEnabled = soundOutputEnabled;
     }
 
-    void playSoundEffect(String effect) {
+    boolean playSoundEffect(String effect) {
         if (soundOutputEnabled && effect != null && !effect.isBlank()) {
-            ClientSoundOutput.playEffect(entity, modelId, soundScope, effect);
+            boolean played = ClientSoundOutput.playEffect(entity, modelId, soundScope, effect);
+            claimAttackSound(played);
+            return played;
         }
+        return false;
     }
 
     void stopSoundScope(String scope) {
@@ -125,6 +165,8 @@ final class EntityAnimationEnvironment implements ExpressionEngine.Environment {
         physics.reset();
         ClientSoundOutput.stopAll(entity);
         ClientParticleOutput.stopAll(entity);
+        attackReplacementHands = Set.of();
+        attackSoundHand = null;
     }
 
     @Override
@@ -174,8 +216,10 @@ final class EntityAnimationEnvironment implements ExpressionEngine.Environment {
         double horizontalSpeed = Math.sqrt(entity.getDeltaMovement().x * entity.getDeltaMovement().x
                 + entity.getDeltaMovement().z * entity.getDeltaMovement().z) * 20.0D;
         float headYaw = Mth.lerp(partialTick, entity.yHeadRotO, entity.yHeadRot);
-        float bodyYaw = Mth.lerp(partialTick, entity.yBodyRotO, entity.yBodyRot);
-        float relativeHeadYaw = officialHeadYaw(headYaw, bodyYaw);
+        float bodyYaw = Mth.rotLerp(partialTick, entity.yBodyRotO, entity.yBodyRot);
+        float relativeHeadYaw = customBowRelativeHeadYaw == null
+                ? officialHeadYaw(headYaw, bodyYaw)
+                : customBowRelativeHeadYaw;
         float headPitch = officialHeadPitch(entity.getViewXRot(partialTick));
         return switch (name) {
             case "math.pi" -> Math.PI;
@@ -390,7 +434,33 @@ final class EntityAnimationEnvironment implements ExpressionEngine.Environment {
         }
         ClientSoundOutput.PlayRequest request = ClientSoundOutput.request(
                 textArguments, numericArguments);
-        return flag(ClientSoundOutput.play(entity, modelId, soundScope, request));
+        boolean played = ClientSoundOutput.play(entity, modelId, soundScope, request);
+        claimAttackSound(played);
+        return flag(played);
+    }
+
+    private void claimAttackSound(boolean played) {
+        if (played && attackSoundHand != null) {
+            AttackSoundOwnership.claim(entity, attackSoundHand, modelId);
+        }
+    }
+
+    @Nullable
+    static InteractionHand attackHandForScope(String scope,
+                                               Set<InteractionHand> availableHands) {
+        if (scope == null || availableHands == null || availableHands.isEmpty()) {
+            return null;
+        }
+        String normalized = scope.toLowerCase(Locale.ROOT);
+        if (!normalized.contains("swing")) {
+            return null;
+        }
+        if (normalized.contains("swing_offhand")) {
+            return availableHands.contains(InteractionHand.OFF_HAND)
+                    ? InteractionHand.OFF_HAND : null;
+        }
+        return availableHands.contains(InteractionHand.MAIN_HAND)
+                ? InteractionHand.MAIN_HAND : null;
     }
 
     private double stopSound(String[] textArguments, double[] numericArguments) {
@@ -769,6 +839,19 @@ final class EntityAnimationEnvironment implements ExpressionEngine.Environment {
 
     static float officialHeadYaw(float headYaw, float bodyYaw) {
         return -Mth.clamp(Mth.wrapDegrees(headYaw - bodyYaw), -85.0F, 85.0F);
+    }
+
+    static float customBowAimYaw(float projectileYaw, float interpolatedViewYaw,
+                                 boolean localPlayer) {
+        return localPlayer ? projectileYaw : interpolatedViewYaw;
+    }
+
+    static float customBowRelativeHeadYaw(float projectileYaw,
+                                          float interpolatedViewYaw,
+                                          boolean localPlayer,
+                                          float epicModelYaw) {
+        return officialHeadYaw(customBowAimYaw(projectileYaw,
+                interpolatedViewYaw, localPlayer), epicModelYaw);
     }
 
     static float officialHeadPitch(float headPitch) {

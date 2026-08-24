@@ -1,5 +1,7 @@
 package net.okitsu.ysmepicfightcompat.network.message;
 
+import net.minecraft.resources.ResourceLocation;
+import net.minecraft.world.InteractionHand;
 import net.okitsu.ysmepicfightcompat.cache.ModelDiskCache;
 import org.junit.jupiter.api.Test;
 
@@ -7,9 +9,45 @@ import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class ModelTransferMessageTest {
+    @Test
+    void validatesAttackSwingSoundPayloadBounds() {
+        UUID playerId = UUID.randomUUID();
+        ResourceLocation sound = ResourceLocation.fromNamespaceAndPath(
+                "epicfight", "entity.weapon.whoosh_sharp");
+        AttackSwingSoundMessage message = new AttackSwingSoundMessage(
+                4, playerId, InteractionHand.MAIN_HAND, 2, sound,
+                1.0D, 2.0D, 3.0D, 1.0F, 1.0F);
+
+        assertEquals(playerId, message.playerId());
+        assertEquals(sound, message.sound());
+        assertThrows(IllegalArgumentException.class, () ->
+                new AttackSwingSoundMessage(4, playerId, InteractionHand.MAIN_HAND,
+                        2, sound, Double.NaN, 2.0D, 3.0D, 1.0F, 1.0F));
+        assertThrows(IllegalArgumentException.class, () ->
+                new AttackSwingSoundMessage(4, playerId, InteractionHand.MAIN_HAND,
+                        2, sound, 1.0D, 2.0D, 3.0D, 1.0F, 5.0F));
+    }
+
+    @Test
+    void heldItemPreferenceMessagesContainOnlyResolvedPerHandState() {
+        UUID playerId = UUID.randomUUID();
+        HeldItemPreferenceUpdateMessage update =
+                new HeldItemPreferenceUpdateMessage(false, true);
+        HeldItemPreferenceSnapshotMessage snapshot =
+                new HeldItemPreferenceSnapshotMessage(playerId, false, true);
+
+        assertFalse(update.mainHandYsm());
+        assertTrue(update.offHandYsm());
+        assertEquals(playerId, snapshot.playerId());
+        assertFalse(snapshot.mainHandYsm());
+        assertTrue(snapshot.offHandYsm());
+    }
+
     @Test
     void validatesConditionalRequestDigestsAndCopiesArrays() {
         byte[] digest = ModelDiskCache.sha256(new byte[]{1});

@@ -5,6 +5,8 @@ import net.minecraft.client.Minecraft;
 import net.minecraft.client.renderer.MultiBufferSource;
 import net.minecraft.client.renderer.RenderType;
 import net.minecraft.resources.ResourceLocation;
+import net.minecraft.world.InteractionHand;
+import net.minecraft.world.entity.LivingEntity;
 import net.okitsu.ysmepicfightcompat.CompatMod;
 import net.okitsu.ysmepicfightcompat.animation.DefaultPoseProgram;
 import net.okitsu.ysmepicfightcompat.animation.ParallelAnimationProgram;
@@ -63,6 +65,31 @@ public final class CompatHumanoidMesh extends HumanoidMesh {
         texture = value;
     }
 
+    /** Returns whether the model authors the held prop for this item condition. */
+    public boolean replacesHeldItem(LivingEntity entity, InteractionHand hand) {
+        return parallelAnimations.replacesHeldItem(entity, hand);
+    }
+
+    /** Returns whether this item has a YSM replacement rule for an attack. */
+    public boolean replacesAttackItem(LivingEntity entity, InteractionHand hand) {
+        return parallelAnimations.replacesAttackItem(entity, hand);
+    }
+
+    /** Returns whether the current replacement attack has an authored YSM sound route. */
+    public boolean hasAttackSoundRoute(LivingEntity entity, InteractionHand hand) {
+        return parallelAnimations.hasAttackSoundRoute(entity, hand);
+    }
+
+    /** Advances sound/controller outputs when this player was not rendered during the tick. */
+    public void advanceAnimationOutputs(LivingEntity entity, boolean firstPerson) {
+        parallelAnimations.advanceOutputs(entity, firstPerson);
+    }
+
+    /** Returns whether an authored custom-bow action owns this model's complete pose. */
+    public boolean replacesBodyPose(LivingEntity entity) {
+        return parallelAnimations.replacesBodyPose(entity);
+    }
+
     /** Returns the current model-space pose of a held-item locator when one was derived. */
     @Nullable
     public OpenMatrix4f heldItemPose(@Nullable Armature armature,
@@ -89,7 +116,8 @@ public final class CompatHumanoidMesh extends HumanoidMesh {
         ParallelAnimationProgram.Frame animationFrame = frame == null
                 || parallelAnimations.isEmpty() ? null
                 : parallelAnimations.sample(frame.entity(),
-                Minecraft.getInstance().getFrameTime(), frame.firstPerson());
+                Minecraft.getInstance().getFrameTime(), frame.firstPerson(),
+                frame.epicModelYaw());
         poseProgram.apply(this, frame == null ? Map.of() : frame.visibleParts(),
                 frame == null || frame.showUnlistedParts(), frame != null && frame.firstPerson(),
                 animationFrame == null ? null : animationFrame.hiddenBones());
@@ -98,7 +126,18 @@ public final class CompatHumanoidMesh extends HumanoidMesh {
             OpenMatrix4f[] complete = auxiliaryPoses.compose(armature, poses,
                     animationFrame == null ? null : animationFrame.parallelDeltas(),
                     animationFrame == null ? null : animationFrame.wholeModelDeltas(),
-                    animationFrame != null && animationFrame.replaceEpicFightPose());
+                    animationFrame == null ? null : animationFrame.heldItemDeltas(),
+                    animationFrame != null && animationFrame.replaceEpicFightPose(),
+                    animationFrame == null ? null
+                            : animationFrame.replaceEpicFightAnchors(),
+                    animationFrame == null ? null
+                            : animationFrame.suppressParallelDeltas(),
+                    animationFrame == null ? null
+                            : animationFrame.heldItemAnchorJoints(),
+                    animationFrame == null ? null
+                            : animationFrame.fullBodyBlendSource(),
+                    animationFrame == null ? 0.0F
+                            : animationFrame.fullBodyBlendWeight());
             if (complete != null) {
                 if (frame != null) {
                     Vector3f rightFist = auxiliaryPoses.displayedFist(
@@ -135,7 +174,11 @@ public final class CompatHumanoidMesh extends HumanoidMesh {
                 CompatMod.LOG.warn(
                         "YSM-EF Compat: compute skinning is unavailable; using Epic Fight's CPU path");
             }
-            drawPosed(matrices, buffers.getBuffer(EpicFightRenderTypes.getTriangulated(actualType)),
+            // replaceTexture and getTriangulated share Epic Fight's render-type cache.
+            // A texture replacement can therefore leave the original QUADS mode in that
+            // cache, even though this mesh emits triangle triplets. Use the independent
+            // conversion so CPU skinning never regroups every four vertices into a quad.
+            drawPosed(matrices, buffers.getBuffer(EpicFightRenderTypes.makeTriangulated(actualType)),
                     drawingFunction, light, red, green, blue, alpha, overlay, armature, poses);
         }
     }

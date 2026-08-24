@@ -43,6 +43,11 @@ minecraft {
 
 repositories {
     maven { url = 'https://maven.minecraftforge.net' }
+    maven {
+        name = 'CurseMaven'
+        url = 'https://www.cursemaven.com'
+        content { includeGroup 'curse.maven' }
+    }
     exclusiveContent {
         forRepository { maven { name = 'Modrinth'; url = 'https://api.modrinth.com/maven' } }
         forRepositories(fg.repository)
@@ -54,6 +59,7 @@ dependencies {
     minecraft "net.minecraftforge:forge:${minecraft_version}-${forge_version}"
     implementation fg.deobf("maven.modrinth:epic-fight:${epicfight_version}")
     compileOnly "net.okitsu.ysmmapping:api:${ysmMappingApiDependencyVersion}"
+    compileOnly fg.deobf('curse.maven:configured-457570:5180900')
     compileOnly 'org.spongepowered:mixin:0.8.5'
     annotationProcessor 'org.spongepowered:mixin:0.8.5:processor'
 
@@ -117,6 +123,9 @@ tasks.register('verifyDistributions') {
             ['META-INF/mods.toml', 'META-INF/ysm-mapping-api/requests-v1.json',
              'ysm_epicfight_compat.mixins.json',
              'net/okitsu/ysmepicfightcompat/CompatMod.class',
+             'net/okitsu/ysmepicfightcompat/integration/configured/ConfiguredHeldItemRules.class',
+             'net/okitsu/ysmepicfightcompat/mixin/ConfiguredForgeConfigMixin.class',
+             'net/okitsu/ysmepicfightcompat/mixin/ConfiguredForgeFolderEntryMixin.class',
              'assets/ysm_epicfight_compat/lang/en_us.json',
              'assets/ysm_epicfight_compat/lang/ja_jp.json'].each { entry ->
                 if (zip.getEntry(entry) == null) {
@@ -129,6 +138,10 @@ tasks.register('verifyDistributions') {
             if (!(modsToml =~ configuredDependency).find()) {
                 throw new GradleException(
                         'Distribution must declare Configured 2.2.3+ as a client-side optional dependency')
+            }
+            if (modsToml.contains('configuredProviders')) {
+                throw new GradleException(
+                        'Distribution must embed held-item rules in the Forge client config, not register a separate Configured provider')
             }
             ['net/okitsu/ysmepicfightcompat/client/ClientBootstrap.class',
              'net/okitsu/ysmepicfightcompat/client/BattleOverlayConfigScreen.class'].each {
@@ -157,9 +170,11 @@ tasks.register('verifyDistributions') {
             }.each { classEntry ->
                 def classText = new String(zip.getInputStream(classEntry).bytes,
                         java.nio.charset.StandardCharsets.ISO_8859_1)
-                if (classText.contains('com/mrcrayfish/configured/')) {
+                if (classText.contains('com/mrcrayfish/configured/') &&
+                        !classEntry.name.startsWith(
+                                'net/okitsu/ysmepicfightcompat/integration/configured/ConfiguredHeldItemRules')) {
                     throw new GradleException(
-                            "Optional Configured integration must not link its API from ${classEntry.name}")
+                            "Configured API linkage escaped the optional integration boundary: ${classEntry.name}")
                 }
                 forbiddenText.each { marker ->
                     if (classText.contains(marker)) {
@@ -173,7 +188,7 @@ tasks.register('verifyDistributions') {
             def requestJson = new groovy.json.JsonSlurper().parse(
                     zip.getInputStream(zip.getEntry(
                             'META-INF/ysm-mapping-api/requests-v1.json')))
-            mixinJson.client.each { mixin ->
+            ((mixinJson.mixins ?: []) + (mixinJson.client ?: [])).each { mixin ->
                 def classPath = mixinJson.package.replace('.', '/') + '/' + mixin + '.class'
                 if (zip.getEntry(classPath) == null) {
                     throw new GradleException("Mixin config references missing ${classPath}")

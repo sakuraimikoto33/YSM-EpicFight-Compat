@@ -10,9 +10,11 @@ import net.minecraftforge.event.entity.EntityLeaveLevelEvent;
 import net.minecraftforge.eventbus.api.SubscribeEvent;
 import net.minecraftforge.fml.common.Mod;
 import net.okitsu.ysmepicfightcompat.CompatMod;
+import net.okitsu.ysmepicfightcompat.animation.ClientAttackSoundRouter;
 import net.okitsu.ysmepicfightcompat.animation.OfficialConfigurationVariables;
 import net.okitsu.ysmepicfightcompat.animation.OfficialRoamingVariables;
 import net.okitsu.ysmepicfightcompat.mesh.CombatMeshCache;
+import net.okitsu.ysmepicfightcompat.network.ClientHeldItemModelPreferences;
 import net.okitsu.ysmepicfightcompat.network.RemoteSelectionState;
 import net.okitsu.ysmepicfightcompat.network.geometry.ClientModelTransfers;
 import net.okitsu.ysmepicfightcompat.render.PlayerSelectionResolver;
@@ -36,6 +38,8 @@ public final class ClientMaintenanceEvents {
         ClientModelTransfers.clear();
         OfficialConfigurationVariables.clear();
         OfficialRoamingVariables.clear();
+        ClientAttackSoundRouter.clear();
+        ClientHeldItemModelPreferences.beginConnection();
         reloadCountdown = -1;
         failureCountdown = 0;
         Minecraft.getInstance().execute(CombatMeshCache::clear);
@@ -61,6 +65,9 @@ public final class ClientMaintenanceEvents {
         if (event.phase != TickEvent.Phase.END) {
             return;
         }
+        CombatMeshCache.advanceAnimationOutputs();
+        ClientAttackSoundRouter.tick();
+        ClientHeldItemModelPreferences.tickSync();
         CombatMeshCache.releaseExpiredTextures();
         if (++failureCountdown >= FAILURE_RECHECK_INTERVAL) {
             failureCountdown = 0;

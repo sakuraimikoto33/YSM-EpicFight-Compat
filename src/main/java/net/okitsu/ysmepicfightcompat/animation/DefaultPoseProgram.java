@@ -68,7 +68,7 @@ public final class DefaultPoseProgram {
         };
     }
 
-    private static Map<String, Boolean> calculateVisibility(
+    static Map<String, Boolean> calculateVisibility(
             GeometryDocument geometry, Map<String, AnimationClip> animations) {
         List<AnimationClip> parallel = new ArrayList<>();
         for (AnimationClip clip : animations.values()) {

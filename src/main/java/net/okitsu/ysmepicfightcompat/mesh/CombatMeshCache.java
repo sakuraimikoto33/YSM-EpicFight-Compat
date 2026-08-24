@@ -14,6 +14,7 @@ import net.okitsu.ysmepicfightcompat.assets.OfficialTextureResolver;
 import net.okitsu.ysmepicfightcompat.cache.ClientLocalModelCache;
 import net.okitsu.ysmepicfightcompat.config.ClientPreferences;
 import net.okitsu.ysmepicfightcompat.network.geometry.ClientModelTransfers;
+import net.okitsu.ysmepicfightcompat.render.PlayerSelectionResolver;
 import yesman.epicfight.api.asset.AssetAccessor;
 import yesman.epicfight.api.client.model.Mesh;
 
@@ -133,6 +134,32 @@ public final class CombatMeshCache {
             trim();
         }
         return handle;
+    }
+
+    /** Returns a converted mesh without starting conversion or changing its LRU state. */
+    public static CompatHumanoidMesh readyMesh(String modelId) {
+        MeshHandle handle = modelId == null ? null : MESHES.get(modelId);
+        return handle == null ? null : handle.mesh();
+    }
+
+    /** Keeps model-authored outputs alive for selected players outside the render frustum. */
+    public static void advanceAnimationOutputs() {
+        Minecraft minecraft = Minecraft.getInstance();
+        if (minecraft.level == null) {
+            return;
+        }
+        for (net.minecraft.client.player.AbstractClientPlayer player
+                : minecraft.level.players()) {
+            PlayerSelectionResolver.Selection selection = PlayerSelectionResolver.current(player);
+            CompatHumanoidMesh mesh = selection == null
+                    ? null : readyMesh(selection.modelId());
+            if (mesh == null) {
+                continue;
+            }
+            boolean firstPerson = player == minecraft.player
+                    && minecraft.options.getCameraType().isFirstPerson();
+            mesh.advanceAnimationOutputs(player, firstPerson);
+        }
     }
 
     public static boolean isReady(String modelId) {

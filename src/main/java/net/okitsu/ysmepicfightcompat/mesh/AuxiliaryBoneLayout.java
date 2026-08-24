@@ -32,17 +32,22 @@ public final class AuxiliaryBoneLayout {
     private final Map<String, Entry> byName;
     private final Map<Integer, Vector3f> jointPivots;
     private final Map<Integer, Integer> toolAnchorPoseIndices;
+    private final float horizontalScale;
+    private final float verticalScale;
 
     private AuxiliaryBoneLayout(List<Entry> entries,
                                 Map<GeometryDocument.Bone, Entry> byBone,
                                 Map<String, Entry> byName,
                                 Map<Integer, Vector3f> jointPivots,
-                                Map<Integer, Integer> toolAnchorPoseIndices) {
+                                Map<Integer, Integer> toolAnchorPoseIndices,
+                                float horizontalScale, float verticalScale) {
         this.entries = List.copyOf(entries);
         this.byBone = Map.copyOf(byBone);
         this.byName = Map.copyOf(byName);
         this.jointPivots = Map.copyOf(jointPivots);
         this.toolAnchorPoseIndices = Map.copyOf(toolAnchorPoseIndices);
+        this.horizontalScale = positiveScale(horizontalScale);
+        this.verticalScale = positiveScale(verticalScale);
     }
 
     public static AuxiliaryBoneLayout create(GeometryDocument geometry) {
@@ -90,7 +95,7 @@ public final class AuxiliaryBoneLayout {
                     ? HumanoidRig.jointFor(bone) : entry.poseIndex());
         });
         return new AuxiliaryBoneLayout(entries, byBone, byName,
-                estimate.pivots(), toolSources);
+                estimate.pivots(), toolSources, horizontalScale, verticalScale);
     }
 
     public List<Entry> entries() {
@@ -114,8 +119,10 @@ public final class AuxiliaryBoneLayout {
         return name == null ? null : byName.get(name.toLowerCase(Locale.ROOT));
     }
 
-    Vector3f jointPivot(int joint) {
-        return jointPivots.get(joint);
+    /** Model-scaled bind pivot used to retarget an attachment between humanoid seams. */
+    public Vector3f jointPivot(int joint) {
+        Vector3f pivot = jointPivots.get(joint);
+        return pivot == null ? null : new Vector3f(pivot);
     }
 
     int toolAnchorPoseIndex(int joint) {
@@ -124,6 +131,18 @@ public final class AuxiliaryBoneLayout {
 
     boolean hasJointPivots() {
         return !jointPivots.isEmpty();
+    }
+
+    float horizontalScale() {
+        return horizontalScale;
+    }
+
+    float verticalScale() {
+        return verticalScale;
+    }
+
+    private static float positiveScale(float value) {
+        return Float.isFinite(value) && value > 1.0E-7F ? value : 1.0F;
     }
 
     private static Matrix4f bindLocal(GeometryDocument.Bone bone) {

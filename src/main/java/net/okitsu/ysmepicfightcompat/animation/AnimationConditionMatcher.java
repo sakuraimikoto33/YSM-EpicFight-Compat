@@ -20,17 +20,30 @@ import net.minecraft.world.item.ShovelItem;
 import net.minecraft.world.item.SwordItem;
 import net.minecraft.world.item.ThrowablePotionItem;
 import net.minecraft.world.item.UseAnim;
+import yesman.epicfight.api.animation.AnimationPlayer;
+import yesman.epicfight.api.animation.types.AttackAnimation;
+import yesman.epicfight.api.animation.types.DynamicAnimation;
+import yesman.epicfight.api.animation.types.ReboundAnimation;
+import yesman.epicfight.api.animation.types.StaticAnimation;
+import yesman.epicfight.api.client.animation.ClientAnimator;
+import yesman.epicfight.world.capabilities.EpicFightCapabilities;
+import yesman.epicfight.world.capabilities.entitypatch.LivingEntityPatch;
 
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 
-/** Public-Minecraft-API condition matching shared by hardcoded clips and Molang ctrl calls. */
+/** Item/action condition matching shared by automatic clips and Molang ctrl calls. */
 final class AnimationConditionMatcher {
     enum ItemAction {
         HOLD,
         USE,
         SWING
+    }
+
+    /** One continuous vanilla or Epic Fight attack playback. */
+    record SwingSignal(boolean active, String source, float elapsed) {
+        private static final SwingSignal INACTIVE = new SwingSignal(false, "", 0.0F);
     }
 
     private AnimationConditionMatcher() {
@@ -84,7 +97,29 @@ final class AnimationConditionMatcher {
     }
 
     static boolean isSwinging(LivingEntity entity, InteractionHand hand) {
-        return entity.swinging && entity.swingingArm == hand;
+        return swingSignal(entity, hand).active();
+    }
+
+    /**
+     * Detects both vanilla hand swings and Epic Fight attack animations.
+     *
+     * <p>Epic Fight drives combat attacks through its animator and does not have to keep
+     * {@link LivingEntity#swinging} active. Reading the current public animation layer keeps
+     * YSM {@code swing:*} timelines aligned with the combat animation without replacing the
+     * Epic Fight body pose.</p>
+     */
+    static SwingSignal swingSignal(LivingEntity entity, InteractionHand hand) {
+        if (entity == null || hand == null) {
+            return SwingSignal.INACTIVE;
+        }
+        SwingSignal epicFight = epicFightSwing(entity, hand);
+        if (epicFight.active()) {
+            return epicFight;
+        }
+        if (entity.swinging && entity.swingingArm == hand) {
+            return new SwingSignal(true, "minecraft", entity.swingTime);
+        }
+        return SwingSignal.INACTIVE;
     }
 
     static ItemStack item(LivingEntity entity, InteractionHand hand) {
@@ -145,10 +180,65 @@ final class AnimationConditionMatcher {
         } else if (stack.getItem() instanceof ThrowablePotionItem) {
             result.add("throwable_potion");
         }
-        if (action == ItemAction.HOLD) {
-            addUseCategory(result, stack.getUseAnimation());
-        }
+        // Official YSM also uses swing:bow and swing:spear. A swing condition still
+        // needs the item's use-animation family even though the item is not currently
+        // in its use action.
+        addUseCategory(result, stack.getUseAnimation());
         return List.copyOf(result);
+    }
+
+    private static SwingSignal epicFightSwing(LivingEntity entity,
+                                                InteractionHand requestedHand) {
+        LivingEntityPatch<?> patch = EpicFightCapabilities.getEntityPatch(
+                entity, LivingEntityPatch.class);
+        if (patch == null) {
+            return SwingSignal.INACTIVE;
+        }
+        ClientAnimator animator = patch.getClientAnimator();
+        if (animator == null) {
+            return SwingSignal.INACTIVE;
+        }
+        SwingSignal[] result = {SwingSignal.INACTIVE};
+        animator.iterVisibleLayersUntilFalse(layer -> {
+            AnimationPlayer player = layer.animationPlayer;
+            if (player == null || player.isEmpty()) {
+                return true;
+            }
+            DynamicAnimation current = player.getAnimation().get();
+            InteractionHand actionHand;
+            if (current instanceof AttackAnimation attack) {
+                float elapsed = player.getElapsedTime();
+                AttackAnimation.Phase phase = attack.getPhaseByTime(elapsed);
+                actionHand = phase == null ? InteractionHand.MAIN_HAND : phase.getHand();
+            } else if (current instanceof ReboundAnimation) {
+                // Releasing a bow does not set vanilla's hand-swing state and official
+                // YSM therefore returns from use_mainhand:bow to its hold clip. Mapping
+                // Epic Fight's rebound to swing:bow instead starts model-authored melee
+                // attacks (magic circles, lunges, and root motion) after every arrow.
+                if (!shouldTreatReboundAsSwing(
+                        item(entity, requestedHand).getUseAnimation())) {
+                    return true;
+                }
+                actionHand = entity.getUsedItemHand();
+            } else {
+                return true;
+            }
+            float elapsed = player.getElapsedTime();
+            if (actionHand != requestedHand) {
+                return true;
+            }
+            StaticAnimation action = (StaticAnimation) current;
+            String source = action.getRegistryName() == null
+                    ? action.getClass().getName() + '@' + action.getId()
+                    : action.getRegistryName().toString();
+            result[0] = new SwingSignal(true, "epicfight:" + source, elapsed);
+            return false;
+        });
+        return result[0];
+    }
+
+    static boolean shouldTreatReboundAsSwing(UseAnim useAnimation) {
+        return useAnimation != UseAnim.BOW;
     }
 
     static boolean matchesItem(LivingEntity entity, ItemStack stack, String selector,

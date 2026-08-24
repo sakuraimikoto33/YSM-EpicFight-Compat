@@ -1,5 +1,6 @@
 package net.okitsu.ysmepicfightcompat.render;
 
+import net.minecraft.world.InteractionHand;
 import net.minecraft.world.entity.LivingEntity;
 import net.okitsu.ysmepicfightcompat.mesh.CompatHumanoidMesh;
 import net.okitsu.ysmepicfightcompat.mesh.HumanoidRig;
@@ -17,17 +18,22 @@ public final class RenderFrameContext {
         private final boolean firstPerson;
         private final Map<String, Boolean> visibleParts;
         private final boolean showUnlistedParts;
+        @Nullable
+        private final Float epicModelYaw;
         private CompatHumanoidMesh mesh;
         private OpenMatrix4f[] inputPoses;
         private Vector3f rightFist;
         private Vector3f leftFist;
 
         private Frame(LivingEntity entity, boolean firstPerson,
-                      Map<String, Boolean> visibleParts, boolean showUnlistedParts) {
+                      Map<String, Boolean> visibleParts, boolean showUnlistedParts,
+                      @Nullable Float epicModelYaw) {
             this.entity = entity;
             this.firstPerson = firstPerson;
             this.visibleParts = Map.copyOf(visibleParts);
             this.showUnlistedParts = showUnlistedParts;
+            this.epicModelYaw = epicModelYaw != null && Float.isFinite(epicModelYaw)
+                    ? epicModelYaw : null;
         }
 
         public LivingEntity entity() {
@@ -46,6 +52,12 @@ public final class RenderFrameContext {
             return showUnlistedParts;
         }
 
+        /** Epic Fight's interpolated outer model yaw for this exact render. */
+        @Nullable
+        public Float epicModelYaw() {
+            return epicModelYaw;
+        }
+
         public boolean isBoundTo(CompatHumanoidMesh expected) {
             return mesh == expected;
         }
@@ -58,13 +70,26 @@ public final class RenderFrameContext {
     }
 
     public static Frame pushThirdPerson(LivingEntity entity) {
-        return push(new Frame(entity, false, Map.of(), true));
+        return pushThirdPerson(entity, null);
+    }
+
+    public static Frame pushThirdPerson(LivingEntity entity,
+                                        @Nullable Float epicModelYaw) {
+        return push(new Frame(entity, false, Map.of(), true, epicModelYaw));
     }
 
     public static Frame pushFirstPerson(LivingEntity entity,
                                         Map<String, Boolean> visibleParts,
                                         boolean showUnlistedParts) {
-        return push(new Frame(entity, true, visibleParts, showUnlistedParts));
+        return pushFirstPerson(entity, visibleParts, showUnlistedParts, null);
+    }
+
+    public static Frame pushFirstPerson(LivingEntity entity,
+                                        Map<String, Boolean> visibleParts,
+                                        boolean showUnlistedParts,
+                                        @Nullable Float epicModelYaw) {
+        return push(new Frame(entity, true, visibleParts, showUnlistedParts,
+                epicModelYaw));
     }
 
     private static Frame push(Frame frame) {
@@ -157,6 +182,13 @@ public final class RenderFrameContext {
     public static boolean isFirstPersonFor(LivingEntity entity) {
         Frame frame = current();
         return frame != null && frame.firstPerson && frame.entity == entity && frame.mesh != null;
+    }
+
+    /** True only inside the exact converted body render that owns this held prop. */
+    public static boolean suppressesHeldItem(LivingEntity entity, InteractionHand hand) {
+        Frame frame = current();
+        return frame != null && frame.entity == entity && frame.mesh != null
+                && frame.mesh.replacesHeldItem(entity, hand);
     }
 
     public static void clear() {

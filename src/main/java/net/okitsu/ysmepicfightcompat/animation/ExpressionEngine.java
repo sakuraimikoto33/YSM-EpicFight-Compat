@@ -321,8 +321,12 @@ public final class ExpressionEngine {
                 advance();
                 if (operator.equals("?")) {
                     Node whenTrue = expression(0);
-                    expect(":");
-                    Node whenFalse = expression(precedence);
+                    // Official YSM animations use Molang's one-sided conditional form
+                    // (`condition ? value`) extensively. Its omitted false branch is
+                    // zero; requiring a colon here made those complete bone-channel
+                    // expressions fail closed and silently disabled bow aim correction.
+                    Node whenFalse = take(":")
+                            ? expression(precedence) : new Literal(0.0D);
                     Node condition = left;
                     left = environment -> truth(condition.evaluate(environment))
                             ? whenTrue.evaluate(environment) : whenFalse.evaluate(environment);

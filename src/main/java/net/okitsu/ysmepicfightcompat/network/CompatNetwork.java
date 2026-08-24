@@ -8,10 +8,13 @@ import net.minecraftforge.network.NetworkRegistry;
 import net.minecraftforge.network.PacketDistributor;
 import net.minecraftforge.network.simple.SimpleChannel;
 import net.okitsu.ysmepicfightcompat.CompatMod;
+import net.okitsu.ysmepicfightcompat.network.message.AttackSwingSoundMessage;
 import net.okitsu.ysmepicfightcompat.network.message.ModelChunkMessage;
 import net.okitsu.ysmepicfightcompat.network.message.ModelRequestMessage;
 import net.okitsu.ysmepicfightcompat.network.message.ConfigurationVariableSnapshotMessage;
 import net.okitsu.ysmepicfightcompat.network.message.ConfigurationVariableUpdateMessage;
+import net.okitsu.ysmepicfightcompat.network.message.HeldItemPreferenceSnapshotMessage;
+import net.okitsu.ysmepicfightcompat.network.message.HeldItemPreferenceUpdateMessage;
 import net.okitsu.ysmepicfightcompat.network.message.SelectionUpdateMessage;
 
 import java.util.Map;
@@ -43,10 +46,24 @@ public final class CompatNetwork {
                 ConfigurationVariableUpdateMessage::read,
                 ConfigurationVariableUpdateMessage::receive,
                 Optional.of(NetworkDirection.PLAY_TO_SERVER));
-        CHANNEL.registerMessage(id, ConfigurationVariableSnapshotMessage.class,
+        CHANNEL.registerMessage(id++, ConfigurationVariableSnapshotMessage.class,
                 ConfigurationVariableSnapshotMessage::write,
                 ConfigurationVariableSnapshotMessage::read,
                 ConfigurationVariableSnapshotMessage::receive,
+                Optional.of(NetworkDirection.PLAY_TO_CLIENT));
+        CHANNEL.registerMessage(id++, AttackSwingSoundMessage.class,
+                AttackSwingSoundMessage::write, AttackSwingSoundMessage::read,
+                AttackSwingSoundMessage::receive,
+                Optional.of(NetworkDirection.PLAY_TO_CLIENT));
+        CHANNEL.registerMessage(id++, HeldItemPreferenceUpdateMessage.class,
+                HeldItemPreferenceUpdateMessage::write,
+                HeldItemPreferenceUpdateMessage::read,
+                HeldItemPreferenceUpdateMessage::receive,
+                Optional.of(NetworkDirection.PLAY_TO_SERVER));
+        CHANNEL.registerMessage(id, HeldItemPreferenceSnapshotMessage.class,
+                HeldItemPreferenceSnapshotMessage::write,
+                HeldItemPreferenceSnapshotMessage::read,
+                HeldItemPreferenceSnapshotMessage::receive,
                 Optional.of(NetworkDirection.PLAY_TO_CLIENT));
     }
 
@@ -68,5 +85,9 @@ public final class CompatNetwork {
 
     public static void sendConfigurationUpdate(Map<String, Double> changes) {
         CHANNEL.sendToServer(new ConfigurationVariableUpdateMessage(changes));
+    }
+
+    public static void sendHeldItemPreferences(HeldItemModelDisplayState state) {
+        CHANNEL.sendToServer(new HeldItemPreferenceUpdateMessage(state));
     }
 }

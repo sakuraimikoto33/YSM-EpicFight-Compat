@@ -12,6 +12,9 @@ import java.util.List;
 
 /** Converts Bedrock geometry 1.12 JSON into Minecraft-space faces. */
 public final class BedrockGeometryParser {
+    private static final double EMPTY_UV_EPSILON = 1.0E-8D;
+    private static final float EMPTY_FACE_EPSILON = 1.0E-8F;
+
     private enum Side {
         WEST(new int[]{3, 2, 0, 1}, -1, 0, 0),
         EAST(new int[]{6, 7, 5, 4}, 1, 0, 0),
@@ -113,12 +116,29 @@ public final class BedrockGeometryParser {
         double[] boxOrigin = uvElement != null && uvElement.isJsonArray()
                 ? pair(uvElement.getAsJsonArray()) : new double[]{0.0D, 0.0D};
         List<GeometryDocument.Face> faces = new ArrayList<>(6);
+        float extentX = Math.abs(maxX - minX);
+        float extentY = Math.abs(maxY - minY);
+        float extentZ = Math.abs(maxZ - minZ);
+        boolean[] collapsedPairEmitted = new boolean[3];
         for (Side side : Side.values()) {
+            if (!hasGeometricArea(side, extentX, extentY, extentZ)) {
+                continue;
+            }
             double[] rectangle = perFace == null
                     ? boxRectangle(side, boxOrigin, size)
                     : faceRectangle(perFace, side.name().toLowerCase());
             if (rectangle == null) {
                 continue;
+            }
+            int collapsedAxis = collapsedNormalAxis(side, extentX, extentY, extentZ);
+            if (collapsedAxis >= 0 && collapsedPairEmitted[collapsedAxis]) {
+                // Both UV entries of a zero-thickness cube can be populated even though
+                // they describe the same plane. Rendering both produces the dense line
+                // artifacts seen on official YSM glow circles through depth fighting.
+                continue;
+            }
+            if (collapsedAxis >= 0) {
+                collapsedPairEmitted[collapsedAxis] = true;
             }
             Side geometrySide = mirroredSide(side, swapGeometry, perFace != null);
             faces.add(face(corners, geometrySide.corners, rectangle,
@@ -144,6 +164,22 @@ public final class BedrockGeometryParser {
             }
         }
         return faces;
+    }
+
+    private static boolean hasGeometricArea(Side side, float x, float y, float z) {
+        return switch (side) {
+            case WEST, EAST -> y > EMPTY_FACE_EPSILON && z > EMPTY_FACE_EPSILON;
+            case NORTH, SOUTH -> x > EMPTY_FACE_EPSILON && y > EMPTY_FACE_EPSILON;
+            case UP, DOWN -> x > EMPTY_FACE_EPSILON && z > EMPTY_FACE_EPSILON;
+        };
+    }
+
+    private static int collapsedNormalAxis(Side side, float x, float y, float z) {
+        return switch (side) {
+            case WEST, EAST -> x <= EMPTY_FACE_EPSILON ? 0 : -1;
+            case UP, DOWN -> y <= EMPTY_FACE_EPSILON ? 1 : -1;
+            case NORTH, SOUTH -> z <= EMPTY_FACE_EPSILON ? 2 : -1;
+        };
     }
 
     private static Side mirroredSide(Side side, boolean mirrored, boolean perFaceUv) {
@@ -211,6 +247,14 @@ public final class BedrockGeometryParser {
     }
 
     private static double[] rectangle(double u, double v, double width, double height) {
+        // Blockbench uses an explicitly zero-sized per-face UV to disable the opposite
+        // side of a zero-thickness plane. Keeping that face creates two coplanar quads;
+        // the disabled face then z-fights with the textured face (most visibly on YSM
+        // glow planes such as 05_magical's bow magic circle).
+        if (Math.abs(width) <= EMPTY_UV_EPSILON
+                || Math.abs(height) <= EMPTY_UV_EPSILON) {
+            return null;
+        }
         return new double[]{u, v, width, height};
     }
 

@@ -123,6 +123,7 @@ class DefaultPoseProgramTest {
     void parserKeepsOnlyAutomaticallyPlayedAnimationNames() {
         assertTrue(BedrockAnimationParser.isAutomatic("pre_parallel.forms"));
         assertTrue(BedrockAnimationParser.isAutomatic("hold_mainhand:minecraft:bow"));
+        assertTrue(BedrockAnimationParser.isAutomatic("hold_mainhand"));
         assertTrue(BedrockAnimationParser.isAutomatic("hold_offhand$minecraft:shield"));
         assertTrue(BedrockAnimationParser.isAutomatic("swing#minecraft:swords"));
         assertTrue(BedrockAnimationParser.isAutomatic("passenger#minecraft:raiders"));

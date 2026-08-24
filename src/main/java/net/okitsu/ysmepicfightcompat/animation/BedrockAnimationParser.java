@@ -40,7 +40,7 @@ public final class BedrockAnimationParser {
         }
         String normalized = name.toLowerCase(Locale.ROOT);
         if (normalized.startsWith("pre_parallel") || normalized.startsWith("parallel")
-                || STATES.contains(normalized)) {
+                || STATES.contains(normalized) || HAND_ITEM_STATES.contains(normalized)) {
             return true;
         }
         int separator = firstConditionSeparator(normalized);
@@ -49,8 +49,9 @@ public final class BedrockAnimationParser {
 
     /**
      * Returns whether a clip is driven by a held item. These names stay reserved as automatic
-     * clips so they cannot become roulette animations, but the Epic Fight renderer does not
-     * compile or play them because Epic Fight owns held-item poses and rendering.
+     * clips so they cannot become roulette animations. The compatibility renderer may evaluate
+     * their timelines and auxiliary/model-specific prop bones, while Epic Fight retains the
+     * humanoid arm and body pose.
      */
     static boolean isHandItemAnimation(String name) {
         if (name == null || name.isEmpty()) {

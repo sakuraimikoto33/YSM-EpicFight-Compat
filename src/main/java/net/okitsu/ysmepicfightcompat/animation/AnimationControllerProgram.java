@@ -8,6 +8,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
+import java.util.function.Predicate;
 
 /** Per-entity state-machine evaluator for the supported YSM controller subset. */
 final class AnimationControllerProgram {
@@ -23,7 +24,8 @@ final class AnimationControllerProgram {
         }
     }
 
-    record ActiveAnimation(String instanceKey, String name, double elapsed,
+    record ActiveAnimation(String controllerName, String instanceKey,
+                           String name, double elapsed,
                            float weight, boolean blendViaShortestPath,
                            Map<Integer, Double> stateVariables) {
         ActiveAnimation {
@@ -74,6 +76,7 @@ final class AnimationControllerProgram {
         private final ExpressionEngine.Environment delegate;
         private Completion completion = Completion.NONE;
         private String soundScope = "controller";
+        private boolean outputsEnabled = true;
         private final Map<Integer, Double> stateVariables = new LinkedHashMap<>();
 
         private ControllerEnvironment(ExpressionEngine.Environment delegate) {
@@ -91,6 +94,10 @@ final class AnimationControllerProgram {
             }
         }
 
+        private void outputsEnabled(boolean value) {
+            outputsEnabled = value;
+        }
+
         private void stopOutputScope() {
             if (delegate instanceof EntityAnimationEnvironment entityEnvironment) {
                 entityEnvironment.stopSoundScope(soundScope);
@@ -99,13 +106,15 @@ final class AnimationControllerProgram {
         }
 
         private void playSounds(List<String> effects) {
-            if (delegate instanceof EntityAnimationEnvironment entityEnvironment) {
+            if (outputsEnabled
+                    && delegate instanceof EntityAnimationEnvironment entityEnvironment) {
                 effects.forEach(entityEnvironment::playSoundEffect);
             }
         }
 
         private void playParticles(List<DeclarativeParticleEffect> effects) {
-            if (delegate instanceof EntityAnimationEnvironment entityEnvironment) {
+            if (outputsEnabled
+                    && delegate instanceof EntityAnimationEnvironment entityEnvironment) {
                 effects.forEach(effect -> entityEnvironment.playParticleEffect(effect, true));
             }
         }
@@ -181,11 +190,22 @@ final class AnimationControllerProgram {
 
     AnimationControllerProgram(Map<String, AnimationController> controllers,
                                Map<String, ClipInfo> clips) {
+        this(controllers, clips, Set.of());
+    }
+
+    AnimationControllerProgram(Map<String, AnimationController> controllers,
+                               Map<String, ClipInfo> clips,
+                               Set<String> allowedHandItemControllers) {
+        Set<String> allowed = allowedHandItemControllers == null ? Set.of()
+                : allowedHandItemControllers.stream()
+                .map(AnimationControllerProgram::normalize)
+                .collect(java.util.stream.Collectors.toUnmodifiableSet());
         Map<String, AnimationController> retained = new LinkedHashMap<>();
         if (controllers != null) {
             controllers.forEach((name, controller) -> {
                 if (controller != null && !controller.states().isEmpty()
-                        && !isHandItemController(name)) {
+                        && (!isHandItemController(name)
+                        || allowed.contains(normalize(name)))) {
                     retained.putIfAbsent(name, controller);
                 }
             });
@@ -201,6 +221,12 @@ final class AnimationControllerProgram {
 
     List<ActiveAnimation> select(double now, ExpressionEngine.Environment environment,
                                  RuntimeState runtimeState) {
+        return select(now, environment, runtimeState, ignored -> true);
+    }
+
+    List<ActiveAnimation> select(double now, ExpressionEngine.Environment environment,
+                                 RuntimeState runtimeState,
+                                 Predicate<String> outputsEnabled) {
         if (controllers.isEmpty()) {
             return List.of();
         }
@@ -209,6 +235,9 @@ final class AnimationControllerProgram {
         for (Map.Entry<String, AnimationController> entry : controllers.entrySet()) {
             String controllerName = entry.getKey();
             AnimationController controller = entry.getValue();
+            boolean enabled = outputsEnabled == null
+                    || outputsEnabled.test(normalize(controllerName));
+            controllerEnvironment.outputsEnabled(enabled);
             controllerEnvironment.soundScope("controller/" + controllerName);
             ControllerRuntime runtime = runtimeState.controllers.computeIfAbsent(
                     controllerName, ignored -> new ControllerRuntime());
@@ -217,7 +246,9 @@ final class AnimationControllerProgram {
             } else if (now > runtime.lastStepAt + EPSILON) {
                 advance(controller, runtime, now, controllerEnvironment);
             }
-            appendActive(result, controllerName, runtime, now, controllerEnvironment);
+            if (enabled) {
+                appendActive(result, controllerName, runtime, now, controllerEnvironment);
+            }
         }
         return List.copyOf(result);
     }
@@ -307,7 +338,8 @@ final class AnimationControllerProgram {
             float weight = finite(evaluated * transitionWeight);
             String key = "controller/" + controllerName + '/' + state.name() + '/'
                     + generation + '/' + index;
-            result.add(new ActiveAnimation(key, normalized, elapsed, weight,
+            result.add(new ActiveAnimation(normalize(controllerName), key,
+                    normalized, elapsed, weight,
                     shortestPath, environment.stateVariables()));
         }
     }
