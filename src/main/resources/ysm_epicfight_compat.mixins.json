@@ -8,8 +8,11 @@
   "client": [
     "CombatOverlayMixin",
     "CombatFirstPersonMixin",
+    "FirstPersonRenderScopeMixin",
     "FirstPersonArmorGateMixin",
+    "HeldItemCorrectionMixin",
     "PlayerStateCapabilityMixin",
+    "TridentHeldItemCorrectionMixin",
     "YsmConfigurationExpressionMixin"
   ],
   "injectors": {

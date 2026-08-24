@@ -1,11 +1,15 @@
 package net.okitsu.ysmepicfightcompat.mesh;
 
 import net.okitsu.ysmepicfightcompat.geometry.GeometryDocument;
+import org.joml.Vector3f;
 import org.junit.jupiter.api.Test;
 import yesman.epicfight.api.utils.math.OpenMatrix4f;
 import yesman.epicfight.api.utils.math.Vec3f;
+import yesman.epicfight.api.utils.math.Vec4f;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertSame;
 
 class AuxiliaryPoseMatricesTest {
     @Test
@@ -170,12 +174,114 @@ class AuxiliaryPoseMatricesTest {
         assertMatrixEquals(retargeted[HumanoidRig.RIGHT_ARM], output[armEntry.poseIndex()]);
     }
 
+    @Test
+    void preservesToolBasisAndIndependentTranslationAtTheDisplayedFist() {
+        OpenMatrix4f selected = new OpenMatrix4f()
+                .translate(10.0F, 20.0F, 30.0F)
+                .rotateDeg(37.0F, Vec3f.Y_AXIS);
+        OpenMatrix4f original = new OpenMatrix4f(selected);
+        OpenMatrix4f handSkin = new OpenMatrix4f().translate(4.0F, 5.0F, 6.0F);
+        OpenMatrix4f toolSkin = new OpenMatrix4f().translate(6.0F, 2.0F, 10.0F);
+        OpenMatrix4f output = new OpenMatrix4f();
+
+        AuxiliaryPoseMatrices.placeAtDisplayedFist(
+                selected, handSkin, toolSkin,
+                new Vector3f(1.0F, 2.0F, 3.0F),
+                new Vector3f(20.0F, 30.0F, 40.0F), output,
+                new Vec4f(), new Vec4f(), new Vec4f());
+
+        assertEquals(22.0F, output.m30, 0.00001F);
+        assertEquals(27.0F, output.m31, 0.00001F);
+        assertEquals(44.0F, output.m32, 0.00001F);
+        assertEquals(selected.m00, output.m00, 0.00001F);
+        assertEquals(selected.m02, output.m02, 0.00001F);
+        assertEquals(selected.m20, output.m20, 0.00001F);
+        assertEquals(selected.m22, output.m22, 0.00001F);
+        assertMatrixEquals(original, selected);
+    }
+
+    @Test
+    void doesNotTurnToolRotationAroundItsOwnBindOriginIntoAnOrbit() {
+        Vector3f referenceOrigin = new Vector3f(7.0F, -3.0F, 2.0F);
+        OpenMatrix4f toolSkin = new OpenMatrix4f()
+                .translate(referenceOrigin.x(), referenceOrigin.y(), referenceOrigin.z())
+                .rotateDeg(83.0F, Vec3f.Z_AXIS)
+                .translate(-referenceOrigin.x(), -referenceOrigin.y(), -referenceOrigin.z());
+        OpenMatrix4f output = new OpenMatrix4f();
+
+        AuxiliaryPoseMatrices.placeAtDisplayedFist(
+                new OpenMatrix4f().rotateDeg(83.0F, Vec3f.Z_AXIS),
+                new OpenMatrix4f(), toolSkin, referenceOrigin,
+                new Vector3f(100.0F, 200.0F, 300.0F), output,
+                new Vec4f(), new Vec4f(), new Vec4f());
+
+        assertEquals(100.0F, output.m30, 0.0001F);
+        assertEquals(200.0F, output.m31, 0.0001F);
+        assertEquals(300.0F, output.m32, 0.0001F);
+    }
+
+    @Test
+    void rejectsANonFiniteCorrectedTranslation() {
+        OpenMatrix4f invalidToolSkin = new OpenMatrix4f();
+        invalidToolSkin.m30 = Float.NaN;
+
+        assertNull(AuxiliaryPoseMatrices.placeAtDisplayedFist(
+                new OpenMatrix4f(), new OpenMatrix4f(), invalidToolSkin,
+                new Vector3f(), new Vector3f(), new OpenMatrix4f(),
+                new Vec4f(), new Vec4f(), new Vec4f()));
+    }
+
+    @Test
+    void derivesDisplayedFistFromTheFinalSourceBoneSkin() {
+        GeometryDocument geometry = new GeometryDocument();
+        GeometryDocument.Bone forearm = faceBone(
+                "RightForeArm", -1.0F, 1.0F, -4.0F, 0.0F);
+        GeometryDocument.Bone locator = new GeometryDocument.Bone("RightHandLocator");
+        locator.parentName("RightForeArm");
+        locator.pivot(0.0F, -4.0F, 0.0F);
+        geometry.add(forearm);
+        geometry.add(locator);
+        geometry.linkHierarchy();
+        AuxiliaryBoneLayout layout = AuxiliaryBoneLayout.create(geometry);
+        OpenMatrix4f[] poses = AuxiliaryPoseMatrices.allocate(HumanoidRig.EPIC_JOINT_COUNT);
+        OpenMatrix4f[] toOrigin = AuxiliaryPoseMatrices.allocate(HumanoidRig.EPIC_JOINT_COUNT);
+        OpenMatrix4f[] output = AuxiliaryPoseMatrices.allocate(layout.totalPoseCount());
+        OpenMatrix4f[] wholeModelDeltas = AuxiliaryPoseMatrices.allocate(
+                layout.entries().size());
+        int sourcePose = layout.toolAnchorPoseIndex(HumanoidRig.RIGHT_TOOL);
+        AuxiliaryBoneLayout.Entry source = layout.entries().stream()
+                .filter(entry -> entry.poseIndex() == sourcePose)
+                .findFirst().orElseThrow();
+        assertSame(forearm, source.bone());
+        wholeModelDeltas[source.auxiliaryIndex()].translate(3.0F, 5.0F, 7.0F);
+
+        AuxiliaryPoseMatrices.compose(poses, toOrigin, layout, output,
+                null, wholeModelDeltas, true);
+        Vector3f displayed = new AuxiliaryPoseMatrices(layout).displayedFist(
+                output, HumanoidRig.RIGHT_TOOL);
+
+        assertEquals(3.0F, displayed.x(), 0.00001F);
+        assertEquals(1.0F, displayed.y(), 0.00001F);
+        assertEquals(7.0F, displayed.z(), 0.00001F);
+    }
+
     private static OpenMatrix4f[] translatedMatrices(int count, float multiplier) {
         OpenMatrix4f[] result = AuxiliaryPoseMatrices.allocate(count);
         for (int index = 0; index < count; index++) {
             result[index].translate(index * multiplier, multiplier, -multiplier);
         }
         return result;
+    }
+
+    private static GeometryDocument.Bone faceBone(String name, float minX, float maxX,
+                                                   float minY, float maxY) {
+        GeometryDocument.Bone bone = new GeometryDocument.Bone(name);
+        bone.faces().add(new GeometryDocument.Face(new Vector3f[]{
+                new Vector3f(minX, minY, 0.0F), new Vector3f(maxX, minY, 0.0F),
+                new Vector3f(maxX, maxY, 0.0F), new Vector3f(minX, maxY, 0.0F)},
+                new float[][]{{0, 0}, {1, 0}, {1, 1}, {0, 1}},
+                new Vector3f(0, 0, 1)));
+        return bone;
     }
 
     private static void assertMatrixEquals(OpenMatrix4f expected, OpenMatrix4f actual) {

@@ -59,6 +59,29 @@ public final class HumanoidRig {
         return MAJOR_BINDINGS.containsKey(normalize(bone.name()));
     }
 
+    static int directJointFor(GeometryDocument.Bone bone) {
+        Integer joint = BINDINGS.get(normalize(bone.name()));
+        return joint == null ? -1 : joint;
+    }
+
+    static boolean isForearmControl(GeometryDocument.Bone bone) {
+        String name = normalize(bone.name());
+        return name.equals("leftforearm") || name.equals("forearmleft")
+                || name.equals("rightforearm") || name.equals("forearmright");
+    }
+
+    static boolean isHandControl(GeometryDocument.Bone bone) {
+        String name = normalize(bone.name());
+        return name.equals("lefthand") || name.equals("handleft")
+                || name.equals("righthand") || name.equals("handright");
+    }
+
+    static boolean isUpperArmControl(GeometryDocument.Bone bone) {
+        String name = normalize(bone.name());
+        return name.equals("leftarm") || name.equals("armleft")
+                || name.equals("rightarm") || name.equals("armright");
+    }
+
     private static Map<String, Integer> createBindings() {
         Map<String, Integer> result = new HashMap<>();
         bind(result, ROOT, "root", "center");

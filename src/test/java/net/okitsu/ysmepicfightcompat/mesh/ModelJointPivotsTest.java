@@ -8,6 +8,7 @@ import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertSame;
 
 class ModelJointPivotsTest {
     @Test
@@ -86,6 +87,285 @@ class ModelJointPivotsTest {
         assertEquals(0.0F, pivot.x(), 0.00001F);
         assertEquals(1.0F, pivot.y(), 0.00001F);
         assertEquals(0.0F, pivot.z(), 0.00001F);
+    }
+
+    @Test
+    void prefersAnAuthoredToolLocatorAndCarriesItThroughTheParentBindTransform() {
+        GeometryDocument geometry = new GeometryDocument();
+        GeometryDocument.Bone forearm = faceBone("RightForeArm", -1.0F, 1.0F,
+                -4.0F, 0.0F);
+        forearm.rotation(0.0F, 0.0F, (float) Math.toRadians(90.0D));
+        GeometryDocument.Bone locator = bone(
+                "RightHandLocator", "RightForeArm", 1.0F, 2.0F, 3.0F);
+        geometry.add(forearm);
+        geometry.add(locator);
+        geometry.linkHierarchy();
+
+        ModelJointPivots.Estimate estimate = ModelJointPivots.estimateWithSources(
+                geometry, 2.0F, 3.0F);
+        Vector3f pivot = estimate.pivots().get(HumanoidRig.RIGHT_TOOL);
+
+        assertEquals(-4.0F, pivot.x(), 0.00001F);
+        assertEquals(3.0F, pivot.y(), 0.00001F);
+        assertEquals(6.0F, pivot.z(), 0.00001F);
+        assertSame(forearm, estimate.toolSources().get(HumanoidRig.RIGHT_TOOL));
+    }
+
+    @Test
+    void keepsASingleAuthoredLocatorEvenWhenAnEmptyHandPivotIsFarAway() {
+        GeometryDocument geometry = new GeometryDocument();
+        GeometryDocument.Bone forearm = faceBone(
+                "RightForeArm", -4.5F, -2.5F, -7.0F, -3.0F);
+        GeometryDocument.Bone hand = bone(
+                "RightHand", "RightForeArm", -3.6F, -4.4F, 0.0F);
+        GeometryDocument.Bone locator = bone(
+                "RightHandLocator", "RightHand", -2.2F, 10.6F, 0.5F);
+        geometry.add(forearm);
+        geometry.add(hand);
+        geometry.add(locator);
+        geometry.linkHierarchy();
+
+        ModelJointPivots.Estimate estimate = ModelJointPivots.estimateWithSources(
+                geometry, 1.0F, 1.0F);
+
+        assertEquals(new Vector3f(-2.2F, 10.6F, 0.5F),
+                estimate.pivots().get(HumanoidRig.RIGHT_TOOL));
+        assertSame(hand, estimate.toolSources().get(HumanoidRig.RIGHT_TOOL));
+    }
+
+    @Test
+    void prefersTheHandGeometryCentroidWithoutRequiringAnAxisLength() {
+        GeometryDocument geometry = new GeometryDocument();
+        GeometryDocument.Bone forearm = faceBone(
+                "RightForeArm", -1.0F, 1.0F, -4.0F, 0.0F);
+        GeometryDocument.Bone hand = faceBone(
+                "RightHand", 4.5F, 5.5F, -0.5F, 0.5F);
+        geometry.add(forearm);
+        geometry.add(hand);
+        geometry.linkHierarchy();
+
+        ModelJointPivots.Estimate estimate = ModelJointPivots.estimateWithSources(
+                geometry, 1.0F, 1.0F);
+
+        Vector3f fist = estimate.pivots().get(HumanoidRig.RIGHT_TOOL);
+        assertEquals(5.0F, fist.x(), 0.00001F);
+        assertEquals(0.0F, fist.y(), 0.00001F);
+        assertSame(hand, estimate.toolSources().get(HumanoidRig.RIGHT_TOOL));
+    }
+
+    @Test
+    void prefersForearmGeometryOverAnEmptyHandControlPivot() {
+        GeometryDocument geometry = new GeometryDocument();
+        GeometryDocument.Bone forearm = faceBone(
+                "LeftForeArm", -1.0F, 1.0F, -4.0F, 0.0F);
+        geometry.add(forearm);
+        GeometryDocument.Bone hand = bone("LeftHand", "", -3.0F, 2.0F, 1.0F);
+        geometry.add(hand);
+        geometry.linkHierarchy();
+
+        ModelJointPivots.Estimate estimate = ModelJointPivots.estimateWithSources(
+                geometry, 1.0F, 1.0F);
+
+        assertEquals(new Vector3f(0.0F, -4.0F, 0.0F),
+                estimate.pivots().get(HumanoidRig.LEFT_TOOL));
+        assertSame(forearm, estimate.toolSources().get(HumanoidRig.LEFT_TOOL));
+    }
+
+    @Test
+    void fallsBackToTheDistalHandRingWithoutIncludingChildAccessories() {
+        GeometryDocument geometry = new GeometryDocument();
+        GeometryDocument.Bone arm = bone("LeftArm", "", -2.0F, 2.0F, 0.0F);
+        GeometryDocument.Bone forearm = faceBone(
+                "LeftForeArm", -3.0F, -1.0F, -2.0F, 2.0F);
+        forearm.parentName("LeftArm");
+        forearm.pivot(-2.0F, 2.0F, 0.0F);
+        GeometryDocument.Bone accessory = faceBone(
+                "LongSleeveDecoration", -30.0F, 30.0F, -100.0F, 100.0F);
+        accessory.parentName("LeftForeArm");
+        geometry.add(arm);
+        geometry.add(forearm);
+        geometry.add(accessory);
+        geometry.linkHierarchy();
+
+        Map<Integer, Vector3f> pivots = ModelJointPivots.estimate(geometry, 1.0F, 1.0F);
+
+        Vector3f fist = pivots.get(HumanoidRig.LEFT_TOOL);
+        assertEquals(-2.0F, fist.x(), 0.00001F);
+        assertEquals(-2.0F, fist.y(), 0.00001F);
+        assertEquals(0.0F, fist.z(), 0.00001F);
+        assertFalse(pivots.containsKey(HumanoidRig.RIGHT_TOOL));
+    }
+
+    @Test
+    void rejectsCompetingToolLocatorsAndUsesTheGeometryFallback() {
+        GeometryDocument geometry = new GeometryDocument();
+        GeometryDocument.Bone arm = bone("RightArm", "", 2.0F, 0.0F, 0.0F);
+        GeometryDocument.Bone forearm = faceBone(
+                "RightForeArm", 1.0F, 3.0F, -4.0F, 0.0F);
+        forearm.parentName("RightArm");
+        forearm.pivot(2.0F, 0.0F, 0.0F);
+        GeometryDocument.Bone locator = bone(
+                "RightHandLocator", "RightForeArm", 2.0F, -3.0F, 0.0F);
+        GeometryDocument.Bone competing = bone(
+                "RightItem", "RightForeArm", 20.0F, 30.0F, 0.0F);
+        geometry.add(arm);
+        geometry.add(forearm);
+        geometry.add(locator);
+        geometry.add(competing);
+        geometry.linkHierarchy();
+
+        Vector3f fist = ModelJointPivots.estimate(geometry, 1.0F, 1.0F)
+                .get(HumanoidRig.RIGHT_TOOL);
+
+        assertEquals(2.0F, fist.x(), 0.00001F);
+        assertEquals(-4.0F, fist.y(), 0.00001F);
+        assertEquals(0.0F, fist.z(), 0.00001F);
+    }
+
+    @Test
+    void rejectsSamePointLocatorsWhenTheirDisplayedSourceBonesDiffer() {
+        GeometryDocument geometry = new GeometryDocument();
+        GeometryDocument.Bone forearm = faceBone(
+                "RightForeArm", -1.0F, 1.0F, -4.0F, 0.0F);
+        GeometryDocument.Bone hand = faceBone(
+                "RightHand", 9.0F, 11.0F, -1.0F, 1.0F);
+        hand.parentName("RightForeArm");
+        GeometryDocument.Bone locator = bone(
+                "RightHandLocator", "RightForeArm", 0.0F, -4.0F, 0.0F);
+        GeometryDocument.Bone competing = bone(
+                "RightItem", "RightHand", 0.0F, -4.0F, 0.0F);
+        geometry.add(forearm);
+        geometry.add(hand);
+        geometry.add(locator);
+        geometry.add(competing);
+        geometry.linkHierarchy();
+
+        ModelJointPivots.Estimate estimate = ModelJointPivots.estimateWithSources(
+                geometry, 1.0F, 1.0F);
+
+        Vector3f fist = estimate.pivots().get(HumanoidRig.RIGHT_TOOL);
+        assertEquals(10.0F, fist.x(), 0.00001F);
+        assertEquals(0.0F, fist.y(), 0.00001F);
+        assertSame(hand, estimate.toolSources().get(HumanoidRig.RIGHT_TOOL));
+    }
+
+    @Test
+    void derivesTheDistalRingAlongARotatedForearmAxis() {
+        GeometryDocument geometry = new GeometryDocument();
+        GeometryDocument.Bone arm = bone("RightArm", "", 0.0F, 0.0F, 0.0F);
+        GeometryDocument.Bone forearm = faceBone(
+                "RightForeArm", -1.0F, 1.0F, -4.0F, 0.0F);
+        forearm.parentName("RightArm");
+        forearm.rotation(0.0F, 0.0F, (float) Math.toRadians(90.0D));
+        geometry.add(arm);
+        geometry.add(forearm);
+        geometry.linkHierarchy();
+
+        Vector3f fist = ModelJointPivots.estimate(geometry, 1.0F, 1.0F)
+                .get(HumanoidRig.RIGHT_TOOL);
+
+        assertEquals(4.0F, fist.x(), 0.00001F);
+        assertEquals(0.0F, fist.y(), 0.00001F);
+        assertEquals(0.0F, fist.z(), 0.00001F);
+    }
+
+    @Test
+    void rejectsAToolLocatorOnTheOppositeArmBranch() {
+        GeometryDocument geometry = new GeometryDocument();
+        GeometryDocument.Bone leftArm = bone("LeftArm", "", -2.0F, 3.0F, 0.0F);
+        GeometryDocument.Bone leftForearm = bone(
+                "LeftForeArm", "LeftArm", -2.0F, 1.0F, 0.0F);
+        GeometryDocument.Bone wrong = bone(
+                "RightHandLocator", "LeftForeArm", -2.0F, 0.0F, 0.0F);
+        geometry.add(leftArm);
+        geometry.add(leftForearm);
+        geometry.add(wrong);
+        geometry.linkHierarchy();
+
+        Map<Integer, Vector3f> pivots = ModelJointPivots.estimate(
+                geometry, 1.0F, 1.0F);
+
+        assertFalse(pivots.containsKey(HumanoidRig.RIGHT_TOOL));
+    }
+
+    @Test
+    void rejectsUpperArmFallbackGeometryOnTheOppositeArmBranch() {
+        GeometryDocument geometry = new GeometryDocument();
+        GeometryDocument.Bone left = bone(
+                "LeftArm", "", -2.0F, 0.0F, 0.0F);
+        GeometryDocument.Bone wrong = faceBone(
+                "RightArm", 1.0F, 3.0F, -5.0F, 0.0F);
+        wrong.parentName("LeftArm");
+        geometry.add(left);
+        geometry.add(wrong);
+        geometry.linkHierarchy();
+
+        Map<Integer, Vector3f> pivots = ModelJointPivots.estimate(
+                geometry, 1.0F, 1.0F);
+
+        assertFalse(pivots.containsKey(HumanoidRig.RIGHT_TOOL));
+    }
+
+    @Test
+    void usesUpperArmGeometryOnlyAsTheLastFistFallback() {
+        GeometryDocument geometry = new GeometryDocument();
+        geometry.add(faceBone("RightArm", -1.0F, 1.0F, -5.0F, 0.0F));
+        geometry.linkHierarchy();
+
+        Vector3f fist = ModelJointPivots.estimate(geometry, 1.0F, 1.0F)
+                .get(HumanoidRig.RIGHT_TOOL);
+
+        assertEquals(0.0F, fist.x(), 0.00001F);
+        assertEquals(-5.0F, fist.y(), 0.00001F);
+        assertEquals(0.0F, fist.z(), 0.00001F);
+    }
+
+    @Test
+    void acceptsADirectRootForearmAsTheFistGeometrySource() {
+        GeometryDocument geometry = new GeometryDocument();
+        GeometryDocument.Bone forearm = faceBone(
+                "LeftForeArm", -2.0F, 0.0F, -6.0F, 0.0F);
+        forearm.pivot(-1.0F, 0.0F, 0.0F);
+        geometry.add(forearm);
+        geometry.linkHierarchy();
+
+        ModelJointPivots.Estimate estimate = ModelJointPivots.estimateWithSources(
+                geometry, 1.0F, 1.0F);
+
+        Vector3f fist = estimate.pivots().get(HumanoidRig.LEFT_TOOL);
+        assertEquals(-1.0F, fist.x(), 0.00001F);
+        assertEquals(-6.0F, fist.y(), 0.00001F);
+        assertSame(forearm, estimate.toolSources().get(HumanoidRig.LEFT_TOOL));
+    }
+
+    @Test
+    void excludesNumberedDefaultFormLocators() {
+        GeometryDocument geometry = new GeometryDocument();
+        GeometryDocument.Bone arm = bone("RightArm", "", 2.0F, 3.0F, 0.0F);
+        GeometryDocument.Bone alternateHand = bone(
+                "RightHand2_Default", "RightArm", 20.0F, 30.0F, 0.0F);
+        GeometryDocument.Bone alternateLocator = bone(
+                "RightHandLocator2_Default", "RightHand2_Default", 20.0F, 30.0F, 0.0F);
+        geometry.add(arm);
+        geometry.add(alternateHand);
+        geometry.add(alternateLocator);
+        geometry.linkHierarchy();
+
+        Map<Integer, Vector3f> pivots = ModelJointPivots.estimate(
+                geometry, 1.0F, 1.0F);
+
+        assertFalse(pivots.containsKey(HumanoidRig.RIGHT_TOOL));
+    }
+
+    @Test
+    void refusesNonFiniteOrNonPositiveModelScales() {
+        GeometryDocument geometry = new GeometryDocument();
+        geometry.add(faceBone("RightArm", -1.0F, 1.0F, -5.0F, 0.0F));
+        geometry.linkHierarchy();
+
+        assertEquals(Map.of(), ModelJointPivots.estimate(geometry, Float.NaN, 1.0F));
+        assertEquals(Map.of(), ModelJointPivots.estimate(geometry, 1.0F, 0.0F));
+        assertEquals(Map.of(), ModelJointPivots.estimate(geometry, -1.0F, 1.0F));
     }
 
     private static GeometryDocument.Bone faceBone(String name, float minX, float maxX,

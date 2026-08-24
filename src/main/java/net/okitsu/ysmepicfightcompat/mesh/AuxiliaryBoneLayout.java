@@ -2,6 +2,7 @@ package net.okitsu.ysmepicfightcompat.mesh;
 
 import net.okitsu.ysmepicfightcompat.geometry.GeometryDocument;
 import org.joml.Matrix4f;
+import org.joml.Vector3f;
 
 import java.util.ArrayDeque;
 import java.util.ArrayList;
@@ -29,16 +30,19 @@ public final class AuxiliaryBoneLayout {
     private final List<Entry> entries;
     private final Map<GeometryDocument.Bone, Entry> byBone;
     private final Map<String, Entry> byName;
-    private final Map<Integer, org.joml.Vector3f> jointPivots;
+    private final Map<Integer, Vector3f> jointPivots;
+    private final Map<Integer, Integer> toolAnchorPoseIndices;
 
     private AuxiliaryBoneLayout(List<Entry> entries,
                                 Map<GeometryDocument.Bone, Entry> byBone,
                                 Map<String, Entry> byName,
-                                Map<Integer, org.joml.Vector3f> jointPivots) {
+                                Map<Integer, Vector3f> jointPivots,
+                                Map<Integer, Integer> toolAnchorPoseIndices) {
         this.entries = List.copyOf(entries);
         this.byBone = Map.copyOf(byBone);
         this.byName = Map.copyOf(byName);
         this.jointPivots = Map.copyOf(jointPivots);
+        this.toolAnchorPoseIndices = Map.copyOf(toolAnchorPoseIndices);
     }
 
     public static AuxiliaryBoneLayout create(GeometryDocument geometry) {
@@ -77,8 +81,16 @@ public final class AuxiliaryBoneLayout {
                 pending.push(new Visit(children.get(index), parentAuxiliary, bindWorld));
             }
         }
+        ModelJointPivots.Estimate estimate = ModelJointPivots.estimateWithSources(
+                geometry, horizontalScale, verticalScale);
+        Map<Integer, Integer> toolSources = new java.util.HashMap<>();
+        estimate.toolSources().forEach((joint, bone) -> {
+            Entry entry = byBone.get(bone);
+            toolSources.put(joint, entry == null
+                    ? HumanoidRig.jointFor(bone) : entry.poseIndex());
+        });
         return new AuxiliaryBoneLayout(entries, byBone, byName,
-                ModelJointPivots.estimate(geometry, horizontalScale, verticalScale));
+                estimate.pivots(), toolSources);
     }
 
     public List<Entry> entries() {
@@ -102,8 +114,12 @@ public final class AuxiliaryBoneLayout {
         return name == null ? null : byName.get(name.toLowerCase(Locale.ROOT));
     }
 
-    org.joml.Vector3f jointPivot(int joint) {
+    Vector3f jointPivot(int joint) {
         return jointPivots.get(joint);
+    }
+
+    int toolAnchorPoseIndex(int joint) {
+        return toolAnchorPoseIndices.getOrDefault(joint, -1);
     }
 
     boolean hasJointPivots() {

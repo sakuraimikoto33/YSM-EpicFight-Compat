@@ -1,8 +1,10 @@
 package net.okitsu.ysmepicfightcompat.mesh;
 
+import org.joml.Vector3f;
 import yesman.epicfight.api.animation.Joint;
 import yesman.epicfight.api.model.Armature;
 import yesman.epicfight.api.utils.math.OpenMatrix4f;
+import yesman.epicfight.api.utils.math.Vec4f;
 
 import javax.annotation.Nullable;
 
@@ -14,6 +16,16 @@ public final class AuxiliaryPoseMatrices {
     private final ModelPoseRetargeter retargeter;
     private final OpenMatrix4f[] output;
     private final OpenMatrix4f[] toOrigin = new OpenMatrix4f[HumanoidRig.EPIC_JOINT_COUNT];
+    private final Vector3f[] referenceBindOrigins = new Vector3f[HumanoidRig.EPIC_JOINT_COUNT];
+    private final OpenMatrix4f heldItemHandSkin = new OpenMatrix4f();
+    private final OpenMatrix4f heldItemToolSkin = new OpenMatrix4f();
+    private final OpenMatrix4f heldItemOutput = new OpenMatrix4f();
+    private final OpenMatrix4f bindWorldScratch = new OpenMatrix4f();
+    private final Vec4f heldItemReferencePoint = new Vec4f();
+    private final Vec4f heldItemHandPoint = new Vec4f();
+    private final Vec4f heldItemToolPoint = new Vec4f();
+    private final Vec4f rightDisplayedPoint = new Vec4f();
+    private final Vec4f leftDisplayedPoint = new Vec4f();
     private Armature preparedArmature;
 
     public AuxiliaryPoseMatrices(AuxiliaryBoneLayout layout) {
@@ -32,21 +44,119 @@ public final class AuxiliaryPoseMatrices {
                 || poses.length < HumanoidRig.EPIC_JOINT_COUNT) {
             return null;
         }
-        if (preparedArmature != armature) {
-            for (int index = 0; index < toOrigin.length; index++) {
-                Joint joint = armature.searchJointById(index);
-                if (joint == null) {
-                    preparedArmature = null;
-                    return null;
-                }
-                toOrigin[index] = joint.getToOrigin();
-            }
-            preparedArmature = armature;
+        if (!prepareArmature(armature)) {
+            return null;
         }
         OpenMatrix4f[] retargetedAnchors = poses == armature.getPoseMatrices()
                 ? retargeter.retarget(armature, poses) : null;
         return compose(poses, toOrigin, layout, output, parallelDeltas, wholeModelDeltas,
                 retargetedAnchors, replaceEpicFightPose);
+    }
+
+    /** Places Epic Fight's selected Tool pose at an exact point published by the body draw. */
+    @Nullable
+    public OpenMatrix4f heldItemPose(@Nullable Armature armature,
+                                    @Nullable OpenMatrix4f[] poses, int joint,
+                                    @Nullable Vector3f displayedFist) {
+        if (armature == null || poses == null || poses.length < HumanoidRig.EPIC_JOINT_COUNT
+                || displayedFist == null || !finite(displayedFist)
+                || !prepareArmature(armature)) {
+            return null;
+        }
+        int hand = joint == HumanoidRig.RIGHT_TOOL ? HumanoidRig.RIGHT_HAND
+                : joint == HumanoidRig.LEFT_TOOL ? HumanoidRig.LEFT_HAND : -1;
+        Vector3f referenceToolOrigin = joint >= 0 && joint < referenceBindOrigins.length
+                ? referenceBindOrigins[joint] : null;
+        if (hand < 0 || poses[hand] == null || poses[joint] == null
+                || referenceToolOrigin == null) {
+            return null;
+        }
+        heldItemHandSkin.load(poses[hand]).mulBack(toOrigin[hand]);
+        heldItemToolSkin.load(poses[joint]).mulBack(toOrigin[joint]);
+        return placeAtDisplayedFist(poses[joint], heldItemHandSkin, heldItemToolSkin,
+                referenceToolOrigin, displayedFist, heldItemOutput,
+                heldItemReferencePoint, heldItemHandPoint, heldItemToolPoint);
+    }
+
+    /** Resolves the authored fist point through the exact final skin used for model drawing. */
+    @Nullable
+    public Vector3f displayedFist(@Nullable OpenMatrix4f[] complete, int joint) {
+        Vector3f bindPoint = layout.jointPivot(joint);
+        int poseIndex = layout.toolAnchorPoseIndex(joint);
+        if (complete == null || bindPoint == null || !finite(bindPoint)
+                || poseIndex < 0 || poseIndex >= complete.length
+                || complete[poseIndex] == null) {
+            return null;
+        }
+        Vec4f point = joint == HumanoidRig.RIGHT_TOOL
+                ? rightDisplayedPoint : joint == HumanoidRig.LEFT_TOOL
+                ? leftDisplayedPoint : null;
+        if (point == null) {
+            return null;
+        }
+        point.set(bindPoint.x(), bindPoint.y(), bindPoint.z(), 1.0F);
+        OpenMatrix4f.transform(complete[poseIndex], point, point);
+        return finite(point) ? new Vector3f(point.x, point.y, point.z) : null;
+    }
+
+    private boolean prepareArmature(Armature armature) {
+        if (armature.getJointNumber() < HumanoidRig.EPIC_JOINT_COUNT) {
+            return false;
+        }
+        if (preparedArmature == armature) {
+            return true;
+        }
+        for (int index = 0; index < toOrigin.length; index++) {
+            Joint joint = armature.searchJointById(index);
+            if (joint == null) {
+                preparedArmature = null;
+                return false;
+            }
+            toOrigin[index] = joint.getToOrigin();
+            OpenMatrix4f.invert(toOrigin[index], bindWorldScratch);
+            Vector3f bindOrigin = new Vector3f(
+                    bindWorldScratch.m30, bindWorldScratch.m31, bindWorldScratch.m32);
+            if (!finite(bindOrigin)) {
+                preparedArmature = null;
+                return false;
+            }
+            referenceBindOrigins[index] = bindOrigin;
+        }
+        preparedArmature = armature;
+        return true;
+    }
+
+    @Nullable
+    static OpenMatrix4f placeAtDisplayedFist(
+            OpenMatrix4f selectedPose, OpenMatrix4f handSkin, OpenMatrix4f toolSkin,
+            Vector3f referenceToolOrigin, Vector3f displayedFist,
+            OpenMatrix4f destination, Vec4f referencePoint,
+            Vec4f handPoint, Vec4f toolPoint) {
+        referencePoint.set(referenceToolOrigin.x(), referenceToolOrigin.y(),
+                referenceToolOrigin.z(), 1.0F);
+        OpenMatrix4f.transform(handSkin, referencePoint, handPoint);
+        OpenMatrix4f.transform(toolSkin, referencePoint, toolPoint);
+        float x = displayedFist.x() + toolPoint.x - handPoint.x;
+        float y = displayedFist.y() + toolPoint.y - handPoint.y;
+        float z = displayedFist.z() + toolPoint.z - handPoint.z;
+        if (!Float.isFinite(x) || !Float.isFinite(y) || !Float.isFinite(z)) {
+            return null;
+        }
+        destination.load(selectedPose);
+        destination.m30 = x;
+        destination.m31 = y;
+        destination.m32 = z;
+        return destination;
+    }
+
+    private static boolean finite(Vector3f value) {
+        return Float.isFinite(value.x()) && Float.isFinite(value.y())
+                && Float.isFinite(value.z());
+    }
+
+    private static boolean finite(Vec4f value) {
+        return Float.isFinite(value.x) && Float.isFinite(value.y)
+                && Float.isFinite(value.z) && Float.isFinite(value.w);
     }
 
     static OpenMatrix4f[] compose(OpenMatrix4f[] poses, OpenMatrix4f[] toOrigin,

@@ -57,14 +57,12 @@ public final class CombatMeshResolver {
                 CombatMeshCache.requestTextureUpload(texture);
             }
             mesh.texture(texture);
-            RenderFrameContext.thirdPerson(entity);
             if (LOGGED_USES.add(entity.getUUID() + "|" + modelId + "|" + textureName)) {
                 CompatMod.LOG.info(
                         "YSM-EF Compat: '{}' uses converted model '{}' texture '{}'",
                         displayName, modelId, textureName);
             }
         } catch (RuntimeException exception) {
-            RenderFrameContext.clear();
             CompatMod.LOG.warn(
                     "YSM-EF Compat: unable to prepare model '{}'", modelId, exception);
             return null;

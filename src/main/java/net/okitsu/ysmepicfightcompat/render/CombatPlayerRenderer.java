@@ -17,6 +17,7 @@ import net.minecraft.world.entity.EntityType;
 import net.minecraft.world.entity.player.PlayerModelPart;
 import net.minecraftforge.api.distmarker.Dist;
 import net.minecraftforge.api.distmarker.OnlyIn;
+import net.okitsu.ysmepicfightcompat.mesh.CompatHumanoidMesh;
 import net.okitsu.ysmepicfightcompat.render.layer.ConvertedArmorLayer;
 import net.okitsu.ysmepicfightcompat.render.layer.ConvertedElytraLayer;
 import net.okitsu.ysmepicfightcompat.render.layer.ConvertedHeadLayer;
@@ -55,7 +56,13 @@ public final class CombatPlayerRenderer extends PHumanoidRenderer<
     public AssetAccessor<HumanoidMesh> getMeshProvider(
             AbstractClientPlayerPatch<AbstractClientPlayer> patch) {
         AssetAccessor<HumanoidMesh> converted = CombatMeshResolver.forPlayer(patch.getOriginal());
-        return converted == null ? super.getMeshProvider(patch) : converted;
+        AssetAccessor<HumanoidMesh> selected = converted == null
+                ? super.getMeshProvider(patch) : converted;
+        HumanoidMesh mesh = selected.get();
+        if (mesh instanceof CompatHumanoidMesh compat) {
+            RenderFrameContext.bindMesh(patch.getOriginal(), false, compat);
+        }
+        return selected;
     }
 
     @Override
@@ -63,10 +70,11 @@ public final class CombatPlayerRenderer extends PHumanoidRenderer<
                        AbstractClientPlayerPatch<AbstractClientPlayer> patch,
                        LivingEntityRenderer<AbstractClientPlayer, PlayerModel<AbstractClientPlayer>> renderer,
                        MultiBufferSource buffers, PoseStack matrices, int light, float partialTick) {
+        RenderFrameContext.Frame scope = RenderFrameContext.pushThirdPerson(entity);
         try {
             super.render(entity, patch, renderer, buffers, matrices, light, partialTick);
         } finally {
-            RenderFrameContext.clear();
+            RenderFrameContext.pop(scope);
         }
     }
 
