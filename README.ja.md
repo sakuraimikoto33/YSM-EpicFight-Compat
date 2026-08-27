@@ -12,6 +12,11 @@ YSM Epic Fight Compat は、公式 Yes Steve Model で選択したプレイヤ�
 - Epic Fight 20.14.17 以降（Forge 1.20.1版）
 - [YSM Mapping API](https://github.com/sakuraimikoto33/YSM-Mapping-API) 0.1.5 以降
 
+メイド任意連携には次の両方が必要です。
+
+- Touhou Little Maid 1.5.x
+- EpicFight_TouhouLittleMaid 1.1.x～1.3.x
+
 ## 機能
 
 - YSMのフォルダモデルと、暗号化されたものを含む `.ysm` パッケージをEpic Fightの戦闘用メッシュへ変換します。
