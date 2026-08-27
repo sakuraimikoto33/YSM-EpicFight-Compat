@@ -15,6 +15,7 @@ import net.okitsu.ysmepicfightcompat.animation.OfficialConfigurationVariables;
 import net.okitsu.ysmepicfightcompat.animation.OfficialRoamingVariables;
 import net.okitsu.ysmepicfightcompat.mesh.CombatMeshCache;
 import net.okitsu.ysmepicfightcompat.network.ClientHeldItemModelPreferences;
+import net.okitsu.ysmepicfightcompat.network.ClientMovementAnimationPreferences;
 import net.okitsu.ysmepicfightcompat.network.RemoteSelectionState;
 import net.okitsu.ysmepicfightcompat.network.geometry.ClientModelTransfers;
 import net.okitsu.ysmepicfightcompat.render.PlayerSelectionResolver;
@@ -40,6 +41,7 @@ public final class ClientMaintenanceEvents {
         OfficialRoamingVariables.clear();
         ClientAttackSoundRouter.clear();
         ClientHeldItemModelPreferences.beginConnection();
+        ClientMovementAnimationPreferences.beginConnection();
         reloadCountdown = -1;
         failureCountdown = 0;
         Minecraft.getInstance().execute(CombatMeshCache::clear);
@@ -68,6 +70,7 @@ public final class ClientMaintenanceEvents {
         CombatMeshCache.advanceAnimationOutputs();
         ClientAttackSoundRouter.tick();
         ClientHeldItemModelPreferences.tickSync();
+        ClientMovementAnimationPreferences.tickSync();
         CombatMeshCache.releaseExpiredTextures();
         if (++failureCountdown >= FAILURE_RECHECK_INTERVAL) {
             failureCountdown = 0;

@@ -21,6 +21,18 @@
   "config.ysm_epicfight_compat.held_item_model_overrides.tooltip": "各モデルIDに、既定設定を反転するアイテムIDまたは#アイテムタグの一覧を設定します。Configuredでは現在選択中のモデルが自動で追加されます。ルールは同期せず、解決済み表示状態だけを同期します。",
   "config.ysm_epicfight_compat.held_item_model_entry.tooltip": "このYSMモデルで既定設定を反転するアイテムIDまたは#アイテムタグです。",
   "config.ysm_epicfight_compat.held_item_model_entry.invalid": "minecraft:diamond_swordのようなアイテムID、または#forge:tools/bowsのようなアイテムタグを入力してください。",
+  "config.ysm_epicfight_compat.use_ysm_held_item_switch_animations_by_default": "YSM持ち替えアニメーションを既定で使用",
+  "config.ysm_epicfight_compat.use_ysm_held_item_switch_animations_by_default.tooltip": "Epic Fightが通常アイテムを描画する場合に、公式YSMの取り出し・持ち替え姿勢を使用します。モデル固有の置き換えアイテムはYSM手持ち品モデル設定に従います。解決済みアニメーション状態だけを同期します。",
+  "config.ysm_epicfight_compat.held_item_switch_animation_overrides": "モデル別の持ち替えアニメーション例外",
+  "config.ysm_epicfight_compat.held_item_switch_animation_overrides.tooltip": "各モデルIDに、持ち替えアニメーションの既定設定を反転するアイテムIDまたは#アイテムタグを設定します。空手への持ち替えにはminecraft:airを使用します。Configuredでは現在選択中のモデルが自動で追加されます。ルールは同期せず、解決済みアニメーション状態だけを同期します。",
+  "config.ysm_epicfight_compat.held_item_switch_animation_entry.tooltip": "このYSMモデルで持ち替えアニメーションの既定設定を反転するアイテムIDまたは#アイテムタグです。minecraft:airは空手を表します。",
+  "config.ysm_epicfight_compat.held_item_switch_animation_entry.invalid": "minecraft:diamond_pickaxeやminecraft:airのようなアイテムID、または#forge:tools/pickaxesのようなアイテムタグを入力してください。",
+  "config.ysm_epicfight_compat.use_ysm_movement_animations_by_default": "YSM移動アニメーションを既定で使用",
+  "config.ysm_epicfight_compat.use_ysm_movement_animations_by_default.tooltip": "モデル固有のYSM全身移動アニメーションを既定でEpic Fightの移動姿勢の代わりに使います。ルールではなく、現在の解決済み姿勢だけを他プレイヤーへ同期します。",
+  "config.ysm_epicfight_compat.movement_animation_overrides": "モデル別の移動アニメーション例外",
+  "config.ysm_epicfight_compat.movement_animation_overrides.tooltip": "各モデルIDに、既定設定を反転する移動状態の一覧を設定します。Configuredでは現在選択中のモデルが自動で追加されます。ルールは同期せず、現在の解決済み姿勢だけを同期します。",
+  "config.ysm_epicfight_compat.movement_animation_entry.tooltip": "このYSMモデルで既定設定を反転する移動状態です。",
+  "config.ysm_epicfight_compat.movement_animation_entry.invalid": "walk、run、sneak_idle、sneak_move、jump、creative_flight、elytra_flight、swim、water_idle、crawl_idle、crawl_move、ladder_idle、ladder_up、ladder_down のいずれかを入力してください。",
   "config.ysm_epicfight_compat.warning_acknowledged": "互換性警告を確認済み",
   "config.ysm_epicfight_compat.warning_acknowledged.tooltip": "公式YSMとEpic Fightの互換性警告が既に表示されたかを記録します。"
 }

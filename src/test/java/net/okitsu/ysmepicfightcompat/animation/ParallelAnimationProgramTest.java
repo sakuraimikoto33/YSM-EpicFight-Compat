@@ -18,6 +18,8 @@ import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class ParallelAnimationProgramTest {
@@ -194,6 +196,120 @@ class ParallelAnimationProgramTest {
         assertMatrix(new Matrix4f().rotateZ((float) Math.toRadians(20.0D)),
                 frame.parallelDeltas()[layout.entryForBoneName("tail").auxiliaryIndex()]);
         assertFalse(frame.replaceEpicFightPose());
+    }
+
+    @Test
+    void configuredMovementOwnsTheWholeHierarchyAndOnlyPromotesMainControllers() {
+        GeometryDocument geometry = wrappedRootAndTail();
+        AuxiliaryBoneLayout layout = AuxiliaryBoneLayout.create(geometry);
+        AnimationClip run = new AnimationClip("run");
+        run.playback(AnimationClip.Playback.REPEAT);
+        run.boneTracks().put("MRoot", rotation(0.0D, 12.0D, 0.0D));
+        run.boneTracks().put("Root", rotation(8.0D, 0.0D, 0.0D));
+        run.boneTracks().put("tail", rotation(0.0D, 0.0D, 20.0D));
+        AnimationClip postMain = new AnimationClip("movement_post_main");
+        postMain.boneTracks().put("Head", rotation(15.0D, 0.0D, 0.0D));
+        AnimationClip statePose = new AnimationClip("movement_state_pose");
+        statePose.boneTracks().put("Head", rotation(75.0D, 0.0D, 0.0D));
+        AnimationController mainController = constantController(
+                "player.post_main", postMain);
+        AnimationController stateController = constantController(
+                "player.state", statePose);
+        ParallelAnimationProgram program = new ParallelAnimationProgram(
+                geometry, Map.of(run.name(), run, postMain.name(), postMain,
+                statePose.name(), statePose),
+                Map.of(mainController.name(), mainController,
+                        stateController.name(), stateController),
+                layout, 1.0F, 1.0F);
+
+        ParallelAnimationProgram.Frame frame = program.sampleMovementAt(
+                0.0D, List.of(run.name()), run.name(), MovementAnimationType.RUN,
+                new NeutralEnvironment(),
+                new AnimationControllerProgram.RuntimeState());
+
+        assertTrue(frame.replaceEpicFightPose());
+        assertEquals("run:run", frame.movementPoseKey());
+        assertFalse(isIdentity(frame.wholeModelDeltas()[
+                layout.entryForBoneName("MRoot").auxiliaryIndex()]));
+        assertFalse(isIdentity(frame.wholeModelDeltas()[
+                layout.entryForBoneName("Root").auxiliaryIndex()]));
+        assertFalse(isIdentity(frame.wholeModelDeltas()[
+                layout.entryForBoneName("Head").auxiliaryIndex()]));
+        assertFalse(isIdentity(frame.wholeModelDeltas()[
+                layout.entryForBoneName("tail").auxiliaryIndex()]));
+
+        ParallelAnimationProgram onlyState = new ParallelAnimationProgram(
+                geometry, Map.of(run.name(), run, statePose.name(), statePose),
+                Map.of(stateController.name(), stateController),
+                layout, 1.0F, 1.0F);
+        ParallelAnimationProgram.Frame withoutPromotedState = onlyState.sampleMovementAt(
+                0.0D, List.of(run.name()), run.name(), MovementAnimationType.RUN,
+                new NeutralEnvironment(),
+                new AnimationControllerProgram.RuntimeState());
+        ParallelAnimationProgram onlyRun = new ParallelAnimationProgram(
+                geometry, Map.of(run.name(), run), Map.of(),
+                layout, 1.0F, 1.0F);
+        ParallelAnimationProgram.Frame runBaseline = onlyRun.sampleMovementAt(
+                0.0D, List.of(run.name()), run.name(), MovementAnimationType.RUN,
+                new NeutralEnvironment(),
+                new AnimationControllerProgram.RuntimeState());
+        int head = layout.entryForBoneName("Head").auxiliaryIndex();
+        assertMatrixEquals(runBaseline.wholeModelDeltas()[head],
+                withoutPromotedState.wholeModelDeltas()[head]);
+    }
+
+    @Test
+    void configuredOnceMovementCyclesWhileTheStateRemainsSelected() {
+        GeometryDocument geometry = headAndEar();
+        AuxiliaryBoneLayout layout = AuxiliaryBoneLayout.create(geometry);
+        AnimationClip run = new AnimationClip("run");
+        run.duration(1.0F);
+        run.boneTracks().put("ear", rotation(0.0D, 0.0D, 35.0D));
+        ParallelAnimationProgram program = new ParallelAnimationProgram(
+                geometry, Map.of(run.name(), run), layout, 1.0F, 1.0F);
+
+        ParallelAnimationProgram.Frame frame = program.sampleMovementAt(
+                2.25D, List.of(run.name()), run.name(), MovementAnimationType.RUN,
+                new NeutralEnvironment(),
+                new AnimationControllerProgram.RuntimeState());
+
+        int ear = layout.entryForBoneName("ear").auxiliaryIndex();
+        assertTrue(frame.replaceEpicFightPose());
+        assertEquals("run:run", frame.movementPoseKey());
+        assertFalse(isIdentity(frame.wholeModelDeltas()[ear]));
+    }
+
+    @Test
+    void configuredMovementLetsMainUndoPreParallelVisibilityScale() {
+        GeometryDocument geometry = headAndEar();
+        AuxiliaryBoneLayout layout = AuxiliaryBoneLayout.create(geometry);
+        AnimationClip pre = new AnimationClip("pre_parallel1");
+        AnimationClip.BoneTracks hidden = new AnimationClip.BoneTracks();
+        hidden.scale(constantTrack(0.0D, 0.0D, 0.0D));
+        pre.boneTracks().put("ear", hidden);
+        AnimationClip fly = new AnimationClip("fly");
+        fly.playback(AnimationClip.Playback.REPEAT);
+        AnimationClip.BoneTracks visible = rotation(0.0D, 0.0D, 35.0D);
+        visible.scale(constantTrack(1.0D, 1.0D, 1.0D));
+        fly.boneTracks().put("ear", visible);
+        ParallelAnimationProgram program = new ParallelAnimationProgram(
+                geometry, Map.of(pre.name(), pre, fly.name(), fly),
+                layout, 1.0F, 1.0F);
+
+        ParallelAnimationProgram.Frame frame = program.sampleMovementAt(
+                0.25D, List.of(fly.name()), fly.name(),
+                MovementAnimationType.CREATIVE_FLIGHT,
+                new NeutralEnvironment(),
+                new AnimationControllerProgram.RuntimeState());
+
+        int ear = layout.entryForBoneName("ear").auxiliaryIndex();
+        Matrix4f expected = new Matrix4f().translation(0.0F, 1.0F, 0.0F)
+                .rotateZ((float) Math.toRadians(35.0D))
+                .translate(0.0F, -1.0F, 0.0F);
+        assertTrue(frame.replaceEpicFightPose());
+        assertFalse(frame.hiddenBones().contains("ear"));
+        assertIdentity(frame.parallelDeltas()[ear]);
+        assertMatrix(expected, frame.wholeModelDeltas()[ear]);
     }
 
     @Test
@@ -600,6 +716,759 @@ class ParallelAnimationProgramTest {
                         .rotateZ((float) Math.toRadians(35.0D))
                         .translate(0.0F, -1.0F, 0.0F),
                 firstFrame.heldItemDeltas()[prop]);
+    }
+
+    @Test
+    void movementComposesTheCompleteHeldPoseAfterItsFullBodyMain() {
+        GeometryDocument geometry = handPropGeometry();
+        AuxiliaryBoneLayout layout = AuxiliaryBoneLayout.create(geometry);
+        AnimationClip pre = new AnimationClip("pre_parallel0");
+        AnimationClip.BoneTracks hidden = new AnimationClip.BoneTracks();
+        hidden.scale(constantTrack(0.0D, 0.0D, 0.0D));
+        pre.boneTracks().put("custom_prop", hidden);
+        AnimationClip run = new AnimationClip("run");
+        run.playback(AnimationClip.Playback.REPEAT);
+        run.boneTracks().put("RightArm", rotation(0.0D, 0.0D, 20.0D));
+        AnimationClip firstHold = customSwordHold(15.0D);
+        AnimationClip secondHold = customSwordHold(115.0D);
+        CustomHeldItemPolicy firstPolicy = CustomHeldItemPolicy.create(
+                geometry, Map.of(pre.name(), pre, run.name(), run,
+                firstHold.name(), firstHold));
+        assertEquals(AnimationConditionMatcher.ItemAction.HOLD,
+                firstPolicy.clipAction(firstHold.name()));
+        assertFalse(firstPolicy.replacementRoots(firstHold.name()).isEmpty());
+        ParallelAnimationProgram first = new ParallelAnimationProgram(
+                geometry, Map.of(pre.name(), pre, run.name(), run,
+                firstHold.name(), firstHold), layout, 1.0F, 1.0F);
+        ParallelAnimationProgram second = new ParallelAnimationProgram(
+                geometry, Map.of(pre.name(), pre, run.name(), run,
+                secondHold.name(), secondHold), layout, 1.0F, 1.0F);
+
+        ParallelAnimationProgram.Frame movementOnlyFrame = first.sampleMovementAt(
+                0.0D, List.of("run"), "run", MovementAnimationType.RUN,
+                new NeutralEnvironment(),
+                new AnimationControllerProgram.RuntimeState());
+        int arm = layout.entryForBoneName("RightArm").auxiliaryIndex();
+        int prop = layout.entryForBoneName("custom_prop").auxiliaryIndex();
+        OpenMatrix4f movementArm = new OpenMatrix4f().load(
+                movementOnlyFrame.wholeModelDeltas()[arm]);
+        ParallelAnimationProgram.Frame firstFrame = first.sampleMovementAt(
+                0.0D, List.of("run", "hold_mainhand:sword"), "run",
+                MovementAnimationType.RUN, new NeutralEnvironment(),
+                new AnimationControllerProgram.RuntimeState());
+        OpenMatrix4f firstArm = new OpenMatrix4f().load(
+                firstFrame.wholeModelDeltas()[arm]);
+        OpenMatrix4f firstProp = new OpenMatrix4f().load(
+                firstFrame.wholeModelDeltas()[prop]);
+        boolean firstPropHidden = firstFrame.hiddenBones().contains("custom_prop");
+        ParallelAnimationProgram.Frame secondFrame = second.sampleMovementAt(
+                0.0D, List.of("run", "hold_mainhand:sword"), "run",
+                MovementAnimationType.RUN, new NeutralEnvironment(),
+                new AnimationControllerProgram.RuntimeState());
+
+        assertTrue(firstFrame.replaceEpicFightPose());
+        assertFalse(firstPropHidden);
+        assertFalse(matrixEquals(firstArm, movementArm),
+                "the official hold arm must override the movement arm");
+        assertFalse(matrixEquals(firstArm,
+                        secondFrame.wholeModelDeltas()[arm]),
+                "different authored hold arms must remain distinct");
+        assertFalse(matrixEquals(firstProp,
+                        secondFrame.wholeModelDeltas()[prop]),
+                "the child prop must inherit its authored hold arm");
+        assertFalse(isIdentity(firstProp));
+        assertIdentity(firstFrame.heldItemDeltas()[prop]);
+        assertFalse(firstFrame.replaceEpicFightAnchors()[prop]);
+    }
+
+    @Test
+    void itemSwitchComposesMainHoldAndCustomPropInOneFullBodyHierarchy() {
+        GeometryDocument geometry = handPropGeometry();
+        AuxiliaryBoneLayout layout = AuxiliaryBoneLayout.create(geometry);
+        AnimationClip pre = new AnimationClip("pre_parallel0");
+        AnimationClip.BoneTracks hidden = new AnimationClip.BoneTracks();
+        hidden.scale(constantTrack(0.0D, 0.0D, 0.0D));
+        pre.boneTracks().put("custom_prop", hidden);
+        AnimationClip idle = new AnimationClip("idle");
+        idle.boneTracks().put("Root", rotation(0.0D, 0.0D, 12.0D));
+        AnimationClip hold = new AnimationClip("hold_mainhand:sword");
+        hold.duration(1000.0F);
+        AnimationClip.BoneTracks arm = new AnimationClip.BoneTracks();
+        arm.rotation(linearTrack(0.5F,
+                0.0D, 0.0D, 0.0D, 0.0D, 0.0D, 80.0D));
+        hold.boneTracks().put("RightArm", arm);
+        hold.boneTracks().put("grip", rotation(0.0D, 0.0D, 0.0D));
+        AnimationClip.BoneTracks prop = new AnimationClip.BoneTracks();
+        prop.rotation(linearTrack(0.5F,
+                0.0D, 0.0D, 0.0D, 0.0D, 0.0D, 35.0D));
+        prop.scale(constantTrack(1.0D, 1.0D, 1.0D));
+        hold.boneTracks().put("custom_prop", prop);
+        ParallelAnimationProgram program = new ParallelAnimationProgram(
+                geometry, Map.of(pre.name(), pre, idle.name(), idle,
+                hold.name(), hold), layout, 1.0F, 1.0F);
+
+        ParallelAnimationProgram.Frame frame = program.sampleItemSwitchAt(
+                0.25D, List.of(idle.name(), hold.name()), idle.name(), null,
+                Set.of(InteractionHand.MAIN_HAND),
+                Set.of(InteractionHand.MAIN_HAND), new NeutralEnvironment(),
+                new AnimationControllerProgram.RuntimeState());
+        int root = layout.entryForBoneName("Root").auxiliaryIndex();
+        int rightArm = layout.entryForBoneName("RightArm").auxiliaryIndex();
+        int customProp = layout.entryForBoneName("custom_prop").auxiliaryIndex();
+
+        assertTrue(frame.replaceEpicFightPose());
+        assertFalse(isIdentity(frame.wholeModelDeltas()[root]));
+        assertFalse(isIdentity(frame.wholeModelDeltas()[rightArm]));
+        assertFalse(isIdentity(frame.wholeModelDeltas()[customProp]));
+        assertIdentity(frame.heldItemDeltas()[customProp]);
+        assertFalse(frame.replaceEpicFightAnchors()[customProp]);
+        assertTrue(frame.movementPoseKey().startsWith("item-switch:"));
+    }
+
+    @Test
+    void itemSwitchWithoutACustomPropAnimatesTheBodyButKeepsEpicItemRendering() {
+        GeometryDocument geometry = handPropGeometry();
+        AuxiliaryBoneLayout layout = AuxiliaryBoneLayout.create(geometry);
+        AnimationClip idle = new AnimationClip("idle");
+        idle.boneTracks().put("Root", rotation(0.0D, 0.0D, 8.0D));
+        AnimationClip hold = new AnimationClip("hold_mainhand:sword");
+        AnimationClip.BoneTracks arm = new AnimationClip.BoneTracks();
+        arm.rotation(linearTrack(0.4F,
+                0.0D, 0.0D, 0.0D, 0.0D, 0.0D, 65.0D));
+        hold.boneTracks().put("RightArm", arm);
+        ParallelAnimationProgram program = new ParallelAnimationProgram(
+                geometry, Map.of(idle.name(), idle, hold.name(), hold),
+                layout, 1.0F, 1.0F);
+
+        ParallelAnimationProgram.Frame frame = program.sampleItemSwitchAt(
+                0.2D, List.of(idle.name(), hold.name()), idle.name(), null,
+                Set.of(InteractionHand.MAIN_HAND),
+                Set.of(InteractionHand.MAIN_HAND), new NeutralEnvironment(),
+                new AnimationControllerProgram.RuntimeState());
+        int rightArm = layout.entryForBoneName("RightArm").auxiliaryIndex();
+
+        assertTrue(frame.replaceEpicFightPose());
+        assertFalse(isIdentity(frame.wholeModelDeltas()[rightArm]));
+        for (boolean replacement : frame.replaceEpicFightAnchors()) {
+            assertFalse(replacement,
+                    "an ordinary Epic Fight item must not be suppressed");
+        }
+    }
+
+    @Test
+    void ordinaryMainhandBowSwitchExactlyMirrorsTheAuthoredOffhandPose() {
+        GeometryDocument geometry = bowUpperBodyGeometry();
+        AuxiliaryBoneLayout layout = AuxiliaryBoneLayout.create(geometry);
+        AnimationClip idle = new AnimationClip("idle");
+        AnimationClip mainhand = new AnimationClip("hold_mainhand:bow");
+        AnimationClip offhand = new AnimationClip("hold_offhand:bow");
+
+        AnimationClip.BoneTracks mainArm = new AnimationClip.BoneTracks();
+        mainArm.rotation(linearTrack(0.5F,
+                0.0D, 0.0D, 0.0D, 12.0D, 23.0D, 34.0D));
+        mainhand.boneTracks().put("RightArm", mainArm);
+        AnimationClip.BoneTracks offArm = new AnimationClip.BoneTracks();
+        offArm.rotation(linearTrack(0.5F,
+                0.0D, 0.0D, 0.0D, 12.0D, -23.0D, -34.0D));
+        offhand.boneTracks().put("LeftArm", offArm);
+
+        AnimationClip.BoneTracks mainForearm = new AnimationClip.BoneTracks();
+        mainForearm.rotation(linearTrack(0.5F,
+                0.0D, 0.0D, 0.0D, -45.0D, 11.0D, 7.0D));
+        mainhand.boneTracks().put("RightForeArm", mainForearm);
+        AnimationClip.BoneTracks offForearm = new AnimationClip.BoneTracks();
+        offForearm.rotation(linearTrack(0.5F,
+                0.0D, 0.0D, 0.0D, -45.0D, -11.0D, -7.0D));
+        offhand.boneTracks().put("LeftForeArm", offForearm);
+
+        AnimationClip.BoneTracks mainLocator = new AnimationClip.BoneTracks();
+        mainLocator.rotation(linearTrack(0.5F,
+                0.0D, 0.0D, 0.0D, 9.0D, -17.0D, 26.0D));
+        mainLocator.position(linearTrack(0.5F,
+                0.0D, 0.0D, 0.0D, 2.0D, 3.0D, -4.0D));
+        mainLocator.scale(linearTrack(0.5F,
+                1.0D, 1.0D, 1.0D, 0.6D, 0.7D, 0.8D));
+        mainhand.boneTracks().put("RightHandLocator", mainLocator);
+        AnimationClip.BoneTracks offLocator = new AnimationClip.BoneTracks();
+        offLocator.rotation(linearTrack(0.5F,
+                0.0D, 0.0D, 0.0D, 9.0D, 17.0D, -26.0D));
+        offLocator.position(linearTrack(0.5F,
+                0.0D, 0.0D, 0.0D, -2.0D, 3.0D, -4.0D));
+        offLocator.scale(linearTrack(0.5F,
+                1.0D, 1.0D, 1.0D, 0.6D, 0.7D, 0.8D));
+        offhand.boneTracks().put("LeftHandLocator", offLocator);
+
+        ParallelAnimationProgram program = new ParallelAnimationProgram(
+                geometry, Map.of(idle.name(), idle, mainhand.name(), mainhand,
+                offhand.name(), offhand), layout, 1.0F, 1.0F);
+        ParallelAnimationProgram.Frame mirrored = program.sampleItemSwitchAt(
+                0.25D, List.of(idle.name(), mainhand.name()), idle.name(), null,
+                Set.of(InteractionHand.MAIN_HAND),
+                Set.of(InteractionHand.MAIN_HAND), new NeutralEnvironment(),
+                new AnimationControllerProgram.RuntimeState());
+        ParallelAnimationProgram.Frame authoredOffhand = program.sampleItemSwitchAt(
+                0.25D, List.of(idle.name(), offhand.name()), idle.name(), null,
+                Set.of(InteractionHand.OFF_HAND),
+                Set.of(InteractionHand.OFF_HAND), new NeutralEnvironment(),
+                new AnimationControllerProgram.RuntimeState());
+
+        for (String bone : List.of("LeftArm", "LeftForeArm", "LeftHandLocator")) {
+            int index = layout.entryForBoneName(bone).auxiliaryIndex();
+            assertMatrixEquals(authoredOffhand.wholeModelDeltas()[index],
+                    mirrored.wholeModelDeltas()[index]);
+            assertFalse(isIdentity(mirrored.wholeModelDeltas()[index]), bone);
+        }
+        for (String bone : List.of("RightArm", "RightForeArm", "RightHandLocator")) {
+            assertIdentity(mirrored.wholeModelDeltas()[
+                    layout.entryForBoneName(bone).auxiliaryIndex()]);
+        }
+        assertEquals(Set.of(InteractionHand.MAIN_HAND), mirrored.itemSwitchHands());
+    }
+
+    @Test
+    void customMainhandBowSwitchKeepsItsAuthoredRightHandPose() {
+        GeometryDocument geometry = bowUpperBodyGeometry();
+        AuxiliaryBoneLayout layout = AuxiliaryBoneLayout.create(geometry);
+        AnimationClip idle = new AnimationClip("idle");
+        AnimationClip hold = new AnimationClip("hold_mainhand:bow");
+        hold.boneTracks().put("RightArm", rotation(12.0D, 23.0D, 34.0D));
+        AnimationClip.BoneTracks prop = rotation(4.0D, 5.0D, 6.0D);
+        prop.scale(linearTrack(0.5F,
+                0.0D, 0.0D, 0.0D, 1.0D, 1.0D, 1.0D));
+        hold.boneTracks().put("custom_bow", prop);
+        ParallelAnimationProgram program = new ParallelAnimationProgram(
+                geometry, Map.of(idle.name(), idle, hold.name(), hold),
+                layout, 1.0F, 1.0F);
+
+        ParallelAnimationProgram.Frame frame = program.sampleItemSwitchAt(
+                0.25D, List.of(idle.name(), hold.name()), idle.name(), null,
+                Set.of(InteractionHand.MAIN_HAND),
+                Set.of(InteractionHand.MAIN_HAND), new NeutralEnvironment(),
+                new AnimationControllerProgram.RuntimeState());
+
+        assertFalse(isIdentity(frame.wholeModelDeltas()[
+                layout.entryForBoneName("RightArm").auxiliaryIndex()]));
+        assertIdentity(frame.wholeModelDeltas()[
+                layout.entryForBoneName("LeftArm").auxiliaryIndex()]);
+        assertFalse(frame.hiddenBones().contains("custom_bow"));
+    }
+
+    @Test
+    void itemSwitchKeepsAnUnconfiguredMovementMainCyclingAsItsBodyBase() {
+        GeometryDocument geometry = handPropGeometry();
+        AuxiliaryBoneLayout layout = AuxiliaryBoneLayout.create(geometry);
+        AnimationClip run = new AnimationClip("run");
+        run.duration(1.0F);
+        run.playback(AnimationClip.Playback.ONCE);
+        AnimationClip.BoneTracks root = new AnimationClip.BoneTracks();
+        root.rotation(linearTrack(0.5F,
+                0.0D, 0.0D, 0.0D, 0.0D, 0.0D, 40.0D));
+        run.boneTracks().put("Root", root);
+        AnimationClip hold = new AnimationClip("hold_mainhand:sword");
+        AnimationClip.BoneTracks arm = new AnimationClip.BoneTracks();
+        arm.rotation(linearTrack(0.5F,
+                0.0D, 0.0D, 0.0D, 0.0D, 0.0D, 50.0D));
+        hold.boneTracks().put("RightArm", arm);
+        ParallelAnimationProgram program = new ParallelAnimationProgram(
+                geometry, Map.of(run.name(), run, hold.name(), hold),
+                layout, 1.0F, 1.0F);
+
+        ParallelAnimationProgram.Frame frame = program.sampleItemSwitchAt(
+                1.25D, List.of(run.name(), hold.name()), run.name(),
+                MovementAnimationType.RUN,
+                Set.of(InteractionHand.MAIN_HAND),
+                Set.of(InteractionHand.MAIN_HAND), new NeutralEnvironment(),
+                new AnimationControllerProgram.RuntimeState());
+        int rootIndex = layout.entryForBoneName("Root").auxiliaryIndex();
+
+        assertTrue(frame.replaceEpicFightPose());
+        assertFalse(isIdentity(frame.wholeModelDeltas()[rootIndex]),
+                "the selected movement main must loop even if its Bedrock flag is ONCE");
+        assertTrue(frame.movementPoseKey().contains("run"));
+    }
+
+    @Test
+    void itemSwitchComposesEveryRequestedLocomotionBodyBase() {
+        GeometryDocument geometry = handPropGeometry();
+        AuxiliaryBoneLayout layout = AuxiliaryBoneLayout.create(geometry);
+        AnimationClip hold = new AnimationClip("hold_mainhand:sword");
+        AnimationClip.BoneTracks holdArm = new AnimationClip.BoneTracks();
+        holdArm.rotation(linearTrack(0.5F,
+                0.0D, 0.0D, 0.0D, 0.0D, 0.0D, 50.0D));
+        hold.boneTracks().put("RightArm", holdArm);
+        Map<MovementAnimationType, String> movements = Map.of(
+                MovementAnimationType.WALK, "walk",
+                MovementAnimationType.RUN, "run",
+                MovementAnimationType.CREATIVE_FLIGHT, "fly",
+                MovementAnimationType.ELYTRA_FLIGHT, "elytra_fly");
+        Map<String, AnimationClip> clips = new HashMap<>();
+        clips.put(hold.name(), hold);
+        movements.values().forEach(name -> {
+            AnimationClip clip = new AnimationClip(name);
+            clip.duration(1.0F);
+            clip.playback(AnimationClip.Playback.ONCE);
+            AnimationClip.BoneTracks root = new AnimationClip.BoneTracks();
+            root.rotation(linearTrack(0.5F,
+                    0.0D, 0.0D, 0.0D, 0.0D, 0.0D, 35.0D));
+            clip.boneTracks().put("Root", root);
+            clips.put(name, clip);
+        });
+        ParallelAnimationProgram program = new ParallelAnimationProgram(
+                geometry, clips, layout, 1.0F, 1.0F);
+        int root = layout.entryForBoneName("Root").auxiliaryIndex();
+        int rightArm = layout.entryForBoneName("RightArm").auxiliaryIndex();
+
+        movements.forEach((movement, mainName) -> {
+            ParallelAnimationProgram.Frame frame = program.sampleItemSwitchAt(
+                    1.25D, List.of(mainName, hold.name()), mainName, movement,
+                    Set.of(InteractionHand.MAIN_HAND),
+                    Set.of(InteractionHand.MAIN_HAND), new NeutralEnvironment(),
+                    new AnimationControllerProgram.RuntimeState());
+            assertTrue(frame.replaceEpicFightPose(), movement.name());
+            assertFalse(isIdentity(frame.wholeModelDeltas()[root]), movement.name());
+            assertFalse(isIdentity(frame.wholeModelDeltas()[rightArm]), movement.name());
+            assertTrue(frame.movementPoseKey().contains(movement.configKey()),
+                    movement.name());
+        });
+    }
+
+    @Test
+    void itemSwitchKeepsAStationaryOnceMainCyclingAsItsBodyBase() {
+        GeometryDocument geometry = handPropGeometry();
+        AuxiliaryBoneLayout layout = AuxiliaryBoneLayout.create(geometry);
+        AnimationClip idle = new AnimationClip("idle");
+        idle.duration(1.0F);
+        idle.playback(AnimationClip.Playback.ONCE);
+        AnimationClip.BoneTracks root = new AnimationClip.BoneTracks();
+        root.rotation(linearTrack(0.5F,
+                0.0D, 0.0D, 0.0D, 0.0D, 0.0D, 40.0D));
+        idle.boneTracks().put("Root", root);
+        AnimationClip hold = new AnimationClip("hold_mainhand:sword");
+        AnimationClip.BoneTracks arm = new AnimationClip.BoneTracks();
+        arm.rotation(linearTrack(0.5F,
+                0.0D, 0.0D, 0.0D, 0.0D, 0.0D, 50.0D));
+        hold.boneTracks().put("RightArm", arm);
+        ParallelAnimationProgram program = new ParallelAnimationProgram(
+                geometry, Map.of(idle.name(), idle, hold.name(), hold),
+                layout, 1.0F, 1.0F);
+
+        ParallelAnimationProgram.Frame frame = program.sampleItemSwitchAt(
+                1.25D, List.of(idle.name(), hold.name()), idle.name(), null,
+                Set.of(InteractionHand.MAIN_HAND),
+                Set.of(InteractionHand.MAIN_HAND), new NeutralEnvironment(),
+                new AnimationControllerProgram.RuntimeState());
+        int rootIndex = layout.entryForBoneName("Root").auxiliaryIndex();
+
+        assertTrue(frame.replaceEpicFightPose());
+        assertFalse(isIdentity(frame.wholeModelDeltas()[rootIndex]),
+                "official main-state playback must cycle even while stationary");
+    }
+
+    @Test
+    void itemSwitchComposesOfficialHoldControllerSlotsWithoutACustomProp() {
+        GeometryDocument geometry = handPropGeometry();
+        AuxiliaryBoneLayout layout = AuxiliaryBoneLayout.create(geometry);
+        AnimationClip idle = new AnimationClip("idle");
+        idle.boneTracks().put("Root", rotation(0.0D, 0.0D, 5.0D));
+        AnimationClip hold = new AnimationClip("hold_mainhand:sword");
+        AnimationClip.BoneTracks holdArm = new AnimationClip.BoneTracks();
+        holdArm.rotation(linearTrack(0.5F,
+                0.0D, 0.0D, 0.0D, 0.0D, 0.0D, 40.0D));
+        hold.boneTracks().put("RightArm", holdArm);
+        AnimationClip postHoldPose = new AnimationClip("post_hold_pose");
+        postHoldPose.boneTracks().put(
+                "RightArm", rotation(0.0D, 0.0D, 95.0D));
+        AnimationController postHold = constantController(
+                "player.post_hold", postHoldPose);
+        Map<String, AnimationClip> clips = Map.of(
+                idle.name(), idle, hold.name(), hold,
+                postHoldPose.name(), postHoldPose);
+        ParallelAnimationProgram withoutController = new ParallelAnimationProgram(
+                geometry, clips, layout, 1.0F, 1.0F);
+        ParallelAnimationProgram withController = new ParallelAnimationProgram(
+                geometry, clips, Map.of(postHold.name(), postHold),
+                layout, 1.0F, 1.0F);
+
+        ParallelAnimationProgram.Frame direct = withoutController.sampleItemSwitchAt(
+                0.25D, List.of(idle.name(), hold.name()), idle.name(), null,
+                Set.of(InteractionHand.MAIN_HAND),
+                Set.of(InteractionHand.MAIN_HAND), new NeutralEnvironment(),
+                new AnimationControllerProgram.RuntimeState());
+        ParallelAnimationProgram.Frame composed = withController.sampleItemSwitchAt(
+                0.25D, List.of(idle.name(), hold.name()), idle.name(), null,
+                Set.of(InteractionHand.MAIN_HAND),
+                Set.of(InteractionHand.MAIN_HAND), new NeutralEnvironment(),
+                new AnimationControllerProgram.RuntimeState());
+        int rightArm = layout.entryForBoneName("RightArm").auxiliaryIndex();
+
+        assertTrue(composed.replaceEpicFightPose());
+        assertFalse(matrixEquals(direct.wholeModelDeltas()[rightArm],
+                        composed.wholeModelDeltas()[rightArm]),
+                "post-HOLD must join the temporary official full-body hierarchy");
+    }
+
+    @Test
+    void controllerMajorTransitionStartsAZeroDurationHoldSwitchOnlyOnce() {
+        GeometryDocument geometry = bowUpperBodyGeometry();
+        AuxiliaryBoneLayout layout = AuxiliaryBoneLayout.create(geometry);
+        AnimationClip idle = new AnimationClip("idle");
+        idle.boneTracks().put("Root", rotation(0.0D, 0.0D, 5.0D));
+        AnimationClip directHold = new AnimationClip("hold_mainhand:sword");
+        directHold.boneTracks().put(
+                "RightHandLocator", rotation(0.0D, 0.0D, 20.0D));
+        AnimationClip transition = new AnimationClip("idle_to_fight");
+        AnimationClip.BoneTracks transitionRoot = new AnimationClip.BoneTracks();
+        transitionRoot.rotation(linearTrack(0.75F,
+                0.0D, 0.0D, 0.0D, 0.0D, 45.0D, 0.0D));
+        transition.boneTracks().put("Root", transitionRoot);
+        AnimationClip.BoneTracks transitionUpper = new AnimationClip.BoneTracks();
+        transitionUpper.rotation(linearTrack(0.75F,
+                0.0D, 0.0D, 0.0D, 30.0D, 0.0D, 0.0D));
+        transition.boneTracks().put("UpBody", transitionUpper);
+        AnimationClip steady = new AnimationClip("fight_idle");
+        AnimationClip.BoneTracks steadyRoot = new AnimationClip.BoneTracks();
+        steadyRoot.rotation(linearTrack(5.0F,
+                0.0D, 0.0D, 0.0D, 0.0D, 90.0D, 0.0D));
+        steady.boneTracks().put("Root", steadyRoot);
+
+        AnimationController.State waiting = new AnimationController.State(
+                "waiting", List.of(), List.of(
+                new AnimationController.Transition("transition", "v.holding")),
+                List.of(), List.of(),
+                new AnimationController.BlendTransition(0.0F, List.of()), false);
+        AnimationController.State entering = new AnimationController.State(
+                "transition", List.of(new AnimationController.AnimationReference(
+                transition.name(), "1")), List.of(
+                new AnimationController.Transition(
+                        "steady", "q.all_animations_finished")),
+                List.of(), List.of(),
+                new AnimationController.BlendTransition(0.0F, List.of()), false);
+        AnimationController.State holding = new AnimationController.State(
+                "steady", List.of(new AnimationController.AnimationReference(
+                steady.name(), "1")), List.of(), List.of(), List.of(),
+                new AnimationController.BlendTransition(0.0F, List.of()), false);
+        AnimationController postHold = new AnimationController(
+                "player.post_hold", "waiting", Map.of(
+                "waiting", waiting, "transition", entering, "steady", holding));
+        Map<String, AnimationClip> clips = Map.of(
+                idle.name(), idle, directHold.name(), directHold,
+                transition.name(), transition, steady.name(), steady);
+        ParallelAnimationProgram program = new ParallelAnimationProgram(
+                geometry, clips, Map.of(postHold.name(), postHold),
+                layout, 1.0F, 1.0F);
+        assertEquals(0.0F, program.itemSwitchDuration(directHold.name()), 0.00001F);
+        assertEquals(0.75F,
+                program.controllerItemSwitchDuration(transition.name()), 0.00001F);
+
+        AnimationControllerProgram controllerProgram = new AnimationControllerProgram(
+                Map.of(postHold.name(), postHold), Map.of(
+                transition.name(), new AnimationControllerProgram.ClipInfo(
+                        0.75F, AnimationClip.Playback.HOLD_LAST_FRAME),
+                steady.name(), new AnimationControllerProgram.ClipInfo(
+                        5.0F, AnimationClip.Playback.REPEAT)),
+                Set.of(postHold.name()));
+        AnimationControllerProgram.RuntimeState controllerState =
+                new AnimationControllerProgram.RuntimeState();
+        NeutralEnvironment environment = new NeutralEnvironment();
+        environment.writeVariable(ExpressionEngine.slot("v.holding"), 1.0D);
+        AutomaticAnimationSelector.ActiveClip main =
+                new AutomaticAnimationSelector.ActiveClip(idle.name(), 0.0D, false);
+        AutomaticAnimationSelector.ActiveClip restarted =
+                new AutomaticAnimationSelector.ActiveClip(
+                        directHold.name(), 0.0D, true);
+        List<AutomaticAnimationSelector.ActiveClip> automatic =
+                List.of(main, restarted);
+        ParallelAnimationProgram.ItemSwitchState switchState =
+                new ParallelAnimationProgram.ItemSwitchState();
+        program.observeItemSwitchEdges(automatic,
+                Set.of(InteractionHand.MAIN_HAND), 0.0D, false, switchState);
+
+        AnimationControllerProgram.Selection initialized =
+                controllerProgram.selectObserved(
+                        0.0D, environment, controllerState, ignored -> false);
+        assertTrue(initialized.outputActive().isEmpty());
+        assertNull(program.updateItemSwitchPose(
+                automatic, initialized.allActive(), main, null,
+                Set.of(InteractionHand.MAIN_HAND), 0.0D, false, switchState),
+                "pending alone must not claim the complete body pose");
+
+        AnimationControllerProgram.Selection transitioned =
+                controllerProgram.selectObserved(
+                        0.05D, environment, controllerState, ignored -> false);
+        assertTrue(transitioned.outputActive().isEmpty());
+        assertEquals(List.of(transition.name()), transitioned.allActive().stream()
+                .map(AnimationControllerProgram.ActiveAnimation::name).toList());
+        assertNull(program.updateItemSwitchPose(
+                automatic, transitioned.allActive(), main, null, Set.of(),
+                0.05D, false, switchState),
+                "disabled/unknown display must keep observation without rendering");
+        ParallelAnimationProgram.ItemSwitchPose caughtUp =
+                program.updateItemSwitchPose(
+                        automatic, transitioned.allActive(), main, null,
+                        Set.of(InteractionHand.MAIN_HAND), 0.4D,
+                        false, switchState);
+        assertNotNull(caughtUp,
+                "enabling display inside the controller window must catch up");
+
+        AnimationControllerProgram.Selection steadySelection =
+                controllerProgram.selectObserved(
+                        0.81D, environment, controllerState, ignored -> true);
+        assertEquals(List.of(steady.name()), steadySelection.allActive().stream()
+                .map(AnimationControllerProgram.ActiveAnimation::name).toList());
+        assertNull(program.updateItemSwitchPose(
+                automatic, steadySelection.allActive(), main, null,
+                Set.of(InteractionHand.MAIN_HAND), 0.81D,
+                false, switchState),
+                "the later steady instance must not extend the switch window");
+
+        AnimationControllerProgram.RuntimeState renderControllerState =
+                new AnimationControllerProgram.RuntimeState();
+        program.sampleItemSwitchAt(0.0D,
+                List.of(idle.name(), directHold.name()), idle.name(), null,
+                Set.of(InteractionHand.MAIN_HAND),
+                Set.of(InteractionHand.MAIN_HAND), environment,
+                renderControllerState);
+        program.sampleItemSwitchAt(0.05D,
+                List.of(idle.name(), directHold.name()), idle.name(), null,
+                Set.of(InteractionHand.MAIN_HAND),
+                Set.of(InteractionHand.MAIN_HAND), environment,
+                renderControllerState);
+        ParallelAnimationProgram.Frame rendered = program.sampleItemSwitchAt(
+                0.4D, List.of(idle.name(), directHold.name()), idle.name(), null,
+                Set.of(InteractionHand.MAIN_HAND),
+                Set.of(InteractionHand.MAIN_HAND), environment,
+                renderControllerState);
+        assertFalse(isIdentity(rendered.wholeModelDeltas()[
+                layout.entryForBoneName("Root").auxiliaryIndex()]));
+        assertFalse(isIdentity(rendered.wholeModelDeltas()[
+                layout.entryForBoneName("UpBody").auxiliaryIndex()]));
+    }
+
+    @Test
+    void itemSwitchUsesTheLastMajorPoseKeyAndHonorsDisplayPreferences() {
+        GeometryDocument geometry = handPropGeometry();
+        AnimationClip idle = new AnimationClip("idle");
+        idle.boneTracks().put("Root", rotation(0.0D, 0.0D, 1.0D));
+        AnimationClip hold = new AnimationClip("hold_mainhand:sword");
+        hold.duration(1000.0F);
+        AnimationClip.BoneTracks arm = new AnimationClip.BoneTracks();
+        arm.rotation(linearTrack(0.5F,
+                0.0D, 0.0D, 0.0D, 0.0D, 0.0D, 50.0D));
+        hold.boneTracks().put("RightArm", arm);
+        AnimationClip.BoneTracks prop = new AnimationClip.BoneTracks();
+        prop.rotation(linearTrack(5.0F,
+                0.0D, 0.0D, 0.0D, 0.0D, 0.0D, 90.0D));
+        hold.boneTracks().put("custom_prop", prop);
+        AnimationClip instant = new AnimationClip("hold_offhand:sword");
+        instant.boneTracks().put("RightArm", rotation(0.0D, 0.0D, 10.0D));
+        ParallelAnimationProgram program = new ParallelAnimationProgram(
+                geometry, Map.of(idle.name(), idle, hold.name(), hold,
+                instant.name(), instant), AuxiliaryBoneLayout.create(geometry),
+                1.0F, 1.0F);
+        assertEquals(0.5F, program.itemSwitchDuration(hold.name()), 0.00001F);
+        assertEquals(0.0F, program.itemSwitchDuration(instant.name()), 0.00001F);
+
+        AutomaticAnimationSelector.ActiveClip main =
+                new AutomaticAnimationSelector.ActiveClip(
+                        idle.name(), 8.0D, false);
+        AutomaticAnimationSelector.ActiveClip restarted =
+                new AutomaticAnimationSelector.ActiveClip(
+                        hold.name(), 0.0D, true);
+        ParallelAnimationProgram.ItemSwitchState disabled =
+                new ParallelAnimationProgram.ItemSwitchState();
+        assertNull(program.updateItemSwitchPose(
+                List.of(main, restarted), main, null, Set.of(), 8.0D,
+                false, disabled),
+                "disabled YSM held-item display must disable the switch pose");
+
+        ParallelAnimationProgram.ItemSwitchState enabled =
+                new ParallelAnimationProgram.ItemSwitchState();
+        assertNotNull(program.updateItemSwitchPose(
+                List.of(main, restarted), main, null,
+                Set.of(InteractionHand.MAIN_HAND), 8.0D, false, enabled));
+        AutomaticAnimationSelector.ActiveClip continuing =
+                new AutomaticAnimationSelector.ActiveClip(
+                        hold.name(), 0.49D, false);
+        assertNotNull(program.updateItemSwitchPose(
+                List.of(main, continuing), main, null,
+                Set.of(InteractionHand.MAIN_HAND), 8.49D, false, enabled));
+        assertTrue(enabled.hasPoseOwnershipPotential(
+                        Set.of(InteractionHand.MAIN_HAND), 8.51D),
+                "pre-render ownership must not drop before the exit state is sampled");
+        assertNull(program.updateItemSwitchPose(
+                List.of(main, new AutomaticAnimationSelector.ActiveClip(
+                        hold.name(), 0.51D, false)), main, null,
+                Set.of(InteractionHand.MAIN_HAND), 8.51D, false, enabled));
+        assertTrue(enabled.hasPoseOwnershipPotential(
+                        Set.of(InteractionHand.MAIN_HAND), 8.55D),
+                "outer yaw and locator ownership must survive the three-tick exit blend");
+        assertFalse(enabled.hasPoseOwnershipPotential(
+                        Set.of(InteractionHand.MAIN_HAND), 8.66D),
+                "exit ownership must end with the body blend");
+
+        ParallelAnimationProgram.ItemSwitchState delayed =
+                new ParallelAnimationProgram.ItemSwitchState();
+        assertNull(program.updateItemSwitchPose(
+                List.of(main, restarted), main, null, Set.of(), 9.0D,
+                false, delayed));
+        ParallelAnimationProgram.ItemSwitchPose caughtUp =
+                program.updateItemSwitchPose(
+                        List.of(main, new AutomaticAnimationSelector.ActiveClip(
+                                hold.name(), 0.25D, false)), main, null,
+                        Set.of(InteractionHand.MAIN_HAND), 9.25D,
+                        false, delayed);
+        assertNotNull(caughtUp,
+                "a delayed multiplayer ON snapshot must retain the HOLD edge");
+        assertTrue(caughtUp.hands().contains(InteractionHand.MAIN_HAND));
+    }
+
+    @Test
+    void itemSwitchUsesSeparatePoliciesForAuthoredAndOrdinaryItems() {
+        assertTrue(ParallelAnimationProgram.usesResolvedItemSwitchAnimation(
+                true, true, false),
+                "an authored replacement must follow the held-item model setting");
+        assertFalse(ParallelAnimationProgram.usesResolvedItemSwitchAnimation(
+                true, false, true),
+                "the ordinary-item setting must not revive a disabled replacement");
+        assertTrue(ParallelAnimationProgram.usesResolvedItemSwitchAnimation(
+                false, false, true),
+                "an ordinary Epic Fight item must follow the independent switch setting");
+        assertFalse(ParallelAnimationProgram.usesResolvedItemSwitchAnimation(
+                false, true, false),
+                "the held-item model setting must not enable an ordinary switch pose");
+
+        assertTrue(ParallelAnimationProgram.keepsHeldItemHoldClip(true, false),
+                "an enabled authored replacement keeps its persistent HOLD layer");
+        assertTrue(ParallelAnimationProgram.keepsHeldItemHoldClip(false, true),
+                "an ordinary item's HOLD layer is evaluated during its equip window");
+        assertFalse(ParallelAnimationProgram.keepsHeldItemHoldClip(false, false),
+                "an ordinary HOLD layer must not leak pose or effect output outside that window");
+    }
+
+    @Test
+    void everyHeldItemControllerSlotFollowsTheResolvedPolicyOwner() {
+        Set<InteractionHand> offHand = Set.of(InteractionHand.OFF_HAND);
+
+        assertFalse(ParallelAnimationProgram.keepsHeldItemControllerOutputs(
+                        false, false, offHand, Set.of(), false),
+                "ordinary hold_offhand output must not leak outside a switch window");
+        assertFalse(ParallelAnimationProgram.keepsHeldItemControllerOutputs(
+                        false, false, offHand, Set.of(InteractionHand.MAIN_HAND), true),
+                "the other hand's switch setting must not enable this controller");
+        assertTrue(ParallelAnimationProgram.keepsHeldItemControllerOutputs(
+                        false, false, offHand, offHand, true),
+                "an ordinary held-item controller is enabled only during its resolved switch");
+        assertTrue(ParallelAnimationProgram.keepsHeldItemControllerOutputs(
+                        true, true, offHand, Set.of(), false),
+                "a configured model-authored replacement retains its controller");
+        assertFalse(ParallelAnimationProgram.keepsHeldItemControllerOutputs(
+                        true, false, offHand, offHand, false),
+                "a disabled model-authored replacement must not leak controller output");
+        assertTrue(ParallelAnimationProgram.keepsHeldItemControllerOutputs(
+                        false, false, Set.of(), Set.of(), false),
+                "unrelated controllers remain unaffected");
+    }
+
+    @Test
+    void itemSwitchKeyTracksStaggeredHandsAndDisplayMembership() {
+        GeometryDocument geometry = handPropGeometry();
+        AnimationClip idle = new AnimationClip("idle");
+        idle.boneTracks().put("Root", rotation(0.0D, 0.0D, 1.0D));
+        AnimationClip mainHold = new AnimationClip("hold_mainhand:sword");
+        AnimationClip.BoneTracks shortArm = new AnimationClip.BoneTracks();
+        shortArm.rotation(linearTrack(0.25F,
+                0.0D, 0.0D, 0.0D, 0.0D, 0.0D, 30.0D));
+        mainHold.boneTracks().put("RightArm", shortArm);
+        AnimationClip offHold = new AnimationClip("hold_offhand:sword");
+        AnimationClip.BoneTracks longArm = new AnimationClip.BoneTracks();
+        longArm.rotation(linearTrack(0.5F,
+                0.0D, 0.0D, 0.0D, 0.0D, 0.0D, 60.0D));
+        offHold.boneTracks().put("RightArm", longArm);
+        ParallelAnimationProgram program = new ParallelAnimationProgram(
+                geometry, Map.of(idle.name(), idle, mainHold.name(), mainHold,
+                offHold.name(), offHold), AuxiliaryBoneLayout.create(geometry),
+                1.0F, 1.0F);
+        ParallelAnimationProgram.ItemSwitchState state =
+                new ParallelAnimationProgram.ItemSwitchState();
+        AutomaticAnimationSelector.ActiveClip main =
+                new AutomaticAnimationSelector.ActiveClip(idle.name(), 2.0D, false);
+        Set<InteractionHand> both = Set.of(
+                InteractionHand.MAIN_HAND, InteractionHand.OFF_HAND);
+
+        ParallelAnimationProgram.ItemSwitchPose started = program.updateItemSwitchPose(
+                List.of(main,
+                        new AutomaticAnimationSelector.ActiveClip(
+                                mainHold.name(), 0.0D, true),
+                        new AutomaticAnimationSelector.ActiveClip(
+                                offHold.name(), 0.0D, true)),
+                main, null, both, 2.0D, false, state);
+        assertNotNull(started);
+        ParallelAnimationProgram.ItemSwitchPose mainExpired =
+                program.updateItemSwitchPose(
+                        List.of(main,
+                                new AutomaticAnimationSelector.ActiveClip(
+                                        mainHold.name(), 0.3D, false),
+                                new AutomaticAnimationSelector.ActiveClip(
+                                        offHold.name(), 0.3D, false)),
+                        main, null, both, 2.3D, false, state);
+        assertNotNull(mainExpired);
+        assertEquals(Set.of(InteractionHand.OFF_HAND), mainExpired.hands());
+        assertFalse(started.key().equals(mainExpired.key()),
+                "expiry of only one hand must start an ownership blend");
+
+        ParallelAnimationProgram.ItemSwitchPose mainDisplayDisabled =
+                program.updateItemSwitchPose(
+                        List.of(main,
+                                new AutomaticAnimationSelector.ActiveClip(
+                                        mainHold.name(), 0.31D, false),
+                                new AutomaticAnimationSelector.ActiveClip(
+                                        offHold.name(), 0.31D, false)),
+                        main, null, Set.of(InteractionHand.OFF_HAND),
+                        2.31D, false, state);
+        assertNotNull(mainDisplayDisabled);
+        assertFalse(mainExpired.key().equals(mainDisplayDisabled.key()),
+                "the set of composed enabled HOLD layers belongs in the key");
+    }
+
+    @Test
+    void epicFightActionCancelsAnItemSwitchUntilANewHoldRestart() {
+        GeometryDocument geometry = handPropGeometry();
+        AnimationClip idle = new AnimationClip("idle");
+        idle.boneTracks().put("Root", rotation(0.0D, 0.0D, 1.0D));
+        AnimationClip hold = new AnimationClip("hold_mainhand:sword");
+        AnimationClip.BoneTracks arm = new AnimationClip.BoneTracks();
+        arm.rotation(linearTrack(0.5F,
+                0.0D, 0.0D, 0.0D, 0.0D, 0.0D, 60.0D));
+        hold.boneTracks().put("RightArm", arm);
+        ParallelAnimationProgram program = new ParallelAnimationProgram(
+                geometry, Map.of(idle.name(), idle, hold.name(), hold),
+                AuxiliaryBoneLayout.create(geometry), 1.0F, 1.0F);
+        ParallelAnimationProgram.ItemSwitchState state =
+                new ParallelAnimationProgram.ItemSwitchState();
+        AutomaticAnimationSelector.ActiveClip main =
+                new AutomaticAnimationSelector.ActiveClip(
+                        idle.name(), 4.0D, false);
+        AutomaticAnimationSelector.ActiveClip restarted =
+                new AutomaticAnimationSelector.ActiveClip(
+                        hold.name(), 0.0D, true);
+        Set<InteractionHand> enabled = Set.of(InteractionHand.MAIN_HAND);
+
+        assertNotNull(program.updateItemSwitchPose(
+                List.of(main, restarted), main, null, enabled,
+                4.0D, false, state));
+        AutomaticAnimationSelector.ActiveClip continuing =
+                new AutomaticAnimationSelector.ActiveClip(
+                        hold.name(), 0.1D, false);
+        assertNull(program.updateItemSwitchPose(
+                List.of(main, continuing), main, null, enabled,
+                4.1D, true, state));
+        assertNull(program.updateItemSwitchPose(
+                List.of(main, continuing), main, null, enabled,
+                4.11D, false, state));
+        assertNotNull(program.updateItemSwitchPose(
+                List.of(main, new AutomaticAnimationSelector.ActiveClip(
+                        hold.name(), 0.0D, true)), main, null, enabled,
+                4.2D, false, state));
     }
 
     @Test
@@ -1155,6 +2024,16 @@ class ParallelAnimationProgramTest {
                 AuxiliaryBoneLayout.create(geometry), 1.0F, 1.0F);
     }
 
+    private static AnimationController constantController(
+            String controllerName, AnimationClip clip) {
+        AnimationController.State state = new AnimationController.State(
+                "default", List.of(new AnimationController.AnimationReference(
+                clip.name(), "1")), List.of(), List.of(), List.of(),
+                new AnimationController.BlendTransition(0.0F, List.of()), false);
+        return new AnimationController(controllerName, "default",
+                Map.of("default", state));
+    }
+
     private static GeometryDocument headAndEar() {
         GeometryDocument geometry = new GeometryDocument();
         GeometryDocument.Bone head = new GeometryDocument.Bone("head");
@@ -1318,6 +2197,25 @@ class ParallelAnimationProgramTest {
         AnimationClip.Track track = new AnimationClip.Track();
         track.keyframes().add(new AnimationClip.Keyframe(0.0F,
                 AnimationClip.Interpolation.LINEAR, value, null));
+        return track;
+    }
+
+    private static AnimationClip.Track linearTrack(
+            float endTime, double startX, double startY, double startZ,
+            double endX, double endY, double endZ) {
+        AnimationClip.VectorValue start = new AnimationClip.VectorValue();
+        start.setConstant(0, startX);
+        start.setConstant(1, startY);
+        start.setConstant(2, startZ);
+        AnimationClip.VectorValue end = new AnimationClip.VectorValue();
+        end.setConstant(0, endX);
+        end.setConstant(1, endY);
+        end.setConstant(2, endZ);
+        AnimationClip.Track track = new AnimationClip.Track();
+        track.keyframes().add(new AnimationClip.Keyframe(0.0F,
+                AnimationClip.Interpolation.LINEAR, start, null));
+        track.keyframes().add(new AnimationClip.Keyframe(endTime,
+                AnimationClip.Interpolation.LINEAR, end, null));
         return track;
     }
 

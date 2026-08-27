@@ -1,6 +1,7 @@
 package net.okitsu.ysmepicfightcompat.render;
 
 import net.minecraft.world.InteractionHand;
+import net.minecraft.world.entity.HumanoidArm;
 import net.minecraft.world.entity.LivingEntity;
 import net.okitsu.ysmepicfightcompat.mesh.CompatHumanoidMesh;
 import net.okitsu.ysmepicfightcompat.mesh.HumanoidRig;
@@ -20,20 +21,28 @@ public final class RenderFrameContext {
         private final boolean showUnlistedParts;
         @Nullable
         private final Float epicModelYaw;
+        private final boolean epicFightActionActive;
         private CompatHumanoidMesh mesh;
         private OpenMatrix4f[] inputPoses;
         private Vector3f rightFist;
         private Vector3f leftFist;
+        private OpenMatrix4f rightAuthoredItemPose;
+        private OpenMatrix4f leftAuthoredItemPose;
+        private boolean suppressRightHeldItem;
+        private boolean suppressLeftHeldItem;
+        private boolean mainHandItemSwitchUsesOffArmTool;
 
         private Frame(LivingEntity entity, boolean firstPerson,
                       Map<String, Boolean> visibleParts, boolean showUnlistedParts,
-                      @Nullable Float epicModelYaw) {
+                      @Nullable Float epicModelYaw,
+                      boolean epicFightActionActive) {
             this.entity = entity;
             this.firstPerson = firstPerson;
             this.visibleParts = Map.copyOf(visibleParts);
             this.showUnlistedParts = showUnlistedParts;
             this.epicModelYaw = epicModelYaw != null && Float.isFinite(epicModelYaw)
                     ? epicModelYaw : null;
+            this.epicFightActionActive = epicFightActionActive;
         }
 
         public LivingEntity entity() {
@@ -58,6 +67,11 @@ public final class RenderFrameContext {
             return epicModelYaw;
         }
 
+        /** Whether an attack, guard, dodge, aim, hurt, or other Epic Fight action owns pose. */
+        public boolean epicFightActionActive() {
+            return epicFightActionActive;
+        }
+
         public boolean isBoundTo(CompatHumanoidMesh expected) {
             return mesh == expected;
         }
@@ -75,7 +89,14 @@ public final class RenderFrameContext {
 
     public static Frame pushThirdPerson(LivingEntity entity,
                                         @Nullable Float epicModelYaw) {
-        return push(new Frame(entity, false, Map.of(), true, epicModelYaw));
+        return pushThirdPerson(entity, epicModelYaw, false);
+    }
+
+    public static Frame pushThirdPerson(LivingEntity entity,
+                                        @Nullable Float epicModelYaw,
+                                        boolean epicFightActionActive) {
+        return push(new Frame(entity, false, Map.of(), true, epicModelYaw,
+                epicFightActionActive));
     }
 
     public static Frame pushFirstPerson(LivingEntity entity,
@@ -88,8 +109,17 @@ public final class RenderFrameContext {
                                         Map<String, Boolean> visibleParts,
                                         boolean showUnlistedParts,
                                         @Nullable Float epicModelYaw) {
+        return pushFirstPerson(entity, visibleParts, showUnlistedParts,
+                epicModelYaw, false);
+    }
+
+    public static Frame pushFirstPerson(LivingEntity entity,
+                                        Map<String, Boolean> visibleParts,
+                                        boolean showUnlistedParts,
+                                        @Nullable Float epicModelYaw,
+                                        boolean epicFightActionActive) {
         return push(new Frame(entity, true, visibleParts, showUnlistedParts,
-                epicModelYaw));
+                epicModelYaw, epicFightActionActive));
     }
 
     private static Frame push(Frame frame) {
@@ -133,7 +163,12 @@ public final class RenderFrameContext {
     public static void publishHeldItemPoints(LivingEntity entity, CompatHumanoidMesh mesh,
                                              OpenMatrix4f[] inputPoses,
                                              @Nullable Vector3f rightFist,
-                                             @Nullable Vector3f leftFist) {
+                                             @Nullable Vector3f leftFist,
+                                             @Nullable OpenMatrix4f rightAuthoredItemPose,
+                                             @Nullable OpenMatrix4f leftAuthoredItemPose,
+                                             boolean suppressRightHeldItem,
+                                             boolean suppressLeftHeldItem,
+                                             boolean mainHandItemSwitchUsesOffArmTool) {
         Frame frame = current();
         if (frame == null || frame.entity != entity || frame.mesh != mesh
                 || inputPoses == null) {
@@ -142,6 +177,14 @@ public final class RenderFrameContext {
         frame.inputPoses = inputPoses;
         frame.rightFist = finite(rightFist) ? new Vector3f(rightFist) : null;
         frame.leftFist = finite(leftFist) ? new Vector3f(leftFist) : null;
+        frame.rightAuthoredItemPose = finite(rightAuthoredItemPose)
+                ? new OpenMatrix4f(rightAuthoredItemPose) : null;
+        frame.leftAuthoredItemPose = finite(leftAuthoredItemPose)
+                ? new OpenMatrix4f(leftAuthoredItemPose) : null;
+        frame.suppressRightHeldItem = suppressRightHeldItem;
+        frame.suppressLeftHeldItem = suppressLeftHeldItem;
+        frame.mainHandItemSwitchUsesOffArmTool =
+                mainHandItemSwitchUsesOffArmTool;
     }
 
     @Nullable
@@ -155,6 +198,22 @@ public final class RenderFrameContext {
         Vector3f point = toolJoint == HumanoidRig.RIGHT_TOOL ? frame.rightFist
                 : toolJoint == HumanoidRig.LEFT_TOOL ? frame.leftFist : null;
         return point == null ? null : new Vector3f(point);
+    }
+
+    /** Full YSM locator frame, published only while an item-switch pose owns this hand. */
+    @Nullable
+    public static OpenMatrix4f authoredHeldItemPose(
+            LivingEntity entity, CompatHumanoidMesh mesh,
+            OpenMatrix4f[] inputPoses, int toolJoint) {
+        Frame frame = current();
+        if (frame == null || frame.entity != entity || frame.mesh != mesh
+                || frame.inputPoses != inputPoses) {
+            return null;
+        }
+        OpenMatrix4f pose = toolJoint == HumanoidRig.RIGHT_TOOL
+                ? frame.rightAuthoredItemPose : toolJoint == HumanoidRig.LEFT_TOOL
+                ? frame.leftAuthoredItemPose : null;
+        return pose == null ? null : new OpenMatrix4f(pose);
     }
 
     @Nullable
@@ -187,8 +246,22 @@ public final class RenderFrameContext {
     /** True only inside the exact converted body render that owns this held prop. */
     public static boolean suppressesHeldItem(LivingEntity entity, InteractionHand hand) {
         Frame frame = current();
-        return frame != null && frame.entity == entity && frame.mesh != null
-                && frame.mesh.replacesHeldItem(entity, hand);
+        if (frame == null || frame.entity != entity || frame.mesh == null) {
+            return false;
+        }
+        boolean right = physicalRightForLogicalHand(
+                hand, entity.getMainArm(),
+                frame.mainHandItemSwitchUsesOffArmTool);
+        return frame.mesh.replacesHeldItem(entity, hand)
+                || (right ? frame.suppressRightHeldItem : frame.suppressLeftHeldItem);
+    }
+
+    static boolean physicalRightForLogicalHand(
+            InteractionHand hand, HumanoidArm mainArm,
+            boolean mainHandUsesOffArmTool) {
+        boolean logicalMain = hand == InteractionHand.MAIN_HAND;
+        boolean usesMainArm = logicalMain && !mainHandUsesOffArmTool;
+        return usesMainArm == (mainArm == HumanoidArm.RIGHT);
     }
 
     public static void clear() {
@@ -199,10 +272,27 @@ public final class RenderFrameContext {
         frame.inputPoses = null;
         frame.rightFist = null;
         frame.leftFist = null;
+        frame.rightAuthoredItemPose = null;
+        frame.leftAuthoredItemPose = null;
+        frame.suppressRightHeldItem = false;
+        frame.suppressLeftHeldItem = false;
+        frame.mainHandItemSwitchUsesOffArmTool = false;
     }
 
     private static boolean finite(@Nullable Vector3f value) {
         return value != null && Float.isFinite(value.x())
                 && Float.isFinite(value.y()) && Float.isFinite(value.z());
+    }
+
+    private static boolean finite(@Nullable OpenMatrix4f value) {
+        return value != null
+                && Float.isFinite(value.m00) && Float.isFinite(value.m01)
+                && Float.isFinite(value.m02) && Float.isFinite(value.m03)
+                && Float.isFinite(value.m10) && Float.isFinite(value.m11)
+                && Float.isFinite(value.m12) && Float.isFinite(value.m13)
+                && Float.isFinite(value.m20) && Float.isFinite(value.m21)
+                && Float.isFinite(value.m22) && Float.isFinite(value.m23)
+                && Float.isFinite(value.m30) && Float.isFinite(value.m31)
+                && Float.isFinite(value.m32) && Float.isFinite(value.m33);
     }
 }

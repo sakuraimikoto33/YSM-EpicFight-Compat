@@ -1,6 +1,7 @@
 package net.okitsu.ysmepicfightcompat.render;
 
 import com.mojang.blaze3d.vertex.PoseStack;
+import com.mojang.math.Axis;
 import net.minecraft.client.model.PlayerModel;
 import net.minecraft.client.player.AbstractClientPlayer;
 import net.minecraft.client.renderer.MultiBufferSource;
@@ -15,14 +16,19 @@ import net.minecraft.client.renderer.entity.layers.HumanoidArmorLayer;
 import net.minecraft.client.renderer.entity.layers.PlayerItemInHandLayer;
 import net.minecraft.world.entity.EntityType;
 import net.minecraft.world.entity.player.PlayerModelPart;
+import net.minecraft.util.Mth;
 import net.minecraftforge.api.distmarker.Dist;
 import net.minecraftforge.api.distmarker.OnlyIn;
+import net.okitsu.ysmepicfightcompat.animation.MovementAnimationType;
+import net.okitsu.ysmepicfightcompat.mesh.CombatMeshCache;
 import net.okitsu.ysmepicfightcompat.mesh.CompatHumanoidMesh;
+import net.okitsu.ysmepicfightcompat.network.ClientMovementAnimationPreferences;
 import net.okitsu.ysmepicfightcompat.render.layer.ConvertedArmorLayer;
 import net.okitsu.ysmepicfightcompat.render.layer.ConvertedElytraLayer;
 import net.okitsu.ysmepicfightcompat.render.layer.ConvertedHeadLayer;
 import yesman.epicfight.api.asset.AssetAccessor;
 import yesman.epicfight.api.client.model.Meshes;
+import yesman.epicfight.api.model.Armature;
 import yesman.epicfight.client.mesh.HumanoidMesh;
 import yesman.epicfight.client.renderer.patched.entity.PHumanoidRenderer;
 import yesman.epicfight.client.renderer.patched.layer.PatchedArrowLayer;
@@ -70,13 +76,91 @@ public final class CombatPlayerRenderer extends PHumanoidRenderer<
                        AbstractClientPlayerPatch<AbstractClientPlayer> patch,
                        LivingEntityRenderer<AbstractClientPlayer, PlayerModel<AbstractClientPlayer>> renderer,
                        MultiBufferSource buffers, PoseStack matrices, int light, float partialTick) {
+        boolean epicFightActionActive =
+                EpicFightPoseOwnership.actionOwnsPose(entity, patch);
+        float epicModelYaw = patch.getAccurateYRot(partialTick);
+        float renderedModelYaw = usesOfficialCreativeFlightYaw(
+                entity, epicFightActionActive)
+                ? officialBodyYaw(entity.yBodyRotO, entity.yBodyRot, partialTick)
+                : epicModelYaw;
         RenderFrameContext.Frame scope = RenderFrameContext.pushThirdPerson(
-                entity, patch.getAccurateYRot(partialTick));
+                entity, renderedModelYaw, epicFightActionActive);
         try {
             super.render(entity, patch, renderer, buffers, matrices, light, partialTick);
         } finally {
             RenderFrameContext.pop(scope);
         }
+    }
+
+    /**
+     * Epic Fight owns the outer model transform even when a configured official-YSM
+     * movement clip owns every model bone. Creative-flight clips such as 05_magical's
+     * {@code fly} intentionally contain no head-yaw query: official YSM turns them with
+     * vanilla's interpolated body yaw. Apply only that missing outer-yaw delta while the
+     * converted mesh really owns creative flight. Elytra retains Epic Fight's dedicated
+     * flight transform, and actions retain Epic Fight's orientation unchanged.
+     */
+    @Override
+    public void mulPoseStack(
+            PoseStack matrices, Armature armature, AbstractClientPlayer entity,
+            AbstractClientPlayerPatch<AbstractClientPlayer> patch, float partialTick) {
+        super.mulPoseStack(matrices, armature, entity, patch, partialTick);
+        RenderFrameContext.Frame frame = RenderFrameContext.current();
+        if (frame == null || frame.entity() != entity
+                || frame.epicModelYaw() == null
+                || !usesOfficialCreativeFlightYaw(
+                entity, frame.epicFightActionActive())) {
+            return;
+        }
+        float correction = outerYawCorrection(
+                patch.getAccurateYRot(partialTick), frame.epicModelYaw());
+        if (Math.abs(correction) > 1.0E-4F) {
+            matrices.mulPose(Axis.YP.rotationDegrees(correction));
+        }
+    }
+
+    private static boolean usesOfficialCreativeFlightYaw(
+            AbstractClientPlayer entity, boolean epicFightActionActive) {
+        if (epicFightActionActive || !CombatMeshResolver.hasReadyMesh(entity)) {
+            return false;
+        }
+        PlayerSelectionResolver.Selection selection =
+                PlayerSelectionResolver.current(entity);
+        if (selection == null) {
+            return false;
+        }
+        MovementAnimationType movement =
+                ClientMovementAnimationPreferences.remoteMovementOverride(
+                        entity, selection.modelId());
+        if (movement == null) {
+            movement = MovementAnimationType.resolve(entity);
+        }
+        CompatHumanoidMesh mesh = CombatMeshCache.readyMesh(selection.modelId());
+        boolean itemSwitchOwnsPose = mesh != null
+                && mesh.itemSwitchOwnsPose(entity);
+        return shouldUseOfficialCreativeFlightYaw(
+                movement,
+                ClientMovementAnimationPreferences.usesYsm(
+                        entity, selection.modelId(), movement),
+                itemSwitchOwnsPose, epicFightActionActive, true);
+    }
+
+    static boolean shouldUseOfficialCreativeFlightYaw(
+            MovementAnimationType movement, boolean movementOwnsPose,
+            boolean itemSwitchOwnsPose, boolean epicFightActionActive,
+            boolean readyMesh) {
+        return readyMesh && !epicFightActionActive
+                && movement == MovementAnimationType.CREATIVE_FLIGHT
+                && (movementOwnsPose || itemSwitchOwnsPose);
+    }
+
+    static float officialBodyYaw(float previousBodyYaw, float bodyYaw,
+                                 float partialTick) {
+        return Mth.rotLerp(partialTick, previousBodyYaw, bodyYaw);
+    }
+
+    static float outerYawCorrection(float epicModelYaw, float officialBodyYaw) {
+        return Mth.wrapDegrees(epicModelYaw - officialBodyYaw);
     }
 
     @Override

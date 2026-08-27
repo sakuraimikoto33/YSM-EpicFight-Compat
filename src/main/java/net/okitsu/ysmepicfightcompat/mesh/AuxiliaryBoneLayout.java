@@ -32,6 +32,7 @@ public final class AuxiliaryBoneLayout {
     private final Map<String, Entry> byName;
     private final Map<Integer, Vector3f> jointPivots;
     private final Map<Integer, Integer> toolAnchorPoseIndices;
+    private final Map<Integer, Entry> toolLocatorEntries;
     private final float horizontalScale;
     private final float verticalScale;
 
@@ -40,12 +41,14 @@ public final class AuxiliaryBoneLayout {
                                 Map<String, Entry> byName,
                                 Map<Integer, Vector3f> jointPivots,
                                 Map<Integer, Integer> toolAnchorPoseIndices,
+                                Map<Integer, Entry> toolLocatorEntries,
                                 float horizontalScale, float verticalScale) {
         this.entries = List.copyOf(entries);
         this.byBone = Map.copyOf(byBone);
         this.byName = Map.copyOf(byName);
         this.jointPivots = Map.copyOf(jointPivots);
         this.toolAnchorPoseIndices = Map.copyOf(toolAnchorPoseIndices);
+        this.toolLocatorEntries = Map.copyOf(toolLocatorEntries);
         this.horizontalScale = positiveScale(horizontalScale);
         this.verticalScale = positiveScale(verticalScale);
     }
@@ -94,8 +97,18 @@ public final class AuxiliaryBoneLayout {
             toolSources.put(joint, entry == null
                     ? HumanoidRig.jointFor(bone) : entry.poseIndex());
         });
+        Map<Integer, Entry> toolLocators = new java.util.HashMap<>();
+        for (Entry entry : entries) {
+            int joint = HumanoidRig.directJointFor(entry.bone());
+            if ((joint == HumanoidRig.RIGHT_TOOL || joint == HumanoidRig.LEFT_TOOL)
+                    && ModelJointPivots.isPrimaryVariant(entry.bone().name())
+                    && ModelJointPivots.isOnExpectedArmBranch(entry.bone(), joint)) {
+                toolLocators.putIfAbsent(joint, entry);
+            }
+        }
         return new AuxiliaryBoneLayout(entries, byBone, byName,
-                estimate.pivots(), toolSources, horizontalScale, verticalScale);
+                estimate.pivots(), toolSources, toolLocators,
+                horizontalScale, verticalScale);
     }
 
     public List<Entry> entries() {
@@ -127,6 +140,10 @@ public final class AuxiliaryBoneLayout {
 
     int toolAnchorPoseIndex(int joint) {
         return toolAnchorPoseIndices.getOrDefault(joint, -1);
+    }
+
+    Entry toolLocatorEntry(int joint) {
+        return toolLocatorEntries.get(joint);
     }
 
     boolean hasJointPivots() {

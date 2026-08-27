@@ -21,6 +21,18 @@
   "config.ysm_epicfight_compat.held_item_model_overrides.tooltip": "Each model ID has a list of item IDs or #item_tags that invert the default. Configured automatically adds the currently selected model. These rules stay local; only their resolved display state is synchronized.",
   "config.ysm_epicfight_compat.held_item_model_entry.tooltip": "Item IDs or #item_tags that invert the default for this YSM model.",
   "config.ysm_epicfight_compat.held_item_model_entry.invalid": "Enter an item ID such as minecraft:diamond_sword or an item tag such as #forge:tools/bows.",
+  "config.ysm_epicfight_compat.use_ysm_held_item_switch_animations_by_default": "Use YSM item-switch animations by default",
+  "config.ysm_epicfight_compat.use_ysm_held_item_switch_animations_by_default.tooltip": "Uses the official YSM draw/switch pose when Epic Fight keeps rendering the ordinary item. Model-authored replacement items instead follow the YSM held-item model setting. Only the resolved animation state is synchronized.",
+  "config.ysm_epicfight_compat.held_item_switch_animation_overrides": "Model-specific item-switch animation exceptions",
+  "config.ysm_epicfight_compat.held_item_switch_animation_overrides.tooltip": "Each model ID has item IDs or #item_tags that invert the item-switch animation default. Use minecraft:air for switching to an empty hand. Configured automatically adds the currently selected model. These rules stay local; only their resolved animation state is synchronized.",
+  "config.ysm_epicfight_compat.held_item_switch_animation_entry.tooltip": "Item IDs or #item_tags that invert the item-switch animation default for this YSM model. minecraft:air represents an empty hand.",
+  "config.ysm_epicfight_compat.held_item_switch_animation_entry.invalid": "Enter an item ID such as minecraft:diamond_pickaxe or minecraft:air, or an item tag such as #forge:tools/pickaxes.",
+  "config.ysm_epicfight_compat.use_ysm_movement_animations_by_default": "Use YSM movement animations by default",
+  "config.ysm_epicfight_compat.use_ysm_movement_animations_by_default.tooltip": "Lets model-authored YSM full-body locomotion replace Epic Fight locomotion by default. The current resolved pose decision, not these rules, is synchronized to other players.",
+  "config.ysm_epicfight_compat.movement_animation_overrides": "Model-specific movement exceptions",
+  "config.ysm_epicfight_compat.movement_animation_overrides.tooltip": "Each model ID has movement states that invert the default. Configured automatically adds the currently selected model. Rules stay local; only the current resolved pose decision is synchronized.",
+  "config.ysm_epicfight_compat.movement_animation_entry.tooltip": "Movement states that invert the default for this YSM model.",
+  "config.ysm_epicfight_compat.movement_animation_entry.invalid": "Use: walk, run, sneak_idle, sneak_move, jump, creative_flight, elytra_flight, swim, water_idle, crawl_idle, crawl_move, ladder_idle, ladder_up, or ladder_down.",
   "config.ysm_epicfight_compat.warning_acknowledged": "Compatibility warning acknowledged",
   "config.ysm_epicfight_compat.warning_acknowledged.tooltip": "Whether the official YSM and Epic Fight compatibility warning has already been shown."
 }

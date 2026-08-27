@@ -13,9 +13,11 @@ import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
-/** Embeds the dynamic rule table in Configured's normal Client folder. */
+/** Embeds the dynamic rule tables in Configured's normal Client folder. */
 @Pseudo
 @Mixin(targets = "com.mrcrayfish.configured.impl.forge.ForgeFolderEntry",
         remap = false)
@@ -29,7 +31,7 @@ public abstract class ConfiguredForgeFolderEntryMixin {
     protected List<String> path;
 
     @Unique
-    private Object ysmEpicFightCompat$heldItemRules;
+    private final Map<String, Object> ysmEpicFightCompat$dynamicRules = new HashMap<>();
 
     @Inject(
             method = "getChildren()Ljava/util/List;",
@@ -38,7 +40,7 @@ public abstract class ConfiguredForgeFolderEntryMixin {
             remap = false,
             require = 0
     )
-    private void ysmEpicFightCompat$embedHeldItemRules(
+    private void ysmEpicFightCompat$embedDynamicRules(
             CallbackInfoReturnable<List<?>> info) {
         if (spec != ClientPreferences.CLIENT_SPEC
                 || !path.equals(List.of("client"))) {
@@ -49,11 +51,9 @@ public abstract class ConfiguredForgeFolderEntryMixin {
         boolean replaced = false;
         for (Object entry : original) {
             if (ConfiguredHeldItemRules.isPlaceholder(entry)) {
-                if (ysmEpicFightCompat$heldItemRules == null) {
-                    ysmEpicFightCompat$heldItemRules =
-                            ConfiguredHeldItemRules.createEntry();
-                }
-                adjusted.add(ysmEpicFightCompat$heldItemRules);
+                String key = ConfiguredHeldItemRules.placeholderKey(entry);
+                adjusted.add(ysmEpicFightCompat$dynamicRules.computeIfAbsent(
+                        key, ignored -> ConfiguredHeldItemRules.createEntry(entry)));
                 replaced = true;
             } else {
                 adjusted.add(entry);

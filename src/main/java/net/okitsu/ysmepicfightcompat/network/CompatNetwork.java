@@ -15,6 +15,8 @@ import net.okitsu.ysmepicfightcompat.network.message.ConfigurationVariableSnapsh
 import net.okitsu.ysmepicfightcompat.network.message.ConfigurationVariableUpdateMessage;
 import net.okitsu.ysmepicfightcompat.network.message.HeldItemPreferenceSnapshotMessage;
 import net.okitsu.ysmepicfightcompat.network.message.HeldItemPreferenceUpdateMessage;
+import net.okitsu.ysmepicfightcompat.network.message.MovementAnimationPreferenceSnapshotMessage;
+import net.okitsu.ysmepicfightcompat.network.message.MovementAnimationPreferenceUpdateMessage;
 import net.okitsu.ysmepicfightcompat.network.message.SelectionUpdateMessage;
 
 import java.util.Map;
@@ -60,10 +62,20 @@ public final class CompatNetwork {
                 HeldItemPreferenceUpdateMessage::read,
                 HeldItemPreferenceUpdateMessage::receive,
                 Optional.of(NetworkDirection.PLAY_TO_SERVER));
-        CHANNEL.registerMessage(id, HeldItemPreferenceSnapshotMessage.class,
+        CHANNEL.registerMessage(id++, HeldItemPreferenceSnapshotMessage.class,
                 HeldItemPreferenceSnapshotMessage::write,
                 HeldItemPreferenceSnapshotMessage::read,
                 HeldItemPreferenceSnapshotMessage::receive,
+                Optional.of(NetworkDirection.PLAY_TO_CLIENT));
+        CHANNEL.registerMessage(id++, MovementAnimationPreferenceUpdateMessage.class,
+                MovementAnimationPreferenceUpdateMessage::write,
+                MovementAnimationPreferenceUpdateMessage::read,
+                MovementAnimationPreferenceUpdateMessage::receive,
+                Optional.of(NetworkDirection.PLAY_TO_SERVER));
+        CHANNEL.registerMessage(id, MovementAnimationPreferenceSnapshotMessage.class,
+                MovementAnimationPreferenceSnapshotMessage::write,
+                MovementAnimationPreferenceSnapshotMessage::read,
+                MovementAnimationPreferenceSnapshotMessage::receive,
                 Optional.of(NetworkDirection.PLAY_TO_CLIENT));
     }
 
@@ -89,5 +101,10 @@ public final class CompatNetwork {
 
     public static void sendHeldItemPreferences(HeldItemModelDisplayState state) {
         CHANNEL.sendToServer(new HeldItemPreferenceUpdateMessage(state));
+    }
+
+    public static void sendMovementAnimationPreferences(
+            MovementAnimationDisplayState state) {
+        CHANNEL.sendToServer(new MovementAnimationPreferenceUpdateMessage(state));
     }
 }

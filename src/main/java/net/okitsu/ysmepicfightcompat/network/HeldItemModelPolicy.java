@@ -25,6 +25,8 @@ public final class HeldItemModelPolicy {
     public static final int MAX_SELECTOR_LENGTH = 256;
     public static final HeldItemModelPolicy DEFAULT =
             new HeldItemModelPolicy(true, Map.of());
+    private static final ResourceLocation EMPTY_HAND_ID =
+            ResourceLocation.fromNamespaceAndPath("minecraft", "air");
 
     private final boolean ysmByDefault;
     private final Map<String, ModelRules> modelRules;
@@ -138,6 +140,25 @@ public final class HeldItemModelPolicy {
         ResourceLocation itemId = BuiltInRegistries.ITEM.getKey(stack.getItem());
         return usesYsm(modelId, itemId,
                 tag -> stack.is(TagKey.create(Registries.ITEM, tag)));
+    }
+
+    /**
+     * Applies the same item-table semantics to an item-switch pose, including the
+     * official {@code hold_*:empty} destination. {@code minecraft:air} is the
+     * explicit selector for an empty hand; the held-item model path itself still
+     * returns false for empty stacks.
+     */
+    public boolean usesYsmForSwitchAnimation(String modelId, ItemStack stack) {
+        if (stack == null) {
+            return false;
+        }
+        return stack.isEmpty()
+                ? usesYsmForEmptySwitchAnimation(modelId)
+                : usesYsm(modelId, stack);
+    }
+
+    boolean usesYsmForEmptySwitchAnimation(String modelId) {
+        return usesYsm(modelId, EMPTY_HAND_ID, ignored -> false);
     }
 
     boolean usesYsm(String modelId, ResourceLocation itemId,

@@ -14,9 +14,12 @@ import net.okitsu.ysmepicfightcompat.assets.OfficialTextureResolver;
 import net.okitsu.ysmepicfightcompat.cache.ClientLocalModelCache;
 import net.okitsu.ysmepicfightcompat.config.ClientPreferences;
 import net.okitsu.ysmepicfightcompat.network.geometry.ClientModelTransfers;
+import net.okitsu.ysmepicfightcompat.render.EpicFightPoseOwnership;
 import net.okitsu.ysmepicfightcompat.render.PlayerSelectionResolver;
 import yesman.epicfight.api.asset.AssetAccessor;
 import yesman.epicfight.api.client.model.Mesh;
+import yesman.epicfight.world.capabilities.EpicFightCapabilities;
+import yesman.epicfight.world.capabilities.entitypatch.LivingEntityPatch;
 
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
@@ -158,7 +161,10 @@ public final class CombatMeshCache {
             }
             boolean firstPerson = player == minecraft.player
                     && minecraft.options.getCameraType().isFirstPerson();
-            mesh.advanceAnimationOutputs(player, firstPerson);
+            LivingEntityPatch<?> patch = EpicFightCapabilities.getEntityPatch(
+                    player, LivingEntityPatch.class);
+            mesh.advanceAnimationOutputs(player, firstPerson,
+                    EpicFightPoseOwnership.actionOwnsPose(player, patch));
         }
     }
 

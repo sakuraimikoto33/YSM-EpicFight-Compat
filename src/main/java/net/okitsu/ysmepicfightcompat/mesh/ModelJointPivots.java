@@ -605,7 +605,7 @@ final class ModelJointPivots {
         return joint == HumanoidRig.RIGHT_TOOL || joint == HumanoidRig.LEFT_TOOL;
     }
 
-    private static boolean isOnExpectedArmBranch(GeometryDocument.Bone bone, int joint) {
+    static boolean isOnExpectedArmBranch(GeometryDocument.Bone bone, int joint) {
         boolean right = joint == HumanoidRig.RIGHT_TOOL || joint == HumanoidRig.RIGHT_HAND;
         boolean left = joint == HumanoidRig.LEFT_TOOL || joint == HumanoidRig.LEFT_HAND;
         if (!right && !left) {
@@ -696,7 +696,7 @@ final class ModelJointPivots {
         return parent == null || HumanoidRig.jointFor(parent) != joint;
     }
 
-    private static boolean isPrimaryVariant(String name) {
+    static boolean isPrimaryVariant(String name) {
         if (name == null || name.isEmpty()) {
             return false;
         }

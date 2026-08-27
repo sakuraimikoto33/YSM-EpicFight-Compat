@@ -6,6 +6,7 @@ import org.junit.jupiter.api.io.TempDir;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.Arrays;
 import java.util.Map;
 import java.util.Set;
 
@@ -127,5 +128,84 @@ class LocalModelRepositoryTest {
                 .initialState());
         assertEquals("hidden", loaded.animationControllers().get("player.parallel_4")
                 .states().get("default").transitions().get(0).targetState());
+    }
+
+    @Test
+    void inheritsEveryMissingPrimaryAnimationGroupAndInvalidatesTheSourceDigest(
+            @TempDir Path root) throws IOException {
+        Path primary = root.resolve("builtin/default");
+        Files.createDirectories(primary.resolve("animations"));
+        Files.writeString(primary.resolve("ysm.json"), """
+                {"files":{"player":{
+                  "animation":{
+                    "main":"animations/main.animation.json",
+                    "arm":"animations/arm.animation.json",
+                    "extra":"animations/extra.animation.json"
+                  },
+                  "animation_controllers":["controller/primary.controller.json"]
+                }}}
+                """);
+        Files.createDirectories(primary.resolve("controller"));
+        Files.writeString(primary.resolve("controller/primary.controller.json"), """
+                {"animation_controllers":{"controller.animation.primary":{
+                  "initial_state":"default","states":{"default":{}}
+                }}}
+                """);
+        Files.writeString(primary.resolve("animations/main.animation.json"), """
+                {"animations":{
+                  "idle":{"animation_length":1.0,"bones":{}},
+                  "walk":{"animation_length":2.0,"bones":{}}
+                }}
+                """);
+        Files.writeString(primary.resolve("animations/arm.animation.json"), """
+                {"animations":{"hold_mainhand:sword":{
+                  "animation_length":0.5,
+                  "bones":{"RightArm":{"rotation":{"0":[0,0,0],"0.5":[0,0,20]}}}
+                }}}
+                """);
+        Files.writeString(primary.resolve("animations/extra.animation.json"), """
+                {"animations":{"extra0":{"animation_length":9.0,"bones":{}}}}
+                """);
+
+        Path model = root.resolve("custom/maid");
+        Files.createDirectories(model.resolve("models"));
+        Files.createDirectories(model.resolve("animations"));
+        Files.writeString(model.resolve("ysm.json"), """
+                {"files":{"player":{
+                  "model":{"main":"models/main.json"},
+                  "animation":{"main":"animations/main.animation.json"}
+                }}}
+                """);
+        Files.writeString(model.resolve("models/main.json"), """
+                {"minecraft:geometry":[{"description":{
+                  "texture_width":16,"texture_height":16
+                },"bones":[{"name":"Root"},{"name":"RightArm","parent":"Root"}]}]}
+                """);
+        Files.writeString(model.resolve("animations/main.animation.json"), """
+                {"animations":{"idle":{"animation_length":7.0,"bones":{}}}}
+                """);
+
+        byte[] before = LocalModelRepository.contentDigest(root, "maid");
+        ModelBundle loaded = LocalModelRepository.load(root, "maid");
+
+        assertNotNull(loaded);
+        assertEquals(7.0F, loaded.animations().get("idle").duration(), 0.0001F,
+                "the model-specific clip must win over the primary clip");
+        assertTrue(loaded.animations().containsKey("walk"));
+        assertTrue(loaded.animations().containsKey("hold_mainhand:sword"));
+        assertTrue(loaded.animations().containsKey("extra0"),
+                "official YSM inherits every primary player animation group");
+        assertTrue(loaded.animationControllers().isEmpty(),
+                "official YSM does not inherit primary animation controllers");
+
+        Files.writeString(primary.resolve("animations/arm.animation.json"), """
+                {"animations":{"hold_mainhand:sword":{
+                  "animation_length":0.75,
+                  "bones":{"RightArm":{"rotation":{"0":[0,0,0],"0.75":[0,0,30]}}}
+                }}}
+                """);
+        byte[] after = LocalModelRepository.contentDigest(root, "maid");
+        assertFalse(Arrays.equals(before, after),
+                "a primary HOLD update must invalidate parsed client/server model caches");
     }
 }

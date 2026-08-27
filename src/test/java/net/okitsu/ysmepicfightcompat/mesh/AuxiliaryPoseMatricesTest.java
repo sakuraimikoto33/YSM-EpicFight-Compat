@@ -9,6 +9,7 @@ import yesman.epicfight.api.utils.math.Vec3f;
 import yesman.epicfight.api.utils.math.Vec4f;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -63,6 +64,51 @@ class AuxiliaryPoseMatricesTest {
         assertMatrixEquals(poses[HumanoidRig.HEAD], output[HumanoidRig.HEAD]);
         assertMatrixEquals(mountedDeltas[0],
                 output[layout.entries().get(0).poseIndex()]);
+    }
+
+    @Test
+    void fullBodyReplacementDoesNotApplyASelectiveHeldItemDeltaToEveryBone() {
+        GeometryDocument geometry = new GeometryDocument();
+        GeometryDocument.Bone body = new GeometryDocument.Bone("body");
+        geometry.add(body);
+        geometry.linkHierarchy();
+        AuxiliaryBoneLayout layout = AuxiliaryBoneLayout.create(geometry);
+        AuxiliaryBoneLayout.Entry entry = layout.entries().get(0);
+        OpenMatrix4f[] poses = AuxiliaryPoseMatrices.allocate(HumanoidRig.EPIC_JOINT_COUNT);
+        OpenMatrix4f[] toOrigin = AuxiliaryPoseMatrices.allocate(
+                HumanoidRig.EPIC_JOINT_COUNT);
+        OpenMatrix4f[] output = AuxiliaryPoseMatrices.allocate(layout.totalPoseCount());
+        OpenMatrix4f[] heldItem = AuxiliaryPoseMatrices.allocate(1);
+        heldItem[0].translate(12.0F, -4.0F, 7.0F)
+                .rotateDeg(45.0F, Vec3f.Y_AXIS);
+
+        AuxiliaryPoseMatrices.compose(poses, toOrigin, layout, output,
+                null, null, heldItem, null, true, new boolean[]{false},
+                null, null);
+
+        assertMatrixEquals(new OpenMatrix4f(), output[entry.poseIndex()]);
+    }
+
+    @Test
+    void blendsFromAnEarlierCompletePoseWithoutChangingEpicFightSlots() {
+        GeometryDocument geometry = new GeometryDocument();
+        GeometryDocument.Bone body = new GeometryDocument.Bone("body");
+        geometry.add(body);
+        geometry.linkHierarchy();
+        AuxiliaryBoneLayout layout = AuxiliaryBoneLayout.create(geometry);
+        AuxiliaryBoneLayout.Entry entry = layout.entries().get(0);
+        AuxiliaryPoseMatrices matrices = new AuxiliaryPoseMatrices(layout);
+        OpenMatrix4f[] source = AuxiliaryPoseMatrices.allocate(layout.totalPoseCount());
+        OpenMatrix4f[] destination = AuxiliaryPoseMatrices.allocate(layout.totalPoseCount());
+        source[entry.poseIndex()].translate(-3.0F, 5.0F, 7.0F);
+        destination[entry.poseIndex()].translate(20.0F, 30.0F, 40.0F);
+        destination[HumanoidRig.ROOT].translate(9.0F, 8.0F, 7.0F);
+        OpenMatrix4f epicRoot = new OpenMatrix4f(destination[HumanoidRig.ROOT]);
+
+        matrices.blendFromComplete(destination, source, 1.0F);
+
+        assertMatrixEquals(source[entry.poseIndex()], destination[entry.poseIndex()]);
+        assertMatrixEquals(epicRoot, destination[HumanoidRig.ROOT]);
     }
 
     @Test
@@ -265,6 +311,41 @@ class AuxiliaryPoseMatricesTest {
         assertEquals(3.0F, displayed.x(), 0.00001F);
         assertEquals(1.0F, displayed.y(), 0.00001F);
         assertEquals(7.0F, displayed.z(), 0.00001F);
+    }
+
+    @Test
+    void reconstructsTheCompleteAuthoredItemLocatorIncludingRotationAndZeroScale() {
+        GeometryDocument geometry = new GeometryDocument();
+        GeometryDocument.Bone hand = faceBone(
+                "RightHand", -1.0F, 1.0F, -3.0F, 0.0F);
+        GeometryDocument.Bone locator = new GeometryDocument.Bone("RightHandLocator");
+        locator.parentName("RightHand");
+        locator.pivot(0.25F, 0.75F, -0.5F);
+        geometry.add(hand);
+        geometry.add(locator);
+        geometry.linkHierarchy();
+        AuxiliaryBoneLayout layout = AuxiliaryBoneLayout.create(geometry, 0.7F, 0.8F);
+        AuxiliaryBoneLayout.Entry entry = layout.entryForBoneName("RightHandLocator");
+        assertNotNull(entry);
+        OpenMatrix4f[] complete = AuxiliaryPoseMatrices.allocate(layout.totalPoseCount());
+        complete[entry.poseIndex()]
+                .translate(2.0F, 3.0F, -4.0F)
+                .rotateDeg(37.0F, Vec3f.Z_AXIS)
+                .scale(0.0F, 0.0F, 0.0F);
+
+        OpenMatrix4f actual = new AuxiliaryPoseMatrices(layout)
+                .authoredHeldItemPose(complete, HumanoidRig.RIGHT_TOOL);
+
+        assertNotNull(actual);
+        Matrix4f expectedRaw = OpenMatrix4f.exportToMojangMatrix(
+                        complete[entry.poseIndex()])
+                .mul(new Matrix4f().scaling(0.7F, 0.8F, 0.7F))
+                .mul(entry.bindWorld())
+                .translate(locator.pivotX(), locator.pivotY(), locator.pivotZ());
+        OpenMatrix4f expected = OpenMatrix4f.importFromMojangMatrix(expectedRaw);
+        assertMatrixEquals(expected, actual);
+        assertEquals(0.0F, linearDeterminant(actual), 0.00001F,
+                "an authored locator scale of zero must hide the ordinary Epic item");
     }
 
     @Test

@@ -24,7 +24,7 @@ public abstract class TridentHeldItemCorrectionMixin {
     private OpenMatrix4f ysmCompat$correctAimedFist(
             OpenMatrix4f correction, OpenMatrix4f selectedPose,
             LivingEntityPatch<?> patch, InteractionHand hand, OpenMatrix4f[] poses) {
-        return HeldItemPoseResolver.applyItemCorrection(
-                correction, HeldItemPoseResolver.resolve(patch, poses, selectedPose));
+        return HeldItemPoseResolver.resolveCorrection(
+                patch, poses, correction, selectedPose);
     }
 }

@@ -9,7 +9,7 @@ import yesman.epicfight.api.utils.math.OpenMatrix4f;
 import yesman.epicfight.client.renderer.patched.item.RenderItemBase;
 import yesman.epicfight.world.capabilities.entitypatch.LivingEntityPatch;
 
-/** Moves Epic Fight's Tool joint to a converted model's authored fist position. */
+/** Selects either Epic Fight's Tool correction or the complete authored YSM locator. */
 @Mixin(value = RenderItemBase.class, remap = false)
 public abstract class HeldItemCorrectionMixin {
     @Redirect(
@@ -24,7 +24,7 @@ public abstract class HeldItemCorrectionMixin {
     private OpenMatrix4f ysmCompat$correctFist(
             OpenMatrix4f correction, OpenMatrix4f selectedPose,
             LivingEntityPatch<?> patch, InteractionHand hand, OpenMatrix4f[] poses) {
-        return HeldItemPoseResolver.applyItemCorrection(
-                correction, HeldItemPoseResolver.resolve(patch, poses, selectedPose));
+        return HeldItemPoseResolver.resolveCorrection(
+                patch, poses, correction, selectedPose);
     }
 }

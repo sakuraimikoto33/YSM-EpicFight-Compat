@@ -6,6 +6,7 @@ import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.client.renderer.MultiBufferSource;
 import net.minecraft.client.renderer.entity.LivingEntityRenderer;
 import net.okitsu.ysmepicfightcompat.render.RenderFrameContext;
+import net.okitsu.ysmepicfightcompat.render.EpicFightPoseOwnership;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Redirect;
@@ -41,7 +42,8 @@ public abstract class FirstPersonRenderScopeMixin {
         boolean showUnlisted = settings != null && settings.visibilityOthers();
         RenderFrameContext.Frame scope = RenderFrameContext.pushFirstPerson(
                 player, visibleParts, showUnlisted,
-                patch.getAccurateYRot(partialTick));
+                patch.getAccurateYRot(partialTick),
+                EpicFightPoseOwnership.actionOwnsPose(player, patch));
         try {
             renderer.render(player, patch, entityRenderer, buffers,
                     matrices, light, partialTick);

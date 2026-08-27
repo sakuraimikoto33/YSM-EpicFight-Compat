@@ -47,6 +47,8 @@ final class EntityAnimationEnvironment implements ExpressionEngine.Environment {
     private float partialTick;
     @Nullable
     private Float customBowRelativeHeadYaw;
+    @Nullable
+    private Float fullBodyModelYaw;
     private double deltaTime;
     private double animationTime;
     private double lifeTime;
@@ -110,6 +112,16 @@ final class EntityAnimationEnvironment implements ExpressionEngine.Environment {
         customBowRelativeHeadYaw = customBowRelativeHeadYaw(
                 entity.getYRot(), visualFacingYaw,
                 entity instanceof LocalPlayer, epicModelYaw);
+    }
+
+    /**
+     * Aligns model-authored full-body locomotion queries with Epic Fight's actual
+     * outer model rotation. Without this reference, head and body tracks use
+     * vanilla's independently interpolated body yaw and can split at turn seams.
+     */
+    void fullBodyReferenceYaw(@Nullable Float epicModelYaw) {
+        fullBodyModelYaw = epicModelYaw != null && Float.isFinite(epicModelYaw)
+                ? epicModelYaw : null;
     }
 
     void clipTime(double animationTime) {
@@ -217,8 +229,9 @@ final class EntityAnimationEnvironment implements ExpressionEngine.Environment {
                 + entity.getDeltaMovement().z * entity.getDeltaMovement().z) * 20.0D;
         float headYaw = Mth.lerp(partialTick, entity.yHeadRotO, entity.yHeadRot);
         float bodyYaw = Mth.rotLerp(partialTick, entity.yBodyRotO, entity.yBodyRot);
+        float modelBodyYaw = fullBodyModelYaw == null ? bodyYaw : fullBodyModelYaw;
         float relativeHeadYaw = customBowRelativeHeadYaw == null
-                ? officialHeadYaw(headYaw, bodyYaw)
+                ? officialHeadYaw(headYaw, modelBodyYaw)
                 : customBowRelativeHeadYaw;
         float headPitch = officialHeadPitch(entity.getViewXRot(partialTick));
         return switch (name) {
@@ -237,7 +250,7 @@ final class EntityAnimationEnvironment implements ExpressionEngine.Environment {
                     Mth.wrapDegrees(entity.getViewYRot(partialTick));
             case "query.body_x_rotation" ->
                     Mth.lerp(partialTick, entity.xRotO, entity.getXRot());
-            case "query.body_y_rotation" -> Mth.wrapDegrees(bodyYaw);
+            case "query.body_y_rotation" -> Mth.wrapDegrees(modelBodyYaw);
             case "query.yaw_speed" -> yawSpeed(entity.getYRot(), entity.yRotO);
             case "query.ground_speed" -> horizontalSpeed;
             case "query.vertical_speed" -> entity.getDeltaMovement().y * 20.0D;

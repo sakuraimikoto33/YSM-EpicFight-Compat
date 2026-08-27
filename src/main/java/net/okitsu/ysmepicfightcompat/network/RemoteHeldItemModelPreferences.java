@@ -12,7 +12,7 @@ public final class RemoteHeldItemModelPreferences {
     }
 
     public static HeldItemModelDisplayState find(UUID playerId) {
-        return current.getOrDefault(playerId, HeldItemModelDisplayState.DEFAULT);
+        return current.getOrDefault(playerId, HeldItemModelDisplayState.UNKNOWN);
     }
 
     public static synchronized void accept(UUID playerId,

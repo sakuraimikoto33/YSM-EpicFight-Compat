@@ -33,6 +33,20 @@ final class AnimationControllerProgram {
         }
     }
 
+    /**
+     * One controller step viewed through two independent concerns. {@code allActive}
+     * is used for state/edge observation even while a remote held-item preference is
+     * unknown or disabled; {@code outputActive} is the subset allowed to affect the
+     * rendered pose and emit controller outputs.
+     */
+    record Selection(List<ActiveAnimation> outputActive,
+                     List<ActiveAnimation> allActive) {
+        Selection {
+            outputActive = List.copyOf(outputActive);
+            allActive = List.copyOf(allActive);
+        }
+    }
+
     static final class RuntimeState {
         private final Map<String, ControllerRuntime> controllers = new LinkedHashMap<>();
 
@@ -227,11 +241,18 @@ final class AnimationControllerProgram {
     List<ActiveAnimation> select(double now, ExpressionEngine.Environment environment,
                                  RuntimeState runtimeState,
                                  Predicate<String> outputsEnabled) {
+        return selectObserved(now, environment, runtimeState, outputsEnabled).outputActive();
+    }
+
+    Selection selectObserved(double now, ExpressionEngine.Environment environment,
+                             RuntimeState runtimeState,
+                             Predicate<String> outputsEnabled) {
         if (controllers.isEmpty()) {
-            return List.of();
+            return new Selection(List.of(), List.of());
         }
         ControllerEnvironment controllerEnvironment = new ControllerEnvironment(environment);
-        List<ActiveAnimation> result = new ArrayList<>();
+        List<ActiveAnimation> output = new ArrayList<>();
+        List<ActiveAnimation> observed = new ArrayList<>();
         for (Map.Entry<String, AnimationController> entry : controllers.entrySet()) {
             String controllerName = entry.getKey();
             AnimationController controller = entry.getValue();
@@ -246,11 +267,13 @@ final class AnimationControllerProgram {
             } else if (now > runtime.lastStepAt + EPSILON) {
                 advance(controller, runtime, now, controllerEnvironment);
             }
-            if (enabled) {
-                appendActive(result, controllerName, runtime, now, controllerEnvironment);
+            int first = observed.size();
+            appendActive(observed, controllerName, runtime, now, controllerEnvironment);
+            if (enabled && observed.size() > first) {
+                output.addAll(observed.subList(first, observed.size()));
             }
         }
-        return List.copyOf(result);
+        return new Selection(output, observed);
     }
 
     Set<String> activeKeys(List<ActiveAnimation> active) {

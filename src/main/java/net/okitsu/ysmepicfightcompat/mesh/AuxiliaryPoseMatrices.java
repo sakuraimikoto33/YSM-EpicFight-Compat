@@ -21,12 +21,17 @@ public final class AuxiliaryPoseMatrices {
     private final ModelPoseRetargeter retargeter;
     private final OpenMatrix4f[] output;
     private final BlendScratch blendScratch;
+    private final OpenMatrix4f[] completeBlendSource;
     private final OpenMatrix4f[] toOrigin = new OpenMatrix4f[HumanoidRig.EPIC_JOINT_COUNT];
     private final Vector3f[] referenceBindOrigins = new Vector3f[HumanoidRig.EPIC_JOINT_COUNT];
     private final OpenMatrix4f heldItemHandSkin = new OpenMatrix4f();
     private final OpenMatrix4f heldItemToolSkin = new OpenMatrix4f();
     private final OpenMatrix4f heldItemOutput = new OpenMatrix4f();
+    private final OpenMatrix4f rightAuthoredItemOutput = new OpenMatrix4f();
+    private final OpenMatrix4f leftAuthoredItemOutput = new OpenMatrix4f();
     private final OpenMatrix4f bindWorldScratch = new OpenMatrix4f();
+    private final Matrix4f authoredItemScratch = new Matrix4f();
+    private final Matrix4f authoredItemScale = new Matrix4f();
     private final Vec4f heldItemReferencePoint = new Vec4f();
     private final Vec4f heldItemHandPoint = new Vec4f();
     private final Vec4f heldItemToolPoint = new Vec4f();
@@ -39,6 +44,7 @@ public final class AuxiliaryPoseMatrices {
         retargeter = new ModelPoseRetargeter(layout);
         output = allocate(layout.totalPoseCount());
         blendScratch = new BlendScratch(layout.entries().size());
+        completeBlendSource = new OpenMatrix4f[layout.entries().size()];
     }
 
     @Nullable
@@ -133,6 +139,59 @@ public final class AuxiliaryPoseMatrices {
         point.set(bindPoint.x(), bindPoint.y(), bindPoint.z(), 1.0F);
         OpenMatrix4f.transform(complete[poseIndex], point, point);
         return finite(point) ? new Vector3f(point.x, point.y, point.z) : null;
+    }
+
+    /**
+     * Reconstructs the full official-YSM locator frame used by its item layer.
+     *
+     * <p>The completed private pose is a skin matrix. Multiplying it by the scaled
+     * locator bind world recovers the authored current world, and retaining the final
+     * pivot translation matches YSM's locator traversal. Rotation and scale (including
+     * an authored zero scale used to delay item appearance) therefore reach Epic
+     * Fight's ordinary item renderer instead of being reduced to a single point.</p>
+     */
+    @Nullable
+    public OpenMatrix4f authoredHeldItemPose(@Nullable OpenMatrix4f[] complete, int joint) {
+        AuxiliaryBoneLayout.Entry locator = layout.toolLocatorEntry(joint);
+        OpenMatrix4f destination = joint == HumanoidRig.RIGHT_TOOL
+                ? rightAuthoredItemOutput : joint == HumanoidRig.LEFT_TOOL
+                ? leftAuthoredItemOutput : null;
+        if (complete == null || locator == null || destination == null
+                || locator.poseIndex() < 0 || locator.poseIndex() >= complete.length
+                || complete[locator.poseIndex()] == null) {
+            return null;
+        }
+        authoredItemScale.scaling(layout.horizontalScale(), layout.verticalScale(),
+                layout.horizontalScale());
+        load(authoredItemScratch, complete[locator.poseIndex()])
+                .mul(authoredItemScale)
+                .mul(locator.bindWorld())
+                .translate(locator.bone().pivotX(), locator.bone().pivotY(),
+                        locator.bone().pivotZ());
+        store(destination, authoredItemScratch);
+        return finite(destination) ? destination : null;
+    }
+
+    /**
+     * Blends a completed pose from an earlier render into the current completed pose.
+     *
+     * <p>Only the private pose slots used by this YSM mesh are changed. Epic Fight's
+     * leading armature slots stay live, while the model's authored hierarchy is blended
+     * in local space so connected children do not separate during an ownership change.</p>
+     */
+    public void blendFromComplete(@Nullable OpenMatrix4f[] destination,
+                                  @Nullable OpenMatrix4f[] source,
+                                  float sourceWeight) {
+        if (destination == null || source == null
+                || destination.length != layout.totalPoseCount()
+                || source.length != layout.totalPoseCount()) {
+            return;
+        }
+        for (AuxiliaryBoneLayout.Entry entry : layout.entries()) {
+            completeBlendSource[entry.auxiliaryIndex()] = source[entry.poseIndex()];
+        }
+        applyFullBodyBlend(layout, destination, completeBlendSource,
+                sourceWeight, blendScratch);
     }
 
     private boolean prepareArmature(Armature armature) {
@@ -299,10 +358,10 @@ public final class AuxiliaryPoseMatrices {
             // A mounted YSM state is already a complete pose. Starting from the bind skin
             // matrix prevents Epic Fight's own riding pose from moving the limbs a second time.
             int auxiliary = entry.auxiliaryIndex();
-            boolean replaceAnchor = replaceEpicFightPose
-                    || replaceEpicFightAnchors != null
+            boolean selectivelyReplaceAnchor = replaceEpicFightAnchors != null
                     && auxiliary < replaceEpicFightAnchors.length
                     && replaceEpicFightAnchors[auxiliary];
+            boolean replaceAnchor = replaceEpicFightPose || selectivelyReplaceAnchor;
             // Custom YSM-held props need their authored path below a live Tool joint while
             // the surrounding body remains under Epic Fight. Full-body custom-bow poses do
             // not use this selective path at all, so shoulders cannot be split at a seam.
@@ -328,7 +387,7 @@ public final class AuxiliaryPoseMatrices {
             destination[entry.poseIndex()].load(replaceEpicFightPose ? IDENTITY
                     : replaceAnchor && attachmentAnchor != null
                     ? attachmentAnchor : replaceAnchor ? IDENTITY : anchor);
-            if (replaceAnchor && heldItemDeltas != null
+            if (selectivelyReplaceAnchor && heldItemDeltas != null
                     && auxiliary < heldItemDeltas.length) {
                 // Selective YSM animation is relative to the chosen live Epic Fight seam.
                 // Post-multiplication keeps Tool translation and rotation outside the

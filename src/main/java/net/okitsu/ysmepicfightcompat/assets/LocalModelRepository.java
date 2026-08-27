@@ -56,11 +56,13 @@ public final class LocalModelRepository {
                 return null;
             }
             LocatedModel source = located.get();
-            return switch (source.format()) {
+            ModelBundle bundle = switch (source.format()) {
                 case ARCHIVE -> readArchive(modelId, source.path());
                 case MANIFEST_DIRECTORY -> readDirectory(modelId, source.path());
                 case LEGACY_DIRECTORY -> readLegacyDirectory(modelId, source.path());
             };
+            OfficialDefaultAnimationLibrary.inherit(ysmRoot, bundle);
+            return bundle;
         } catch (Exception ignored) {
             return null;
         }
@@ -146,8 +148,12 @@ public final class LocalModelRepository {
 
     /** Full source digest used to validate persistent parsed-model caches. */
     public static byte[] contentDigest(String modelId) {
+        return contentDigest(DEFAULT_ROOT, modelId);
+    }
+
+    static byte[] contentDigest(Path ysmRoot, String modelId) {
         try {
-            Optional<LocatedModel> source = locate(DEFAULT_ROOT, modelId);
+            Optional<LocatedModel> source = locate(ysmRoot, modelId);
             if (source.isEmpty()) {
                 return null;
             }
@@ -166,6 +172,7 @@ public final class LocalModelRepository {
                     digest.update(bytes);
                 }
             }
+            OfficialDefaultAnimationLibrary.contributeDigest(ysmRoot, digest);
             return digest.digest();
         } catch (IOException | NoSuchAlgorithmException | RuntimeException exception) {
             return null;

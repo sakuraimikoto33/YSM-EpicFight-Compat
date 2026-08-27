@@ -47,6 +47,18 @@ class HeldItemModelPolicyTest {
     }
 
     @Test
+    void switchAnimationPolicyIncludesTheOfficialEmptyHandDestination() {
+        HeldItemModelPolicy enabled = HeldItemModelPolicy.create(true, Map.of());
+        HeldItemModelPolicy emptyException = HeldItemModelPolicy.create(true, Map.of(
+                "wine_fox/01_taisho_maid", List.of("minecraft:air")));
+
+        assertTrue(enabled.usesYsmForEmptySwitchAnimation(
+                "wine_fox/01_taisho_maid"));
+        assertFalse(emptyException.usesYsmForEmptySwitchAnimation(
+                "wine_fox/01_taisho_maid"));
+    }
+
+    @Test
     void validatesSelectorsInsideEachModelTableEntry() {
         assertFalse(HeldItemModelPolicy.isValidSelector("#"));
         assertTrue(HeldItemModelPolicy.isValidSelector("minecraft:diamond_sword"));

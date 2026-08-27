@@ -6,6 +6,7 @@ import yesman.epicfight.api.utils.math.OpenMatrix4f;
 import yesman.epicfight.api.utils.math.Vec3f;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertSame;
 
 class HeldItemPoseResolverTest {
     @Test
@@ -33,7 +34,7 @@ class HeldItemPoseResolverTest {
     }
 
     @Test
-    void keepsTheItemSpecificCorrectionAfterTheCorrectedToolPose() {
+    void keepsTheItemSpecificCorrectionForTheFallbackToolPose() {
         OpenMatrix4f toolPose = new OpenMatrix4f()
                 .translate(2.0F, 3.0F, 4.0F)
                 .rotateDeg(90.0F, Vec3f.Z_AXIS);
@@ -46,6 +47,25 @@ class HeldItemPoseResolverTest {
                 new OpenMatrix4f(itemCorrection), toolPose);
 
         assertMatrixEquals(expected, actual);
+    }
+
+    @Test
+    void keepsThePostLocatorItemCorrectionForACompleteAuthoredLocator() {
+        OpenMatrix4f locator = new OpenMatrix4f()
+                .translate(2.0F, 3.0F, 4.0F)
+                .rotateDeg(90.0F, Vec3f.Z_AXIS);
+        OpenMatrix4f itemCorrection = new OpenMatrix4f()
+                .translate(5.0F, 7.0F, 11.0F)
+                .rotateDeg(-90.0F, Vec3f.X_AXIS);
+
+        OpenMatrix4f expected = new OpenMatrix4f(itemCorrection).mulFront(locator);
+        OpenMatrix4f receiver = new OpenMatrix4f(itemCorrection);
+        OpenMatrix4f actual = HeldItemPoseResolver.applyItemCorrection(
+                receiver, locator);
+
+        assertSame(receiver, actual);
+        assertMatrixEquals(expected, actual);
+        assertMatrixEquals(expected, receiver);
     }
 
     private static OpenMatrix4f[] matrices() {

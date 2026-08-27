@@ -11,6 +11,7 @@ import net.minecraft.network.chat.Component;
 import net.minecraft.world.entity.player.Player;
 import net.okitsu.ysmepicfightcompat.config.ClientPreferences;
 import net.okitsu.ysmepicfightcompat.network.HeldItemModelPolicy;
+import net.okitsu.ysmepicfightcompat.network.MovementAnimationPolicy;
 import net.okitsu.ysmepicfightcompat.render.PlayerSelectionResolver;
 
 import javax.annotation.Nullable;
@@ -24,7 +25,7 @@ import java.util.Map;
 import java.util.Objects;
 
 /**
- * Optional Configured entries embedded into the regular Forge client-config tree.
+ * Optional Configured dynamic-rule entries embedded into the regular Forge client-config tree.
  *
  * <p>This class deliberately remains behind string-targeted optional mixins. Nothing
  * outside this package may link Configured classes, so Configured is not required at
@@ -40,13 +41,30 @@ public final class ConfiguredHeldItemRules {
             return false;
         }
         IConfigValue<?> value = configEntry.getValue();
-        return value != null && "heldItemModelOverrides".equals(value.getName());
+        return value != null && RuleKind.fromEntryName(value.getName()) != null;
+    }
+
+    /** Stable cache key used by the Object-only mixin boundary. */
+    public static String placeholderKey(Object entry) {
+        if (!(entry instanceof IConfigEntry configEntry)
+                || configEntry.getValue() == null) {
+            return "";
+        }
+        RuleKind kind = RuleKind.fromEntryName(configEntry.getValue().getName());
+        return kind == null ? "" : kind.entryName();
     }
 
     /** Called through an Object-only mixin boundary to avoid hard optional linkage. */
-    public static Object createEntry() {
-        return new RulesFolder(ClientPreferences.heldItemModelOverrides(),
-                selectedModelId());
+    public static Object createEntry(Object placeholder) {
+        if (!(placeholder instanceof IConfigEntry configEntry)
+                || configEntry.getValue() == null) {
+            throw new IllegalArgumentException("Missing dynamic-rule placeholder");
+        }
+        RuleKind kind = RuleKind.fromEntryName(configEntry.getValue().getName());
+        if (kind == null) {
+            throw new IllegalArgumentException("Unknown dynamic-rule placeholder");
+        }
+        return new RulesFolder(kind, kind.initialRules(), selectedModelId());
     }
 
     /**
@@ -55,47 +73,47 @@ public final class ConfiguredHeldItemRules {
      * Configured run its normal Forge reload notification path.
      */
     public static void prepareSave(Object entry) {
-        findRulesFolder(entry).filter(RulesFolder::isChanged).ifPresent(folder ->
-                ClientPreferences.setHeldItemModelOverrides(folder.nonEmptyRules()));
+        findRulesFolders(entry).stream().filter(RulesFolder::isChanged)
+                .forEach(RulesFolder::prepareSave);
     }
 
     /** Called after Configured has completed its normal Forge-config update. */
     public static void finishSave(Object entry) {
-        findRulesFolder(entry).ifPresent(RulesFolder::markSaved);
+        findRulesFolders(entry).forEach(RulesFolder::markSaved);
     }
 
-    private static java.util.Optional<RulesFolder> findRulesFolder(Object entry) {
+    private static List<RulesFolder> findRulesFolders(Object entry) {
         if (!(entry instanceof IConfigEntry configEntry)) {
-            return java.util.Optional.empty();
+            return List.of();
         }
         if (configEntry instanceof RulesFolder folder) {
-            return java.util.Optional.of(folder);
+            return List.of(folder);
         }
+        List<RulesFolder> result = new java.util.ArrayList<>();
         for (IConfigEntry child : configEntry.getChildren()) {
-            java.util.Optional<RulesFolder> result = findRulesFolder(child);
-            if (result.isPresent()) {
-                return result;
-            }
+            result.addAll(findRulesFolders(child));
         }
-        return java.util.Optional.empty();
+        return List.copyOf(result);
     }
 
     private static final class RulesFolder implements IConfigEntry {
+        private final RuleKind kind;
         private final Map<String, RuleValue> values = new LinkedHashMap<>();
 
-        private RulesFolder(Map<String, List<String>> initial,
+        private RulesFolder(RuleKind kind, Map<String, List<String>> initial,
                             String selectedModelId) {
+            this.kind = kind;
             initial.forEach((modelId, selectors) -> values.put(modelId,
-                    new RuleValue(modelId, selectors)));
+                    new RuleValue(kind, modelId, selectors)));
             ensureModel(selectedModelId);
         }
 
         private void ensureModel(String modelId) {
             String normalized = normalizeModelId(modelId);
             if (!normalized.isEmpty()
-                    && values.size() < HeldItemModelPolicy.MAX_MODELS) {
+                    && values.size() < kind.maxModels()) {
                 values.computeIfAbsent(normalized,
-                        key -> new RuleValue(key, List.of()));
+                        key -> new RuleValue(kind, key, List.of()));
             }
         }
 
@@ -116,8 +134,13 @@ public final class ConfiguredHeldItemRules {
             values.values().forEach(RuleValue::markSaved);
         }
 
+        private void prepareSave() {
+            kind.save(nonEmptyRules());
+        }
+
         @Override
         public List<IConfigEntry> getChildren() {
+            ensureModel(selectedModelId());
             return values.values().stream()
                     .sorted(Comparator.comparing(RuleValue::getName))
                     .map(ValueEntry::new)
@@ -142,27 +165,30 @@ public final class ConfiguredHeldItemRules {
 
         @Override
         public String getEntryName() {
-            return "heldItemModelOverrides";
+            return kind.entryName();
         }
 
         @Override
         public Component getTooltip() {
             return Component.translatable(
-                    "config.ysm_epicfight_compat.held_item_model_overrides.tooltip");
+                    kind.translationKey() + ".tooltip");
         }
 
         @Override
         public String getTranslationKey() {
-            return "config.ysm_epicfight_compat.held_item_model_overrides";
+            return kind.translationKey();
         }
     }
 
     private static final class RuleValue implements IListConfigValue<String> {
+        private final RuleKind kind;
         private final String modelId;
         private List<String> initial;
         private List<String> current;
 
-        private RuleValue(String modelId, Collection<String> selectors) {
+        private RuleValue(RuleKind kind, String modelId,
+                          Collection<String> selectors) {
+            this.kind = kind;
             this.modelId = normalizeModelId(modelId);
             this.current = normalizeSelectors(selectors);
             this.initial = current;
@@ -193,9 +219,8 @@ public final class ConfiguredHeldItemRules {
         public boolean isValid(List<String> value) {
             return value != null
                     && value.size()
-                    <= HeldItemModelPolicy.MAX_SELECTORS_PER_MODEL
-                    && value.stream().allMatch(
-                    HeldItemModelPolicy::isValidSelector);
+                    <= kind.maxSelectorsPerModel()
+                    && value.stream().allMatch(kind::isValidSelector);
         }
 
         @Override
@@ -216,7 +241,7 @@ public final class ConfiguredHeldItemRules {
         @Override
         public Component getComment() {
             return Component.translatable(
-                    "config.ysm_epicfight_compat.held_item_model_entry.tooltip");
+                    kind.entryTooltipKey());
         }
 
         @Nullable
@@ -228,7 +253,7 @@ public final class ConfiguredHeldItemRules {
         @Override
         public Component getValidationHint() {
             return Component.translatable(
-                    "config.ysm_epicfight_compat.held_item_model_entry.invalid");
+                    kind.invalidKey());
         }
 
         @Override
@@ -284,5 +309,93 @@ public final class ConfiguredHeldItemRules {
     private static String normalizeModelId(String modelId) {
         return modelId == null ? ""
                 : modelId.trim().toLowerCase(Locale.ROOT);
+    }
+
+    private enum RuleKind {
+        HELD_ITEM("heldItemModelOverrides",
+                "config.ysm_epicfight_compat.held_item_model_overrides",
+                "config.ysm_epicfight_compat.held_item_model_entry.tooltip",
+                "config.ysm_epicfight_compat.held_item_model_entry.invalid"),
+        HELD_ITEM_SWITCH("heldItemSwitchAnimationOverrides",
+                "config.ysm_epicfight_compat.held_item_switch_animation_overrides",
+                "config.ysm_epicfight_compat.held_item_switch_animation_entry.tooltip",
+                "config.ysm_epicfight_compat.held_item_switch_animation_entry.invalid"),
+        MOVEMENT("movementAnimationOverrides",
+                "config.ysm_epicfight_compat.movement_animation_overrides",
+                "config.ysm_epicfight_compat.movement_animation_entry.tooltip",
+                "config.ysm_epicfight_compat.movement_animation_entry.invalid");
+
+        private final String entryName;
+        private final String translationKey;
+        private final String entryTooltipKey;
+        private final String invalidKey;
+
+        RuleKind(String entryName, String translationKey,
+                 String entryTooltipKey, String invalidKey) {
+            this.entryName = entryName;
+            this.translationKey = translationKey;
+            this.entryTooltipKey = entryTooltipKey;
+            this.invalidKey = invalidKey;
+        }
+
+        private static RuleKind fromEntryName(String name) {
+            for (RuleKind kind : values()) {
+                if (kind.entryName.equals(name)) {
+                    return kind;
+                }
+            }
+            return null;
+        }
+
+        private Map<String, List<String>> initialRules() {
+            return switch (this) {
+                case HELD_ITEM -> ClientPreferences.heldItemModelOverrides();
+                case HELD_ITEM_SWITCH ->
+                        ClientPreferences.heldItemSwitchAnimationOverrides();
+                case MOVEMENT -> ClientPreferences.movementAnimationOverrides();
+            };
+        }
+
+        private void save(Map<String, List<String>> rules) {
+            switch (this) {
+                case HELD_ITEM -> ClientPreferences.setHeldItemModelOverrides(rules);
+                case HELD_ITEM_SWITCH ->
+                        ClientPreferences.setHeldItemSwitchAnimationOverrides(rules);
+                case MOVEMENT -> ClientPreferences.setMovementAnimationOverrides(rules);
+            }
+        }
+
+        private int maxModels() {
+            return this == MOVEMENT ? MovementAnimationPolicy.MAX_MODELS
+                    : HeldItemModelPolicy.MAX_MODELS;
+        }
+
+        private int maxSelectorsPerModel() {
+            return this == MOVEMENT
+                    ? MovementAnimationPolicy.MAX_SELECTORS_PER_MODEL
+                    : HeldItemModelPolicy.MAX_SELECTORS_PER_MODEL;
+        }
+
+        private boolean isValidSelector(Object value) {
+            return this == MOVEMENT
+                    ? MovementAnimationPolicy.isValidSelector(value)
+                    : HeldItemModelPolicy.isValidSelector(value);
+        }
+
+        private String entryName() {
+            return entryName;
+        }
+
+        private String translationKey() {
+            return translationKey;
+        }
+
+        private String entryTooltipKey() {
+            return entryTooltipKey;
+        }
+
+        private String invalidKey() {
+            return invalidKey;
+        }
     }
 }

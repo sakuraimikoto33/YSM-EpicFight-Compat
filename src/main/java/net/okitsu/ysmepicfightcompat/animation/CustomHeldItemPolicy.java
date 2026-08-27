@@ -160,6 +160,26 @@ final class CustomHeldItemPolicy {
                         rule.action(), hand));
     }
 
+    /**
+     * Whether the current item has model-authored geometry in its steady HOLD state.
+     * USE/SWING-only effects do not turn an ordinary item switch into a held-model
+     * replacement.
+     */
+    boolean replacesHeldItemAtRest(LivingEntity entity, InteractionHand hand) {
+        if (entity == null || hand == null) {
+            return false;
+        }
+        ItemStack stack = AnimationConditionMatcher.item(entity, hand);
+        if (stack.isEmpty()) {
+            return false;
+        }
+        return rules.getOrDefault(hand, List.of()).stream()
+                .filter(rule -> rule.action()
+                        == AnimationConditionMatcher.ItemAction.HOLD)
+                .anyMatch(rule -> AnimationConditionMatcher.matchesItem(
+                        entity, stack, rule.selector(), rule.action(), hand));
+    }
+
     /** Matches one automatic clip to the held item without depending on tick ordering. */
     boolean matchesClipItem(LivingEntity entity, String clipName) {
         Condition condition = condition(clipName);

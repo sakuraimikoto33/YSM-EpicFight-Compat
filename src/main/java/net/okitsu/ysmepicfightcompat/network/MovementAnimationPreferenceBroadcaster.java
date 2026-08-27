@@ -6,30 +6,29 @@ import net.minecraftforge.event.server.ServerStoppedEvent;
 import net.minecraftforge.eventbus.api.SubscribeEvent;
 import net.minecraftforge.fml.common.Mod;
 import net.okitsu.ysmepicfightcompat.CompatMod;
-import net.okitsu.ysmepicfightcompat.network.message.HeldItemPreferenceSnapshotMessage;
+import net.okitsu.ysmepicfightcompat.network.message.MovementAnimationPreferenceSnapshotMessage;
 
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 
-/** Relays each model owner's resolved cosmetic display state to tracking clients. */
+/** Relays each model owner's current resolved movement-pose decision. */
 @Mod.EventBusSubscriber(modid = CompatMod.MOD_ID, bus = Mod.EventBusSubscriber.Bus.FORGE)
-public final class HeldItemPreferenceBroadcaster {
-    private static final Map<UUID, HeldItemModelDisplayState> DISPLAY_STATES =
+public final class MovementAnimationPreferenceBroadcaster {
+    private static final Map<UUID, MovementAnimationDisplayState> DISPLAY_STATES =
             new ConcurrentHashMap<>();
 
-    private HeldItemPreferenceBroadcaster() {
+    private MovementAnimationPreferenceBroadcaster() {
     }
 
-    public static void accept(ServerPlayer player,
-                              HeldItemModelDisplayState state) {
+    public static void accept(ServerPlayer player, MovementAnimationDisplayState state) {
         if (player == null || state == null) {
             return;
         }
-        HeldItemModelDisplayState previous =
+        MovementAnimationDisplayState previous =
                 DISPLAY_STATES.put(player.getUUID(), state);
         if (!state.equals(previous)) {
-            CompatNetwork.toTrackersAndSelf(player, message(player, state));
+            CompatNetwork.toTrackersAndSelf(player, message(player));
         }
     }
 
@@ -63,18 +62,14 @@ public final class HeldItemPreferenceBroadcaster {
     }
 
     private static void send(ServerPlayer selectedPlayer, ServerPlayer recipient) {
-        HeldItemModelDisplayState state = DISPLAY_STATES.getOrDefault(
-                selectedPlayer.getUUID(), HeldItemModelDisplayState.UNKNOWN);
         if (CompatNetwork.isConnected(recipient)) {
-            CompatNetwork.toPlayer(recipient, message(selectedPlayer, state));
+            CompatNetwork.toPlayer(recipient, message(selectedPlayer));
         }
     }
 
-    private static HeldItemPreferenceSnapshotMessage message(
-            ServerPlayer player, HeldItemModelDisplayState state) {
-        return new HeldItemPreferenceSnapshotMessage(player.getUUID(),
-                state.mainHandYsm(), state.offHandYsm(),
-                state.mainHandYsmSwitchAnimation(),
-                state.offHandYsmSwitchAnimation());
+    private static MovementAnimationPreferenceSnapshotMessage message(ServerPlayer player) {
+        return new MovementAnimationPreferenceSnapshotMessage(
+                player.getUUID(), DISPLAY_STATES.getOrDefault(
+                player.getUUID(), MovementAnimationDisplayState.DEFAULT));
     }
 }

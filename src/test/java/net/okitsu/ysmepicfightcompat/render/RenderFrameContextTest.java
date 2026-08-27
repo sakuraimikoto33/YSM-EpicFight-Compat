@@ -1,5 +1,7 @@
 package net.okitsu.ysmepicfightcompat.render;
 
+import net.minecraft.world.InteractionHand;
+import net.minecraft.world.entity.HumanoidArm;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 
@@ -7,8 +9,10 @@ import java.util.HashMap;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class RenderFrameContextTest {
     @AfterEach
@@ -54,5 +58,17 @@ class RenderFrameContextTest {
                 null, Float.NaN);
 
         assertNull(frame.epicModelYaw());
+    }
+
+    @Test
+    void ordinaryBowMainhandSuppressionUsesTheOffArmPhysicalSide() {
+        assertFalse(RenderFrameContext.physicalRightForLogicalHand(
+                InteractionHand.MAIN_HAND, HumanoidArm.RIGHT, true));
+        assertTrue(RenderFrameContext.physicalRightForLogicalHand(
+                InteractionHand.MAIN_HAND, HumanoidArm.LEFT, true));
+        assertTrue(RenderFrameContext.physicalRightForLogicalHand(
+                InteractionHand.MAIN_HAND, HumanoidArm.RIGHT, false));
+        assertFalse(RenderFrameContext.physicalRightForLogicalHand(
+                InteractionHand.MAIN_HAND, HumanoidArm.LEFT, false));
     }
 }

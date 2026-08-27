@@ -1,8 +1,13 @@
 package net.okitsu.ysmepicfightcompat.network.message;
 
+import io.netty.buffer.Unpooled;
+import net.minecraft.network.FriendlyByteBuf;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.world.InteractionHand;
+import net.okitsu.ysmepicfightcompat.animation.MovementAnimationType;
 import net.okitsu.ysmepicfightcompat.cache.ModelDiskCache;
+import net.okitsu.ysmepicfightcompat.network.MovementAnimationDisplayState;
+import net.okitsu.ysmepicfightcompat.network.MovementAnimationPolicy;
 import org.junit.jupiter.api.Test;
 
 import java.util.UUID;
@@ -37,15 +42,62 @@ class ModelTransferMessageTest {
     void heldItemPreferenceMessagesContainOnlyResolvedPerHandState() {
         UUID playerId = UUID.randomUUID();
         HeldItemPreferenceUpdateMessage update =
-                new HeldItemPreferenceUpdateMessage(false, true);
+                new HeldItemPreferenceUpdateMessage(false, true, true, false);
         HeldItemPreferenceSnapshotMessage snapshot =
-                new HeldItemPreferenceSnapshotMessage(playerId, false, true);
+                new HeldItemPreferenceSnapshotMessage(
+                        playerId, false, true, true, false);
 
         assertFalse(update.mainHandYsm());
         assertTrue(update.offHandYsm());
+        assertTrue(update.mainHandYsmSwitchAnimation());
+        assertFalse(update.offHandYsmSwitchAnimation());
         assertEquals(playerId, snapshot.playerId());
         assertFalse(snapshot.mainHandYsm());
         assertTrue(snapshot.offHandYsm());
+        assertTrue(snapshot.mainHandYsmSwitchAnimation());
+        assertFalse(snapshot.offHandYsmSwitchAnimation());
+
+        FriendlyByteBuf updateBuffer = new FriendlyByteBuf(Unpooled.buffer());
+        HeldItemPreferenceUpdateMessage.write(update, updateBuffer);
+        assertEquals(update, HeldItemPreferenceUpdateMessage.read(updateBuffer));
+
+        FriendlyByteBuf snapshotBuffer = new FriendlyByteBuf(Unpooled.buffer());
+        HeldItemPreferenceSnapshotMessage.write(snapshot, snapshotBuffer);
+        assertEquals(snapshot,
+                HeldItemPreferenceSnapshotMessage.read(snapshotBuffer));
+    }
+
+    @Test
+    void movementPreferenceMessagesContainOnlyCurrentResolvedState() {
+        UUID playerId = UUID.randomUUID();
+        MovementAnimationDisplayState state = new MovementAnimationDisplayState(
+                "wine_fox/21_saint", MovementAnimationType.CREATIVE_FLIGHT, true);
+        MovementAnimationPreferenceUpdateMessage update =
+                new MovementAnimationPreferenceUpdateMessage(state);
+        MovementAnimationPreferenceSnapshotMessage snapshot =
+                new MovementAnimationPreferenceSnapshotMessage(playerId, state);
+
+        FriendlyByteBuf updateBuffer = new FriendlyByteBuf(Unpooled.buffer());
+        MovementAnimationPreferenceUpdateMessage.write(update, updateBuffer);
+        assertEquals(update,
+                MovementAnimationPreferenceUpdateMessage.read(updateBuffer));
+
+        FriendlyByteBuf snapshotBuffer = new FriendlyByteBuf(Unpooled.buffer());
+        MovementAnimationPreferenceSnapshotMessage.write(snapshot, snapshotBuffer);
+        assertEquals(snapshot,
+                MovementAnimationPreferenceSnapshotMessage.read(snapshotBuffer));
+    }
+
+    @Test
+    void movementPreferenceDecoderRejectsUnknownSemanticOrdinals() {
+        FriendlyByteBuf buffer = new FriendlyByteBuf(Unpooled.buffer());
+        buffer.writeUtf("wine_fox/21_saint",
+                MovementAnimationPolicy.MAX_MODEL_ID_LENGTH);
+        buffer.writeByte(MovementAnimationType.values().length);
+        buffer.writeBoolean(true);
+
+        assertThrows(IllegalArgumentException.class, () ->
+                MovementAnimationPreferenceUpdateMessage.read(buffer));
     }
 
     @Test

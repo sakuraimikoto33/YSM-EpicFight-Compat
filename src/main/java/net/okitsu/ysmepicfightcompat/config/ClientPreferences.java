@@ -5,6 +5,7 @@ import net.minecraftforge.common.ForgeConfigSpec;
 import net.minecraftforge.fml.ModLoadingContext;
 import net.minecraftforge.fml.config.ModConfig;
 import net.okitsu.ysmepicfightcompat.network.HeldItemModelPolicy;
+import net.okitsu.ysmepicfightcompat.network.MovementAnimationPolicy;
 
 import java.util.Collection;
 import java.util.List;
@@ -22,6 +23,14 @@ public final class ClientPreferences {
     public static final ForgeConfigSpec.BooleanValue USE_YSM_HELD_ITEM_MODELS_BY_DEFAULT;
     public static final ForgeConfigSpec.ConfigValue<Config>
             HELD_ITEM_MODEL_OVERRIDES;
+    public static final ForgeConfigSpec.BooleanValue
+            USE_YSM_HELD_ITEM_SWITCH_ANIMATIONS_BY_DEFAULT;
+    public static final ForgeConfigSpec.ConfigValue<Config>
+            HELD_ITEM_SWITCH_ANIMATION_OVERRIDES;
+    public static final ForgeConfigSpec.BooleanValue
+            USE_YSM_MOVEMENT_ANIMATIONS_BY_DEFAULT;
+    public static final ForgeConfigSpec.ConfigValue<Config>
+            MOVEMENT_ANIMATION_OVERRIDES;
     public static final ForgeConfigSpec.BooleanValue YSM_WARNING_ACKNOWLEDGED;
 
     static {
@@ -62,6 +71,35 @@ public final class ClientPreferences {
                 .translation("config.ysm_epicfight_compat.held_item_model_overrides")
                 .define("heldItemModelOverrides", Config::inMemory,
                         HeldItemModelPolicy::isValidConfiguration);
+        USE_YSM_HELD_ITEM_SWITCH_ANIMATIONS_BY_DEFAULT = config
+                .comment("Use official YSM held-item switch animations by default when the current item is not replaced by model-authored geometry.",
+                        "A model-authored replacement continues to follow useYsmHeldItemModelsByDefault and heldItemModelOverrides.",
+                        "Only the resolved per-hand animation state is synchronized; these rules remain local.")
+                .translation("config.ysm_epicfight_compat.use_ysm_held_item_switch_animations_by_default")
+                .define("useYsmHeldItemSwitchAnimationsByDefault", true);
+        HELD_ITEM_SWITCH_ANIMATION_OVERRIDES = config
+                .comment("Model-specific item IDs or #item_tags that use the opposite of the held-item switch animation default.",
+                        "These rules apply only when Epic Fight keeps rendering the ordinary item.",
+                        "Use minecraft:air to target the animation that switches to an empty hand.",
+                        "Each model ID is a table key whose value is a list of item selectors.",
+                        "Only the resolved per-hand animation state is synchronized; these rules remain local.")
+                .translation("config.ysm_epicfight_compat.held_item_switch_animation_overrides")
+                .define("heldItemSwitchAnimationOverrides", Config::inMemory,
+                        HeldItemModelPolicy::isValidConfiguration);
+        USE_YSM_MOVEMENT_ANIMATIONS_BY_DEFAULT = config
+                .comment("Use full-body YSM movement animations by default.",
+                        "This is disabled by default so Epic Fight keeps locomotion ownership unless a model rule opts in.",
+                        "Only the current resolved movement state is synchronized; these rules remain local.")
+                .translation("config.ysm_epicfight_compat.use_ysm_movement_animations_by_default")
+                .define("useYsmMovementAnimationsByDefault", false);
+        MOVEMENT_ANIMATION_OVERRIDES = config
+                .comment("Model-specific movement states that use the opposite of the default.",
+                        "Each model ID is a table key whose value is a list of semantic movement names.",
+                        "Example: \"wine_fox/21_saint\" = [\"run\", \"creative_flight\"].",
+                        "Rule contents remain local; only the current resolved pose decision is synchronized.")
+                .translation("config.ysm_epicfight_compat.movement_animation_overrides")
+                .define("movementAnimationOverrides", Config::inMemory,
+                        MovementAnimationPolicy::isValidConfiguration);
         YSM_WARNING_ACKNOWLEDGED = config
                 .comment("Whether the official YSM/Epic Fight compatibility warning was already shown.")
                 .translation("config.ysm_epicfight_compat.warning_acknowledged")
@@ -92,5 +130,29 @@ public final class ClientPreferences {
         HELD_ITEM_MODEL_OVERRIDES.set(
                 HeldItemModelPolicy.encodeConfiguration(rules));
         HELD_ITEM_MODEL_OVERRIDES.clearCache();
+    }
+
+    public static Map<String, List<String>> heldItemSwitchAnimationOverrides() {
+        return HeldItemModelPolicy.decodeConfiguration(
+                HELD_ITEM_SWITCH_ANIMATION_OVERRIDES.get());
+    }
+
+    public static void setHeldItemSwitchAnimationOverrides(
+            Map<String, ? extends Collection<String>> rules) {
+        HELD_ITEM_SWITCH_ANIMATION_OVERRIDES.set(
+                HeldItemModelPolicy.encodeConfiguration(rules));
+        HELD_ITEM_SWITCH_ANIMATION_OVERRIDES.clearCache();
+    }
+
+    public static Map<String, List<String>> movementAnimationOverrides() {
+        return MovementAnimationPolicy.decodeConfiguration(
+                MOVEMENT_ANIMATION_OVERRIDES.get());
+    }
+
+    public static void setMovementAnimationOverrides(
+            Map<String, ? extends Collection<String>> rules) {
+        MOVEMENT_ANIMATION_OVERRIDES.set(
+                MovementAnimationPolicy.encodeConfiguration(rules));
+        MOVEMENT_ANIMATION_OVERRIDES.clearCache();
     }
 }
