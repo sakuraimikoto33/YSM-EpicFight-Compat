@@ -18,12 +18,14 @@ YSM Epic Fight Compat is a Forge mod that renders player models selected in the 
 - Uses the model and texture selected by each player in single-player and multiplayer.
 - Keeps parsed local models, validated remote models, and generated server transfer data in separate bounded disk caches without writing model JSON or standalone texture images.
 - Supports Epic Fight's third-person and first-person combat rendering.
-- Keeps Epic Fight in control of combat poses while applying YSM auxiliary-bone, automatic, conditional, riding, roulette, and animation-controller motion where compatible.
+- Uses model-authored YSM full-body movement by default for walking, running, sneaking, jumping, creative and elytra flight, swimming, crawling, and ladder movement, with per-model state exceptions. Epic Fight actions immediately regain pose ownership from configured movement.
+- Applies YSM auxiliary-bone, automatic, conditional, riding, roulette, item-switch, and Animation Controller motion through pose paths appropriate to each animation.
 - Uses a model-authored YSM weapon or tool when the selected model actually defines one for the held item; otherwise Epic Fight keeps rendering the item.
+- Plays an authored YSM full-body hold transition, when the model provides one, after an item changes. Model-authored replacements follow the held-item model setting, while ordinary items rendered by Epic Fight use an independent switch-animation setting.
 - Applies the complete authored YSM draw and release pose for detected custom bows, and prevents duplicate Epic Fight/YSM attack-swing audio when a custom replacement owns the sound.
 - Evaluates the supported official YSM Molang math functions, read-only queries, auxiliary physics functions, and model variables, including the `v.*`/`variable.*` and `v.roaming.*`/`variable.roaming.*` aliases.
 - Supports Animation Controller state variables and `remap_curve`, model-local sound output, Molang particle helpers, and declarative Bedrock `particle_effects`.
-- Synchronizes model selection, model-variable state, and each model owner's resolved per-hand replacement state so remote players see the same cosmetic result without receiving the owner's local rules.
+- Synchronizes model selection, model-variable state, resolved movement ownership, and each model owner's resolved per-hand replacement and switch-animation state so remote players see the same cosmetic result without receiving the owner's local rules.
 - Can hide official YSM's top-left overlay while Epic Fight battle mode is active.
 - Returns rendering to official YSM when Epic Fight no longer overrides the player renderer.
 - Refreshes converted models after resource reloads and YSM model reload commands.
@@ -36,7 +38,7 @@ When a converted model is active, armor, head equipment, and elytra are hidden b
 
 Install this mod and all requirements in the `mods` directory. For multiplayer, install YSM Epic Fight Compat on both the dedicated server and every participating client so that player selections and server-provided models can be resolved consistently.
 
-[Configured](https://www.curseforge.com/minecraft/mc-mods/configured) is optional. When it is installed, client options such as YSM's battle-mode overlay, model-cache limits, the default held-item replacement policy, and model-specific item or item-tag exceptions can be changed in game. The model-specific editor appears inside the normal Client settings and adds the currently selected model ID as an editable entry. The mod starts normally without Configured, but that settings screen is unavailable.
+[Configured](https://www.curseforge.com/minecraft/mc-mods/configured) is optional. When it is installed, client options such as YSM's battle-mode overlay, model-cache limits, the held-item replacement and item-switch animation policies, YSM movement ownership, and their model-specific exceptions can be changed in game. The model-specific editors appear inside the normal Client settings and add the currently selected model ID as an editable entry. The mod starts normally without Configured, but that settings screen is unavailable.
 
 ## Building
 
