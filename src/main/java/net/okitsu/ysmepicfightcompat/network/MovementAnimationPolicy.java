@@ -13,7 +13,7 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 
-/** Client-local model rules deciding which semantic movement states use YSM poses. */
+/** Client-local exclusions deciding which semantic movement states skip YSM poses. */
 public final class MovementAnimationPolicy {
     public static final int MAX_MODELS = 256;
     public static final int MAX_SELECTORS_PER_MODEL = MovementAnimationType.values().length;
@@ -21,18 +21,18 @@ public final class MovementAnimationPolicy {
     public static final MovementAnimationPolicy DEFAULT =
             new MovementAnimationPolicy(false, Map.of());
 
-    private final boolean ysmByDefault;
+    private final boolean ysmEnabled;
     private final Map<String, Set<MovementAnimationType>> modelRules;
 
     private MovementAnimationPolicy(
-            boolean ysmByDefault,
+            boolean ysmEnabled,
             Map<String, Set<MovementAnimationType>> modelRules) {
-        this.ysmByDefault = ysmByDefault;
+        this.ysmEnabled = ysmEnabled;
         this.modelRules = Map.copyOf(modelRules);
     }
 
     public static MovementAnimationPolicy create(
-            boolean ysmByDefault,
+            boolean ysmEnabled,
             Map<String, ? extends Collection<?>> configured) {
         Map<String, ? extends Collection<?>> source =
                 configured == null ? Map.of() : configured;
@@ -64,8 +64,8 @@ public final class MovementAnimationPolicy {
             }
             parsed.put(modelId, Set.copyOf(kinds));
         });
-        return parsed.isEmpty() && !ysmByDefault ? DEFAULT
-                : new MovementAnimationPolicy(ysmByDefault, parsed);
+        return parsed.isEmpty() && !ysmEnabled ? DEFAULT
+                : new MovementAnimationPolicy(ysmEnabled, parsed);
     }
 
     public boolean usesYsm(String modelId, MovementAnimationType kind) {
@@ -73,8 +73,8 @@ public final class MovementAnimationPolicy {
             return false;
         }
         Set<MovementAnimationType> rules = modelRules.get(normalizeModelId(modelId));
-        boolean overridden = rules != null && rules.contains(kind);
-        return overridden ? !ysmByDefault : ysmByDefault;
+        boolean excluded = rules != null && rules.contains(kind);
+        return ysmEnabled && !excluded;
     }
 
     public static boolean isValidConfiguration(Object value) {

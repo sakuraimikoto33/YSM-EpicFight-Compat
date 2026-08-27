@@ -21,7 +21,7 @@ class HeldItemModelPolicyTest {
             "forge", "tools/bows");
 
     @Test
-    void appliesExceptionsOnlyToTheirSelectedModel() {
+    void appliesExclusionsOnlyToTheirSelectedModel() {
         HeldItemModelPolicy policy = HeldItemModelPolicy.create(true, Map.of(
                 "wine_fox/21_saint", List.of(
                         "minecraft:diamond_sword", "#forge:tools/bows")));
@@ -36,11 +36,11 @@ class HeldItemModelPolicyTest {
     }
 
     @Test
-    void exceptionsInvertAnEpicFightDefault() {
+    void exclusionsNeverEnableAYsmSettingThatIsOff() {
         HeldItemModelPolicy policy = HeldItemModelPolicy.create(false, Map.of(
                 "wine_fox/21_saint", List.of("minecraft:diamond_sword")));
 
-        assertTrue(policy.usesYsm("wine_fox/21_saint", SWORD,
+        assertFalse(policy.usesYsm("wine_fox/21_saint", SWORD,
                 ignored -> false));
         assertFalse(policy.usesYsm("wine_fox/05_magical", SWORD,
                 ignored -> false));
@@ -49,12 +49,12 @@ class HeldItemModelPolicyTest {
     @Test
     void switchAnimationPolicyIncludesTheOfficialEmptyHandDestination() {
         HeldItemModelPolicy enabled = HeldItemModelPolicy.create(true, Map.of());
-        HeldItemModelPolicy emptyException = HeldItemModelPolicy.create(true, Map.of(
+        HeldItemModelPolicy emptyExclusion = HeldItemModelPolicy.create(true, Map.of(
                 "wine_fox/01_taisho_maid", List.of("minecraft:air")));
 
         assertTrue(enabled.usesYsmForEmptySwitchAnimation(
                 "wine_fox/01_taisho_maid"));
-        assertFalse(emptyException.usesYsmForEmptySwitchAnimation(
+        assertFalse(emptyExclusion.usesYsmForEmptySwitchAnimation(
                 "wine_fox/01_taisho_maid"));
     }
 
@@ -81,12 +81,12 @@ class HeldItemModelPolicyTest {
         Config root = Config.inMemory();
         Config client = root.createSubConfig();
         root.set(List.of("client"), client);
-        client.set(List.of("heldItemModelOverrides"), encoded);
+        client.set(List.of("heldItemModelExclusions"), encoded);
         StringWriter output = new StringWriter();
         new TomlWriter().write(root, output);
         String toml = output.toString();
 
-        assertTrue(toml.contains("[client.heldItemModelOverrides]"));
+        assertTrue(toml.contains("[client.heldItemModelExclusions]"));
         assertTrue(toml.contains("\"wine_fox/21_saint\" = ["));
         assertFalse(toml.contains("wine_fox/21_saint="));
     }

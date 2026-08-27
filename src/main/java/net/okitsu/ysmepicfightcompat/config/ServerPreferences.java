@@ -10,7 +10,8 @@ public final class ServerPreferences {
             "ysm_epicfight_compat/ysm_epicfight_compat-common.toml";
     public static final ForgeConfigSpec COMMON_SPEC;
     public static final ForgeConfigSpec.BooleanValue SERVER_MODEL_DISK_CACHE_ENABLED;
-    public static final ForgeConfigSpec.IntValue SERVER_MODEL_DISK_CACHE_MIB;
+    public static final ForgeConfigSpec.ConfigValue<Integer>
+            SERVER_MODEL_DISK_CACHE_MIB;
 
     static {
         ForgeConfigSpec.Builder config = new ForgeConfigSpec.Builder();
@@ -19,19 +20,28 @@ public final class ServerPreferences {
                 .push("server");
         SERVER_MODEL_DISK_CACHE_ENABLED = config
                 .comment("Persist generated server model transfer payloads between sessions.",
-                        "The bounded in-memory transfer cache remains enabled when this is false.")
+                        "The bounded in-memory transfer cache remains enabled when this is false.",
+                        "Default: true")
                 .translation("config.ysm_epicfight_compat.server_model_disk_cache_enabled")
                 .define("serverModelDiskCacheEnabled", true);
         SERVER_MODEL_DISK_CACHE_MIB = config
                 .comment("Maximum disk space in MiB for generated server model payloads.",
-                        "Set to zero to disable and clear the persistent cache.")
+                        "Set to zero to disable and clear the persistent cache.",
+                        "Range: 0 ~ 4096",
+                        "Default: 256")
                 .translation("config.ysm_epicfight_compat.server_model_disk_cache_mib")
-                .defineInRange("serverModelDiskCacheMiB", 256, 0, 4096);
+                .define("serverModelDiskCacheMiB", 256,
+                        value -> integerInRange(value, 0, 4096));
         config.pop();
         COMMON_SPEC = config.build();
     }
 
     private ServerPreferences() {
+    }
+
+    private static boolean integerInRange(Object value, int minimum, int maximum) {
+        return value instanceof Integer integer
+                && integer >= minimum && integer <= maximum;
     }
 
     @SuppressWarnings("removal")

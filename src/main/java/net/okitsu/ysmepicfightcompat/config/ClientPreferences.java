@@ -16,21 +16,24 @@ public final class ClientPreferences {
     public static final String CONFIG_FILE =
             "ysm_epicfight_compat/ysm_epicfight_compat-client.toml";
     public static final ForgeConfigSpec CLIENT_SPEC;
-    public static final ForgeConfigSpec.IntValue CLIENT_MODEL_MEMORY_CACHE_SIZE;
-    public static final ForgeConfigSpec.IntValue CLIENT_MODEL_DISK_CACHE_MIB;
-    public static final ForgeConfigSpec.IntValue REMOTE_MODEL_DISK_CACHE_MIB;
+    public static final ForgeConfigSpec.ConfigValue<Integer>
+            CLIENT_MODEL_MEMORY_CACHE_SIZE;
+    public static final ForgeConfigSpec.ConfigValue<Integer>
+            CLIENT_MODEL_DISK_CACHE_MIB;
+    public static final ForgeConfigSpec.ConfigValue<Integer>
+            REMOTE_MODEL_DISK_CACHE_MIB;
     public static final ForgeConfigSpec.BooleanValue SUPPRESS_BATTLE_MODE_OVERLAY;
-    public static final ForgeConfigSpec.BooleanValue USE_YSM_HELD_ITEM_MODELS_BY_DEFAULT;
+    public static final ForgeConfigSpec.BooleanValue USE_YSM_HELD_ITEM_MODELS;
     public static final ForgeConfigSpec.ConfigValue<Config>
-            HELD_ITEM_MODEL_OVERRIDES;
+            HELD_ITEM_MODEL_EXCLUSIONS;
     public static final ForgeConfigSpec.BooleanValue
-            USE_YSM_HELD_ITEM_SWITCH_ANIMATIONS_BY_DEFAULT;
+            USE_YSM_HELD_ITEM_SWITCH_ANIMATIONS;
     public static final ForgeConfigSpec.ConfigValue<Config>
-            HELD_ITEM_SWITCH_ANIMATION_OVERRIDES;
+            HELD_ITEM_SWITCH_ANIMATION_EXCLUSIONS;
     public static final ForgeConfigSpec.BooleanValue
-            USE_YSM_MOVEMENT_ANIMATIONS_BY_DEFAULT;
+            USE_YSM_MOVEMENT_ANIMATIONS;
     public static final ForgeConfigSpec.ConfigValue<Config>
-            MOVEMENT_ANIMATION_OVERRIDES;
+            MOVEMENT_ANIMATION_EXCLUSIONS;
     public static final ForgeConfigSpec.BooleanValue YSM_WARNING_ACKNOWLEDGED;
 
     static {
@@ -39,69 +42,86 @@ public final class ClientPreferences {
                 .translation("config.ysm_epicfight_compat.client")
                 .push("client");
         CLIENT_MODEL_MEMORY_CACHE_SIZE = config
-                .comment("Maximum number of converted YSM combat meshes retained in memory.")
+                .comment("Maximum number of converted YSM combat meshes retained in memory.",
+                        "Range: 8 ~ 512",
+                        "Default: 64")
                 .translation("config.ysm_epicfight_compat.client_model_memory_cache_size")
-                .defineInRange("clientModelMemoryCacheSize", 64, 8, 512);
+                .define("clientModelMemoryCacheSize", 64,
+                        value -> integerInRange(value, 8, 512));
         CLIENT_MODEL_DISK_CACHE_MIB = config
                 .comment("Maximum disk space in MiB for parsed models available on this client.",
-                        "Set to zero to disable and clear this disk cache.")
+                        "Set to zero to disable and clear this disk cache.",
+                        "Range: 0 ~ 4096",
+                        "Default: 64")
                 .translation("config.ysm_epicfight_compat.client_model_disk_cache_mib")
-                .defineInRange("clientModelDiskCacheMiB", 64, 0, 4096);
+                .define("clientModelDiskCacheMiB", 64,
+                        value -> integerInRange(value, 0, 4096));
         REMOTE_MODEL_DISK_CACHE_MIB = config
                 .comment("Maximum disk space in MiB for models received from multiplayer servers.",
-                        "Set to zero to disable and clear this disk cache.")
+                        "Set to zero to disable and clear this disk cache.",
+                        "Range: 0 ~ 4096",
+                        "Default: 64")
                 .translation("config.ysm_epicfight_compat.remote_model_disk_cache_mib")
-                .defineInRange("remoteModelDiskCacheMiB", 64, 0, 4096);
+                .define("remoteModelDiskCacheMiB", 64,
+                        value -> integerInRange(value, 0, 4096));
         SUPPRESS_BATTLE_MODE_OVERLAY = config
                 .comment("Suppress official YSM's extra player overlay while Epic Fight battle mode is active.",
                         "Set this to false to let official YSM render the overlay again.",
-                        "The value is read for every overlay frame, so a live client-config reload takes effect without restarting.")
+                        "The value is read for every overlay frame, so a live client-config reload takes effect without restarting.",
+                        "Default: true")
                 .translation("config.ysm_epicfight_compat.suppress_battle_overlay")
                 .define("suppressBattleModeOverlay", true);
-        USE_YSM_HELD_ITEM_MODELS_BY_DEFAULT = config
-                .comment("Use model-authored YSM held-item models by default when available.",
-                        "Only the resolved per-hand display state is synchronized; these rules remain local.")
-                .translation("config.ysm_epicfight_compat.use_ysm_held_item_models_by_default")
-                .define("useYsmHeldItemModelsByDefault", true);
-        HELD_ITEM_MODEL_OVERRIDES = config
-                .comment("Model-specific item IDs or #item_tags that use the opposite of the default.",
-                        "Each model ID is a table key whose value is a list of item selectors.",
+        USE_YSM_HELD_ITEM_MODELS = config
+                .comment("Use model-authored YSM held-item models when available.",
+                        "Only the resolved per-hand display state is synchronized; these rules remain local.",
+                        "Default: true")
+                .translation("config.ysm_epicfight_compat.use_ysm_held_item_models")
+                .define("useYsmHeldItemModels", true);
+        HELD_ITEM_MODEL_EXCLUSIONS = config
+                .comment("Model-specific item IDs or #item_tags that disable YSM held-item models.",
+                        "The list never enables YSM held-item models when the main setting is disabled.",
+                        "Rule contents remain local; only resolved per-hand display state is synchronized.",
                         "Example: \"wine_fox/21_saint\" = [\"minecraft:diamond_sword\", \"#forge:tools/bows\"].",
-                        "Rule contents remain local; only resolved per-hand display state is synchronized.")
-                .translation("config.ysm_epicfight_compat.held_item_model_overrides")
-                .define("heldItemModelOverrides", Config::inMemory,
+                        "Default: {}")
+                .translation("config.ysm_epicfight_compat.held_item_model_exclusions")
+                .define("heldItemModelExclusions", Config::inMemory,
                         HeldItemModelPolicy::isValidConfiguration);
-        USE_YSM_HELD_ITEM_SWITCH_ANIMATIONS_BY_DEFAULT = config
-                .comment("Use official YSM held-item switch animations by default when the current item is not replaced by model-authored geometry.",
-                        "A model-authored replacement continues to follow useYsmHeldItemModelsByDefault and heldItemModelOverrides.",
-                        "Only the resolved per-hand animation state is synchronized; these rules remain local.")
-                .translation("config.ysm_epicfight_compat.use_ysm_held_item_switch_animations_by_default")
-                .define("useYsmHeldItemSwitchAnimationsByDefault", true);
-        HELD_ITEM_SWITCH_ANIMATION_OVERRIDES = config
-                .comment("Model-specific item IDs or #item_tags that use the opposite of the held-item switch animation default.",
+        USE_YSM_HELD_ITEM_SWITCH_ANIMATIONS = config
+                .comment("Use official YSM held-item switch animations when the current item is not replaced by model-authored geometry.",
+                        "A model-authored replacement continues to follow useYsmHeldItemModels and heldItemModelExclusions.",
+                        "Only the resolved per-hand animation state is synchronized; these rules remain local.",
+                        "Default: true")
+                .translation("config.ysm_epicfight_compat.use_ysm_held_item_switch_animations")
+                .define("useYsmHeldItemSwitchAnimations", true);
+        HELD_ITEM_SWITCH_ANIMATION_EXCLUSIONS = config
+                .comment("Model-specific item IDs or #item_tags that disable YSM held-item switch animations.",
                         "These rules apply only when Epic Fight keeps rendering the ordinary item.",
+                        "The list never enables YSM switch animations when the main setting is disabled.",
                         "Use minecraft:air to target the animation that switches to an empty hand.",
-                        "Each model ID is a table key whose value is a list of item selectors.",
-                        "Only the resolved per-hand animation state is synchronized; these rules remain local.")
-                .translation("config.ysm_epicfight_compat.held_item_switch_animation_overrides")
-                .define("heldItemSwitchAnimationOverrides", Config::inMemory,
+                        "Only the resolved per-hand animation state is synchronized; these rules remain local.",
+                        "Example: \"wine_fox/05_magical\" = [\"minecraft:diamond_pickaxe\", \"minecraft:air\", \"#forge:tools/pickaxes\"].",
+                        "Default: {}")
+                .translation("config.ysm_epicfight_compat.held_item_switch_animation_exclusions")
+                .define("heldItemSwitchAnimationExclusions", Config::inMemory,
                         HeldItemModelPolicy::isValidConfiguration);
-        USE_YSM_MOVEMENT_ANIMATIONS_BY_DEFAULT = config
-                .comment("Use full-body YSM movement animations by default.",
-                        "This is enabled by default; model-specific rules can opt individual movement states out.",
-                        "Only the current resolved movement state is synchronized; these rules remain local.")
-                .translation("config.ysm_epicfight_compat.use_ysm_movement_animations_by_default")
-                .define("useYsmMovementAnimationsByDefault", true);
-        MOVEMENT_ANIMATION_OVERRIDES = config
-                .comment("Model-specific movement states that use the opposite of the default.",
-                        "Each model ID is a table key whose value is a list of semantic movement names.",
+        USE_YSM_MOVEMENT_ANIMATIONS = config
+                .comment("Use full-body YSM movement animations.",
+                        "Only the current resolved movement state is synchronized; these rules remain local.",
+                        "Default: true")
+                .translation("config.ysm_epicfight_compat.use_ysm_movement_animations")
+                .define("useYsmMovementAnimations", true);
+        MOVEMENT_ANIMATION_EXCLUSIONS = config
+                .comment("Model-specific movement states that disable YSM movement animations.",
+                        "The list never enables YSM movement animations when the main setting is disabled.",
+                        "Rule contents remain local; only the current resolved pose decision is synchronized.",
                         "Example: \"wine_fox/21_saint\" = [\"run\", \"creative_flight\"].",
-                        "Rule contents remain local; only the current resolved pose decision is synchronized.")
-                .translation("config.ysm_epicfight_compat.movement_animation_overrides")
-                .define("movementAnimationOverrides", Config::inMemory,
+                        "Default: {}")
+                .translation("config.ysm_epicfight_compat.movement_animation_exclusions")
+                .define("movementAnimationExclusions", Config::inMemory,
                         MovementAnimationPolicy::isValidConfiguration);
         YSM_WARNING_ACKNOWLEDGED = config
-                .comment("Whether the official YSM/Epic Fight compatibility warning was already shown.")
+                .comment("Whether the official YSM/Epic Fight compatibility warning was already shown.",
+                        "Default: false")
                 .translation("config.ysm_epicfight_compat.warning_acknowledged")
                 .define("epicFightCompatibilityWarningShown", false);
         config.pop();
@@ -109,6 +129,11 @@ public final class ClientPreferences {
     }
 
     private ClientPreferences() {
+    }
+
+    private static boolean integerInRange(Object value, int minimum, int maximum) {
+        return value instanceof Integer integer
+                && integer >= minimum && integer <= maximum;
     }
 
     @SuppressWarnings("removal")
@@ -120,39 +145,39 @@ public final class ClientPreferences {
         return SUPPRESS_BATTLE_MODE_OVERLAY.get();
     }
 
-    public static Map<String, List<String>> heldItemModelOverrides() {
+    public static Map<String, List<String>> heldItemModelExclusions() {
         return HeldItemModelPolicy.decodeConfiguration(
-                HELD_ITEM_MODEL_OVERRIDES.get());
+                HELD_ITEM_MODEL_EXCLUSIONS.get());
     }
 
-    public static void setHeldItemModelOverrides(
+    public static void setHeldItemModelExclusions(
             Map<String, ? extends Collection<String>> rules) {
-        HELD_ITEM_MODEL_OVERRIDES.set(
+        HELD_ITEM_MODEL_EXCLUSIONS.set(
                 HeldItemModelPolicy.encodeConfiguration(rules));
-        HELD_ITEM_MODEL_OVERRIDES.clearCache();
+        HELD_ITEM_MODEL_EXCLUSIONS.clearCache();
     }
 
-    public static Map<String, List<String>> heldItemSwitchAnimationOverrides() {
+    public static Map<String, List<String>> heldItemSwitchAnimationExclusions() {
         return HeldItemModelPolicy.decodeConfiguration(
-                HELD_ITEM_SWITCH_ANIMATION_OVERRIDES.get());
+                HELD_ITEM_SWITCH_ANIMATION_EXCLUSIONS.get());
     }
 
-    public static void setHeldItemSwitchAnimationOverrides(
+    public static void setHeldItemSwitchAnimationExclusions(
             Map<String, ? extends Collection<String>> rules) {
-        HELD_ITEM_SWITCH_ANIMATION_OVERRIDES.set(
+        HELD_ITEM_SWITCH_ANIMATION_EXCLUSIONS.set(
                 HeldItemModelPolicy.encodeConfiguration(rules));
-        HELD_ITEM_SWITCH_ANIMATION_OVERRIDES.clearCache();
+        HELD_ITEM_SWITCH_ANIMATION_EXCLUSIONS.clearCache();
     }
 
-    public static Map<String, List<String>> movementAnimationOverrides() {
+    public static Map<String, List<String>> movementAnimationExclusions() {
         return MovementAnimationPolicy.decodeConfiguration(
-                MOVEMENT_ANIMATION_OVERRIDES.get());
+                MOVEMENT_ANIMATION_EXCLUSIONS.get());
     }
 
-    public static void setMovementAnimationOverrides(
+    public static void setMovementAnimationExclusions(
             Map<String, ? extends Collection<String>> rules) {
-        MOVEMENT_ANIMATION_OVERRIDES.set(
+        MOVEMENT_ANIMATION_EXCLUSIONS.set(
                 MovementAnimationPolicy.encodeConfiguration(rules));
-        MOVEMENT_ANIMATION_OVERRIDES.clearCache();
+        MOVEMENT_ANIMATION_EXCLUSIONS.clearCache();
     }
 }

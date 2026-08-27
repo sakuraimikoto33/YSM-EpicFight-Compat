@@ -21,12 +21,12 @@ class MovementAnimationPolicyTest {
     private static final String MAGICAL = "wine_fox/05_magical";
 
     @Test
-    void defaultsToEpicFightAndInvertsOnlyListedModelStates() {
+    void exclusionsNeverEnableAYsmSettingThatIsOff() {
         MovementAnimationPolicy policy = MovementAnimationPolicy.create(false,
                 Map.of(SAINT, List.of("run", "creative_flight")));
 
-        assertTrue(policy.usesYsm(SAINT, MovementAnimationType.RUN));
-        assertTrue(policy.usesYsm(" WINE_FOX/21_SAINT ",
+        assertFalse(policy.usesYsm(SAINT, MovementAnimationType.RUN));
+        assertFalse(policy.usesYsm(" WINE_FOX/21_SAINT ",
                 MovementAnimationType.CREATIVE_FLIGHT));
         assertFalse(policy.usesYsm(SAINT, MovementAnimationType.WALK));
         assertFalse(policy.usesYsm(MAGICAL, MovementAnimationType.RUN));
@@ -34,7 +34,7 @@ class MovementAnimationPolicyTest {
     }
 
     @Test
-    void inverseListCanOptOutFromAYsmDefault() {
+    void exclusionsDisableOnlyListedModelStatesWhenEnabled() {
         MovementAnimationPolicy policy = MovementAnimationPolicy.create(true,
                 Map.of(SAINT, List.of("elytra_flight")));
 
@@ -95,12 +95,12 @@ class MovementAnimationPolicyTest {
         Config root = Config.inMemory();
         Config client = root.createSubConfig();
         root.set(List.of("client"), client);
-        client.set(List.of("movementAnimationOverrides"), encoded);
+        client.set(List.of("movementAnimationExclusions"), encoded);
         StringWriter output = new StringWriter();
         new TomlWriter().write(root, output);
         String toml = output.toString();
 
-        assertTrue(toml.contains("[client.movementAnimationOverrides]"));
+        assertTrue(toml.contains("[client.movementAnimationExclusions]"));
         assertTrue(toml.contains("\"wine_fox/21_saint\" = ["));
     }
 

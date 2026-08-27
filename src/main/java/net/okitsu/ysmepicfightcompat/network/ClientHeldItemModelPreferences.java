@@ -18,9 +18,9 @@ public final class ClientHeldItemModelPreferences {
     private static HeldItemModelPolicy cachedSwitchAnimationPolicy =
             HeldItemModelPolicy.DEFAULT;
     private static Map<String, List<String>> cachedRules = Map.of();
-    private static boolean cachedDefault = true;
+    private static boolean cachedEnabled = true;
     private static Map<String, List<String>> cachedSwitchAnimationRules = Map.of();
-    private static boolean cachedSwitchAnimationDefault = true;
+    private static boolean cachedSwitchAnimationEnabled = true;
     private static boolean policyInitialized;
     private static boolean switchAnimationPolicyInitialized;
     private static boolean invalidRulesLogged;
@@ -93,17 +93,17 @@ public final class ClientHeldItemModelPreferences {
     }
 
     private static HeldItemModelPolicy localPolicy() {
-        boolean ysmByDefault =
-                ClientPreferences.USE_YSM_HELD_ITEM_MODELS_BY_DEFAULT.get();
+        boolean ysmEnabled =
+                ClientPreferences.USE_YSM_HELD_ITEM_MODELS.get();
         Map<String, List<String>> rules =
-                ClientPreferences.heldItemModelOverrides();
-        if (policyInitialized && cachedDefault == ysmByDefault
+                ClientPreferences.heldItemModelExclusions();
+        if (policyInitialized && cachedEnabled == ysmEnabled
                 && cachedRules.equals(rules)) {
             return cachedPolicy;
         }
         try {
-            cachedPolicy = HeldItemModelPolicy.create(ysmByDefault, rules);
-            cachedDefault = ysmByDefault;
+            cachedPolicy = HeldItemModelPolicy.create(ysmEnabled, rules);
+            cachedEnabled = ysmEnabled;
             cachedRules = Map.copyOf(rules);
             policyInitialized = true;
             invalidRulesLogged = false;
@@ -111,11 +111,11 @@ public final class ClientHeldItemModelPreferences {
             if (!invalidRulesLogged) {
                 invalidRulesLogged = true;
                 CompatMod.LOG.warn(
-                        "YSM-EF Compat: invalid held-item model rules; using the default policy",
+                        "YSM-EF Compat: invalid held-item model exclusions; using the main setting without exclusions",
                         exception);
             }
-            cachedPolicy = HeldItemModelPolicy.DEFAULT;
-            cachedDefault = ysmByDefault;
+            cachedPolicy = HeldItemModelPolicy.create(ysmEnabled, Map.of());
+            cachedEnabled = ysmEnabled;
             cachedRules = Map.copyOf(rules);
             policyInitialized = true;
         }
@@ -123,19 +123,19 @@ public final class ClientHeldItemModelPreferences {
     }
 
     private static HeldItemModelPolicy localSwitchAnimationPolicy() {
-        boolean ysmByDefault = ClientPreferences
-                .USE_YSM_HELD_ITEM_SWITCH_ANIMATIONS_BY_DEFAULT.get();
+        boolean ysmEnabled = ClientPreferences
+                .USE_YSM_HELD_ITEM_SWITCH_ANIMATIONS.get();
         Map<String, List<String>> rules =
-                ClientPreferences.heldItemSwitchAnimationOverrides();
+                ClientPreferences.heldItemSwitchAnimationExclusions();
         if (switchAnimationPolicyInitialized
-                && cachedSwitchAnimationDefault == ysmByDefault
+                && cachedSwitchAnimationEnabled == ysmEnabled
                 && cachedSwitchAnimationRules.equals(rules)) {
             return cachedSwitchAnimationPolicy;
         }
         try {
             cachedSwitchAnimationPolicy =
-                    HeldItemModelPolicy.create(ysmByDefault, rules);
-            cachedSwitchAnimationDefault = ysmByDefault;
+                    HeldItemModelPolicy.create(ysmEnabled, rules);
+            cachedSwitchAnimationEnabled = ysmEnabled;
             cachedSwitchAnimationRules = Map.copyOf(rules);
             switchAnimationPolicyInitialized = true;
             invalidRulesLogged = false;
@@ -143,11 +143,12 @@ public final class ClientHeldItemModelPreferences {
             if (!invalidRulesLogged) {
                 invalidRulesLogged = true;
                 CompatMod.LOG.warn(
-                        "YSM-EF Compat: invalid held-item switch animation rules; using the default policy",
+                        "YSM-EF Compat: invalid held-item switch animation exclusions; using the main setting without exclusions",
                         exception);
             }
-            cachedSwitchAnimationPolicy = HeldItemModelPolicy.DEFAULT;
-            cachedSwitchAnimationDefault = ysmByDefault;
+            cachedSwitchAnimationPolicy =
+                    HeldItemModelPolicy.create(ysmEnabled, Map.of());
+            cachedSwitchAnimationEnabled = ysmEnabled;
             cachedSwitchAnimationRules = Map.copyOf(rules);
             switchAnimationPolicyInitialized = true;
         }

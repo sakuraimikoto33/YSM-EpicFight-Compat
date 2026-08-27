@@ -17,7 +17,7 @@ public final class ClientMovementAnimationPreferences {
     private static MovementAnimationDisplayState lastSent;
     private static MovementAnimationPolicy cachedPolicy = MovementAnimationPolicy.DEFAULT;
     private static Map<String, List<String>> cachedRules = Map.of();
-    private static boolean cachedDefault;
+    private static boolean cachedEnabled;
     private static boolean policyInitialized;
     private static boolean invalidRulesLogged;
 
@@ -89,27 +89,27 @@ public final class ClientMovementAnimationPreferences {
     }
 
     private static MovementAnimationPolicy localPolicy() {
-        boolean ysmByDefault =
-                ClientPreferences.USE_YSM_MOVEMENT_ANIMATIONS_BY_DEFAULT.get();
+        boolean ysmEnabled =
+                ClientPreferences.USE_YSM_MOVEMENT_ANIMATIONS.get();
         Map<String, List<String>> rules =
-                ClientPreferences.movementAnimationOverrides();
-        if (policyInitialized && cachedDefault == ysmByDefault
+                ClientPreferences.movementAnimationExclusions();
+        if (policyInitialized && cachedEnabled == ysmEnabled
                 && cachedRules.equals(rules)) {
             return cachedPolicy;
         }
         try {
-            cachedPolicy = MovementAnimationPolicy.create(ysmByDefault, rules);
+            cachedPolicy = MovementAnimationPolicy.create(ysmEnabled, rules);
             invalidRulesLogged = false;
         } catch (IllegalArgumentException exception) {
             if (!invalidRulesLogged) {
                 invalidRulesLogged = true;
                 CompatMod.LOG.warn(
-                        "YSM-EF Compat: invalid movement-animation rules; using the default policy",
+                        "YSM-EF Compat: invalid movement-animation exclusions; using the main setting without exclusions",
                         exception);
             }
-            cachedPolicy = MovementAnimationPolicy.create(ysmByDefault, Map.of());
+            cachedPolicy = MovementAnimationPolicy.create(ysmEnabled, Map.of());
         }
-        cachedDefault = ysmByDefault;
+        cachedEnabled = ysmEnabled;
         cachedRules = Map.copyOf(rules);
         policyInitialized = true;
         return cachedPolicy;

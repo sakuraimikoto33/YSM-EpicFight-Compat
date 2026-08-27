@@ -17,7 +17,7 @@ import java.util.Map;
 import java.util.Set;
 import java.util.function.Predicate;
 
-/** Client-local rules for choosing YSM held-item models for a selected YSM model. */
+/** Client-local exclusions for YSM held-item behavior on a selected YSM model. */
 public final class HeldItemModelPolicy {
     public static final int MAX_MODELS = 256;
     public static final int MAX_SELECTORS_PER_MODEL = 256;
@@ -28,16 +28,16 @@ public final class HeldItemModelPolicy {
     private static final ResourceLocation EMPTY_HAND_ID =
             ResourceLocation.fromNamespaceAndPath("minecraft", "air");
 
-    private final boolean ysmByDefault;
+    private final boolean ysmEnabled;
     private final Map<String, ModelRules> modelRules;
 
-    private HeldItemModelPolicy(boolean ysmByDefault,
+    private HeldItemModelPolicy(boolean ysmEnabled,
                                 Map<String, ModelRules> modelRules) {
-        this.ysmByDefault = ysmByDefault;
+        this.ysmEnabled = ysmEnabled;
         this.modelRules = Map.copyOf(modelRules);
     }
 
-    public static HeldItemModelPolicy create(boolean ysmByDefault,
+    public static HeldItemModelPolicy create(boolean ysmEnabled,
                                              Map<String, ? extends Collection<?>> configured) {
         Map<String, ? extends Collection<?>> source =
                 configured == null ? Map.of() : configured;
@@ -71,8 +71,8 @@ public final class HeldItemModelPolicy {
                     new ModelRules(Set.copyOf(items), Set.copyOf(tags)));
         });
 
-        return parsedRules.isEmpty() && ysmByDefault ? DEFAULT
-                : new HeldItemModelPolicy(ysmByDefault, parsedRules);
+        return parsedRules.isEmpty() && ysmEnabled ? DEFAULT
+                : new HeldItemModelPolicy(ysmEnabled, parsedRules);
     }
 
     /** Validates the dynamic model table stored as one Forge config value. */
@@ -167,9 +167,9 @@ public final class HeldItemModelPolicy {
             return false;
         }
         ModelRules rules = modelRules.get(normalizeModelId(modelId));
-        boolean overridden = rules != null && (rules.items().contains(itemId)
+        boolean excluded = rules != null && (rules.items().contains(itemId)
                 || rules.tags().stream().anyMatch(tagMatcher));
-        return overridden ? !ysmByDefault : ysmByDefault;
+        return ysmEnabled && !excluded;
     }
 
     private static ParsedSelector parseSelector(Object source) {

@@ -312,16 +312,16 @@ public final class ConfiguredHeldItemRules {
     }
 
     private enum RuleKind {
-        HELD_ITEM("heldItemModelOverrides",
-                "config.ysm_epicfight_compat.held_item_model_overrides",
+        HELD_ITEM("heldItemModelExclusions",
+                "config.ysm_epicfight_compat.held_item_model_exclusions",
                 "config.ysm_epicfight_compat.held_item_model_entry.tooltip",
                 "config.ysm_epicfight_compat.held_item_model_entry.invalid"),
-        HELD_ITEM_SWITCH("heldItemSwitchAnimationOverrides",
-                "config.ysm_epicfight_compat.held_item_switch_animation_overrides",
+        HELD_ITEM_SWITCH("heldItemSwitchAnimationExclusions",
+                "config.ysm_epicfight_compat.held_item_switch_animation_exclusions",
                 "config.ysm_epicfight_compat.held_item_switch_animation_entry.tooltip",
                 "config.ysm_epicfight_compat.held_item_switch_animation_entry.invalid"),
-        MOVEMENT("movementAnimationOverrides",
-                "config.ysm_epicfight_compat.movement_animation_overrides",
+        MOVEMENT("movementAnimationExclusions",
+                "config.ysm_epicfight_compat.movement_animation_exclusions",
                 "config.ysm_epicfight_compat.movement_animation_entry.tooltip",
                 "config.ysm_epicfight_compat.movement_animation_entry.invalid");
 
@@ -349,19 +349,19 @@ public final class ConfiguredHeldItemRules {
 
         private Map<String, List<String>> initialRules() {
             return switch (this) {
-                case HELD_ITEM -> ClientPreferences.heldItemModelOverrides();
+                case HELD_ITEM -> ClientPreferences.heldItemModelExclusions();
                 case HELD_ITEM_SWITCH ->
-                        ClientPreferences.heldItemSwitchAnimationOverrides();
-                case MOVEMENT -> ClientPreferences.movementAnimationOverrides();
+                        ClientPreferences.heldItemSwitchAnimationExclusions();
+                case MOVEMENT -> ClientPreferences.movementAnimationExclusions();
             };
         }
 
         private void save(Map<String, List<String>> rules) {
             switch (this) {
-                case HELD_ITEM -> ClientPreferences.setHeldItemModelOverrides(rules);
+                case HELD_ITEM -> ClientPreferences.setHeldItemModelExclusions(rules);
                 case HELD_ITEM_SWITCH ->
-                        ClientPreferences.setHeldItemSwitchAnimationOverrides(rules);
-                case MOVEMENT -> ClientPreferences.setMovementAnimationOverrides(rules);
+                        ClientPreferences.setHeldItemSwitchAnimationExclusions(rules);
+                case MOVEMENT -> ClientPreferences.setMovementAnimationExclusions(rules);
             }
         }
 
