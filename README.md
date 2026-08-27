@@ -2,7 +2,7 @@
 
 [日本語](README.ja.md)
 
-YSM Epic Fight Compat is a Forge mod that renders player models selected in the official Yes Steve Model mod with Epic Fight combat animations. Official YSM continues to own normal player rendering outside Epic Fight's combat renderer.
+YSM Epic Fight Compat is a Forge mod that renders player models selected in the official Yes Steve Model mod with Epic Fight combat animations. Official YSM continues to own normal player rendering outside Epic Fight's combat renderer. An optional adapter also applies the same converted models to supported Touhou Little Maid entities while EpicFight_TouhouLittleMaid owns their combat rendering.
 
 ## Version branches
 
@@ -20,7 +20,8 @@ Select the appropriate version branch before building the mod. Each `mc/*` branc
 - Converts YSM folder models and `.ysm` packages, including encrypted packages, into Epic Fight combat meshes.
 - Uses the model and texture selected by each player in single-player and multiplayer.
 - Keeps parsed local models, validated remote models, and generated server transfer data in separate bounded disk caches without writing model JSON or standalone texture images.
-- Supports Epic Fight's third-person and first-person combat rendering.
+- Supports Epic Fight's third-person and first-person combat rendering for players.
+- Optionally replaces EpicFight_TouhouLittleMaid's third-person combat mesh for a maid that has an official-YSM model selected. The original maid mesh remains the fallback while conversion is unavailable or the maid has no usable YSM selection.
 - Uses model-authored YSM full-body movement for walking, running, sneaking, jumping, creative and elytra flight, swimming, crawling, and ladder movement. It is enabled by default and supports per-model state exclusions; Epic Fight actions immediately regain pose ownership from configured movement.
 - Applies YSM auxiliary-bone, automatic, conditional, riding, roulette, item-switch, and Animation Controller motion through pose paths appropriate to each animation.
 - Uses a model-authored YSM weapon or tool when the selected model actually defines one for the held item; otherwise Epic Fight keeps rendering the item.
@@ -28,20 +29,23 @@ Select the appropriate version branch before building the mod. Each `mc/*` branc
 - Applies the complete authored YSM draw and release pose for detected custom bows, and prevents duplicate Epic Fight/YSM attack-swing audio when a custom replacement owns the sound.
 - Evaluates the supported official YSM Molang math functions, read-only queries, auxiliary physics functions, and model variables, including the `v.*`/`variable.*` and `v.roaming.*`/`variable.roaming.*` aliases.
 - Supports Animation Controller state variables and `remap_curve`, model-local sound output, Molang particle helpers, and declarative Bedrock `particle_effects`.
-- Synchronizes model selection, model-variable state, resolved movement ownership, and each model owner's resolved per-hand replacement and switch-animation state so remote players see the same cosmetic result without receiving the owner's local rules.
+- Synchronizes player model selection, model-variable state, resolved movement ownership, and each model owner's resolved per-hand replacement and switch-animation state so remote players see the same cosmetic result without receiving the owner's local rules.
+- Applies compatible YSM movement, auxiliary, roulette, held-item, item-switch, sound, and particle behavior to supported maids. Viewers receive the maid owner's resolved held-item, item-switch, and movement decisions with a bounded source fingerprint; local settings, exclusions, and tag rules are never synchronized.
 - Can hide official YSM's top-left overlay while Epic Fight battle mode is active.
-- Returns rendering to official YSM when Epic Fight no longer overrides the player renderer.
+- Returns player rendering to official YSM when Epic Fight no longer overrides it. Maid rendering remains owned by Touhou Little Maid and EpicFight_TouhouLittleMaid outside the adapter's exact patched-renderer scope.
 - Refreshes converted models after resource reloads and YSM model reload commands.
-- Falls back to Epic Fight's default player mesh when a selected model cannot be prepared.
+- Falls back to Epic Fight's default player mesh for players, or EpicFight_TouhouLittleMaid's original maid mesh for supported maids, when a selected model cannot be prepared.
 - Limits YSM's Epic Fight compatibility warning to its first display on a client installation.
 
-When a converted model is active, armor, head equipment, and elytra are hidden because their biped attachment points do not match arbitrary YSM bodies. Capes, arrows, bee stingers, and held items without an active model-authored replacement continue through Epic Fight's patched layers. Equipment rendering remains unchanged when the default Epic Fight mesh is used.
+For converted player models, armor, head equipment, and elytra are hidden because their biped attachment points do not match arbitrary YSM bodies. Capes, arrows, bee stingers, and held items without an active model-authored replacement continue through Epic Fight's patched layers. Equipment rendering remains unchanged when the default Epic Fight player mesh is used. The optional maid adapter retains EpicFight_TouhouLittleMaid's existing layers and suppresses only a hand whose active model-authored replacement owns that item.
 
 ## Installation
 
 Install this mod and all requirements in the `mods` directory. For multiplayer, install YSM Epic Fight Compat on both the dedicated server and every participating client so that player selections and server-provided models can be resolved consistently.
 
 [Configured](https://www.curseforge.com/minecraft/mc-mods/configured) is optional. When it is installed, client options such as YSM's battle-mode overlay, model-cache limits, YSM held-item replacements, YSM item-switch animations, YSM movement animations, and their model-specific exclusions can be changed in game. An exclusion disables the matching behavior while its main YSM setting is enabled and never enables it while that setting is disabled. The model-specific editors appear inside the normal Client settings and add the currently selected model ID as an editable entry. The mod starts normally without Configured, but that settings screen is unavailable.
+
+Touhou Little Maid integration is optional and activates only when both Touhou Little Maid and EpicFight_TouhouLittleMaid are installed. Neither mod is required when maid combat-model integration is not needed.
 
 ## Building
 

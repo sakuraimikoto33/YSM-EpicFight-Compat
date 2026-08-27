@@ -54,7 +54,7 @@ $sourceRoots = @(
     (Join-Path $repository 'build.gradle'),
     (Join-Path $repository 'gradle.properties')
 )
-$forbidden = 'com\.elfmcys|rip\.ysm|touhoulittlemaid|modern_ysm|open_ysm|libs[\\/].*ysm.*\.jar'
+$forbidden = 'com\.elfmcys|rip\.ysm|modern_ysm|open_ysm|libs[\\/].*ysm.*\.jar'
 foreach ($root in $sourceRoots) {
     if (-not (Test-Path -LiteralPath $root)) { continue }
     $files = if (Test-Path -LiteralPath $root -PathType Container) {
@@ -69,6 +69,24 @@ foreach ($root in $sourceRoots) {
         $errors.Add("Unsupported/private implementation reference found: $($matches[0].Path):$($matches[0].LineNumber)")
     }
 }
+
+$tlmPattern = 'touhoulittlemaid'
+$allowedTlmMixin = Join-Path $repository 'src/main/java/net/okitsu/ysmepicfightcompat/mixin/TouhouMaidAnimationStateMixin.java'
+$tlmMatches = @((Get-ChildItem -LiteralPath (Join-Path $repository 'src') -Recurse -File) |
+    ForEach-Object {
+        Select-String -LiteralPath $_.FullName -Pattern $tlmPattern -ErrorAction SilentlyContinue
+    })
+$unexpectedTlmMatches = @($tlmMatches | Where-Object {
+    $_.Path -ne $allowedTlmMixin -or $_.Line -notmatch '^\s*targets\s*='
+})
+if ($unexpectedTlmMatches) {
+    $match = $unexpectedTlmMatches[0]
+    $errors.Add("Touhou Little Maid implementation linkage escaped the optional Mixin boundary: $($match.Path):$($match.LineNumber)")
+}
+Require-Text 'src/main/java/net/okitsu/ysmepicfightcompat/mixin/TouhouMaidAnimationStateMixin.java' 'targets\s*=\s*"com\.github\.tartaricacid\.touhoulittlemaid\.entity\.passive\.EntityMaid"' 'The optional Touhou Little Maid hook must target the synchronized maid entity exactly.'
+Require-Text 'src/main/java/net/okitsu/ysmepicfightcompat/mixin/TouhouMaidAnimationStateMixin.java' 'method\s*=\s*"playRouletteAnim\(Ljava/lang/String;\)V"' 'The optional Touhou Little Maid hook must observe the exact public roulette start method.'
+Require-Text 'src/main/java/net/okitsu/ysmepicfightcompat/mixin/TouhouMaidAnimationStateMixin.java' '@Pseudo' 'The optional Touhou Little Maid hook must remain a pseudo Mixin.'
+Require-Text 'src/main/java/net/okitsu/ysmepicfightcompat/mixin/TouhouMaidAnimationStateMixin.java' 'require\s*=\s*0' 'The optional Touhou Little Maid observation hook must fail open when its public method is unavailable.'
 
 $tracked = @(& git -C $repository ls-files)
 if ($LASTEXITCODE -ne 0) { throw 'Unable to enumerate tracked files.' }
