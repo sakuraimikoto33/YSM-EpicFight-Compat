@@ -4,6 +4,7 @@ import net.minecraft.client.Minecraft;
 import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.entity.player.Player;
 import net.okitsu.ysmepicfightcompat.CompatMod;
+import net.okitsu.ysmepicfightcompat.integration.tlm.TouhouMaidAnimationStateAccess;
 import net.okitsu.ysmmapping.api.MappingSnapshot;
 import net.okitsu.ysmmapping.api.YsmMappingApi;
 import net.okitsu.ysmmapping.api.YsmMethodSymbol;
@@ -40,8 +41,13 @@ public final class OfficialRoamingVariables {
     private static final AtomicBoolean READ_FAILURE_LOGGED = new AtomicBoolean();
     private static final AtomicBoolean STOP_FAILURE_LOGGED = new AtomicBoolean();
 
-    public record RouletteState(String animationName, boolean playing) {
-        public static final RouletteState NONE = new RouletteState("", false);
+    public record RouletteState(String animationName, boolean playing,
+                                long generation) {
+        public static final RouletteState NONE = new RouletteState("", false, 0L);
+
+        public RouletteState(String animationName, boolean playing) {
+            this(animationName, playing, 0L);
+        }
 
         public RouletteState {
             animationName = animationName == null ? "" : animationName;
@@ -142,8 +148,14 @@ public final class OfficialRoamingVariables {
         }
     }
 
-    /** Reads the official YSM roulette state already synchronized for this player. */
+    /** Reads synchronized official-YSM roulette state for players and supported maids. */
     public static RouletteState rouletteState(LivingEntity entity) {
+        if (!(entity instanceof Player)) {
+            TouhouMaidAnimationStateAccess.RouletteState state =
+                    TouhouMaidAnimationStateAccess.rouletteState(entity);
+            return new RouletteState(state.animationName(), state.playing(),
+                    state.generation());
+        }
         Object capability = capability(entity);
         Access current = capability == null ? null : access();
         if (current == null) {
@@ -162,6 +174,9 @@ public final class OfficialRoamingVariables {
 
     /** Uses official YSM's own packet path to finish a local one-shot animation. */
     public static void stopLocalRouletteAnimation(LivingEntity entity) {
+        if (!(entity instanceof Player)) {
+            return;
+        }
         if (entity == null || entity != Minecraft.getInstance().player) {
             return;
         }
@@ -183,6 +198,7 @@ public final class OfficialRoamingVariables {
 
     public static void clear() {
         CAPABILITIES.clear();
+        TouhouMaidAnimationStateAccess.clear();
     }
 
     private static Access access() {

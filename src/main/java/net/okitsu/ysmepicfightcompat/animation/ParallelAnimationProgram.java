@@ -4,6 +4,7 @@ import net.minecraft.client.Minecraft;
 import net.minecraft.util.Mth;
 import net.minecraft.world.InteractionHand;
 import net.minecraft.world.entity.LivingEntity;
+import net.minecraft.world.entity.player.Player;
 import net.okitsu.ysmepicfightcompat.CompatMod;
 import net.okitsu.ysmepicfightcompat.geometry.GeometryDocument;
 import net.okitsu.ysmepicfightcompat.mesh.AuxiliaryBoneLayout;
@@ -509,13 +510,13 @@ public final class ParallelAnimationProgram {
 
     /** Whether this model replaces Epic Fight's item rendering for the current hand item. */
     public boolean replacesHeldItem(LivingEntity entity, InteractionHand hand) {
-        return ClientHeldItemModelPreferences.usesYsm(entity, hand)
+        return ClientHeldItemModelPreferences.usesYsm(entity, modelId, hand)
                 && customHeldItems.replaces(entity, hand);
     }
 
     /** Item-definition lookup used by server sound notifications before render catches up. */
     public boolean replacesAttackItem(LivingEntity entity, InteractionHand hand) {
-        return ClientHeldItemModelPreferences.usesYsm(entity, hand)
+        return ClientHeldItemModelPreferences.usesYsm(entity, modelId, hand)
                 && customHeldItems.replacesAttackItem(entity, hand);
     }
 
@@ -557,9 +558,23 @@ public final class ParallelAnimationProgram {
         sample(entity, 0.0F, firstPerson, null, epicFightActionActive);
     }
 
+    /** Releases per-entity controller state and bound outputs when an entity unloads. */
+    public void releaseEntity(LivingEntity entity) {
+        RuntimeState removed = entity == null ? null : states.remove(entity);
+        if (removed != null) {
+            removed.reset(0.0D);
+        }
+    }
+
+    /** Releases every entity state before the owning converted mesh is discarded. */
+    public void releaseAllEntities() {
+        states.values().forEach(state -> state.reset(0.0D));
+        states.clear();
+    }
+
     /** Bone-subtree roots that replace the current logical hand item. */
     public Set<String> heldItemReplacementRoots(LivingEntity entity, InteractionHand hand) {
-        return ClientHeldItemModelPreferences.usesYsm(entity, hand)
+        return ClientHeldItemModelPreferences.usesYsm(entity, modelId, hand)
                 ? customHeldItems.replacementRoots(entity, hand) : Set.of();
     }
 
@@ -638,6 +653,10 @@ public final class ParallelAnimationProgram {
         state.lastNow = now;
         OfficialRoamingVariables.RouletteState roulette =
                 OfficialRoamingVariables.rouletteState(entity);
+        // Player roulette audio is already started by official YSM. EFTLM bypasses
+        // that renderer for maids, so the converted maid path must own its copy.
+        state.rouletteSoundOutputEnabled = compatOwnsRouletteSound(
+                entity instanceof Player);
         double rouletteElapsed = state.rouletteElapsed(roulette, now);
         ClipProgram rouletteClip = roulette.playing()
                 ? rouletteClip(roulette.animationName()) : null;
@@ -921,7 +940,7 @@ public final class ParallelAnimationProgram {
     private Set<InteractionHand> ysmReplacementHands(LivingEntity entity) {
         LinkedHashSet<InteractionHand> result = new LinkedHashSet<>();
         for (InteractionHand hand : InteractionHand.values()) {
-            if (ClientHeldItemModelPreferences.usesYsm(entity, hand)
+            if (ClientHeldItemModelPreferences.usesYsm(entity, modelId, hand)
                     && customHeldItems.replacesAttackItem(entity, hand)) {
                 result.add(hand);
             }
@@ -1015,7 +1034,7 @@ public final class ParallelAnimationProgram {
     private Set<InteractionHand> customAttackSoundHands(LivingEntity entity) {
         LinkedHashSet<InteractionHand> result = new LinkedHashSet<>();
         for (InteractionHand hand : InteractionHand.values()) {
-            if (ClientHeldItemModelPreferences.usesYsm(entity, hand)
+            if (ClientHeldItemModelPreferences.usesYsm(entity, modelId, hand)
                     && customHeldItems.replaces(entity, hand)
                     && AnimationConditionMatcher.swingSignal(entity, hand).active()) {
                 result.add(hand);
@@ -1310,7 +1329,8 @@ public final class ParallelAnimationProgram {
             float localTime = rouletteTime(rouletteClip, rouletteElapsed);
             if (localTime >= 0.0F) {
                 fireProgramTimeline(rouletteClip, localTime, environment, runtimeState,
-                        rouletteClip.clip().name(), false);
+                        rouletteClip.clip().name(),
+                        runtimeState.rouletteSoundOutputEnabled);
             }
         }
         for (ClipProgram program : parallelClips) {
@@ -1469,11 +1489,12 @@ public final class ParallelAnimationProgram {
         if (rouletteClip != null && rouletteElapsed >= 0.0D) {
             float localTime = rouletteTime(rouletteClip, rouletteElapsed);
             if (localTime >= 0.0F) {
-                // Official YSM owns roulette audio even while Epic Fight owns the pose.
-                // Replaying the retained sound outputs here creates a second stream.
+                // Official YSM owns player roulette audio. EFTLM bypasses the official
+                // maid renderer, so the compat path owns maid roulette audio instead.
                 evaluateProgram(rouletteClip, localTime, environment, runtimeState,
                         scratch.wholeModelPose, ApplyMode.FULL_BODY, 1.0F, false,
-                        rouletteClip.clip().name(), false, scratch);
+                        rouletteClip.clip().name(), runtimeState != null
+                                && runtimeState.rouletteSoundOutputEnabled, scratch);
             }
         }
         for (ClipProgram program : parallelClips) {
@@ -1972,7 +1993,7 @@ public final class ParallelAnimationProgram {
     private Set<InteractionHand> ysmActiveReplacementHands(LivingEntity entity) {
         LinkedHashSet<InteractionHand> result = new LinkedHashSet<>();
         for (InteractionHand hand : InteractionHand.values()) {
-            if (ClientHeldItemModelPreferences.usesYsm(entity, hand)
+            if (ClientHeldItemModelPreferences.usesYsm(entity, modelId, hand)
                     && customHeldItems.replaces(entity, hand)) {
                 result.add(hand);
             }
@@ -1992,9 +2013,10 @@ public final class ParallelAnimationProgram {
                     customHeldItems.replacesHeldItemAtRest(entity, hand);
             boolean enabled = usesResolvedItemSwitchAnimation(
                     customReplacement,
-                    ClientHeldItemModelPreferences.usesYsm(entity, hand),
+                    ClientHeldItemModelPreferences.usesYsm(
+                            entity, modelId, hand),
                     ClientHeldItemModelPreferences
-                            .usesYsmSwitchAnimation(entity, hand));
+                            .usesYsmSwitchAnimation(entity, modelId, hand));
             if (enabled) {
                 result.add(hand);
             }
@@ -2393,6 +2415,10 @@ public final class ParallelAnimationProgram {
         return liveFullBodyPose || endingActive && !endingUsesCompositeSnapshot;
     }
 
+    static boolean compatOwnsRouletteSound(boolean playerEntity) {
+        return !playerEntity;
+    }
+
     private boolean isPausedHoldClip(String clipName,
                                      Set<InteractionHand> fullBodyHands) {
         for (InteractionHand hand : fullBodyHands) {
@@ -2600,6 +2626,15 @@ public final class ParallelAnimationProgram {
                                    int previousTickCount, double previousNow) {
         return previousNow >= 0.0D && tickCount >= previousTickCount
                 && sampledNow < previousNow ? previousNow : sampledNow;
+    }
+
+    static boolean rouletteTimelineChanged(
+            String previousAnimation, long previousGeneration,
+            OfficialRoamingVariables.RouletteState state) {
+        String nextAnimation = state.playing() ? state.animationName() : "";
+        return !nextAnimation.isBlank()
+                && (!nextAnimation.equals(previousAnimation)
+                || state.generation() != previousGeneration);
     }
 
     private void resetScratch(EvaluationScratch scratch) {
@@ -3522,8 +3557,10 @@ public final class ParallelAnimationProgram {
         private double lastNow = -1.0D;
         private int lastTickCount = Integer.MIN_VALUE;
         private String rouletteAnimation = "";
+        private long rouletteGeneration = Long.MIN_VALUE;
         private String rouletteClip = "";
         private String reportedRoulette = "";
+        private boolean rouletteSoundOutputEnabled;
         private double rouletteStartedAt;
         private boolean rouletteStopSent;
         private Frame publishedFrame;
@@ -3570,8 +3607,10 @@ public final class ParallelAnimationProgram {
             lastNow = -1.0D;
             lastTickCount = Integer.MIN_VALUE;
             rouletteAnimation = "";
+            rouletteGeneration = Long.MIN_VALUE;
             rouletteClip = "";
             reportedRoulette = "";
+            rouletteSoundOutputEnabled = false;
             rouletteStartedAt = now;
             rouletteStopSent = false;
             publishedFrame = null;
@@ -3709,13 +3748,16 @@ public final class ParallelAnimationProgram {
             if (name.isBlank()) {
                 clearRouletteTimeline();
                 rouletteAnimation = "";
+                rouletteGeneration = state.generation();
                 rouletteStartedAt = now;
                 rouletteStopSent = false;
                 return -1.0D;
             }
-            if (!name.equals(rouletteAnimation)) {
+            if (rouletteTimelineChanged(
+                    rouletteAnimation, rouletteGeneration, state)) {
                 clearRouletteTimeline();
                 rouletteAnimation = name;
+                rouletteGeneration = state.generation();
                 rouletteStartedAt = now;
                 rouletteStopSent = false;
             }

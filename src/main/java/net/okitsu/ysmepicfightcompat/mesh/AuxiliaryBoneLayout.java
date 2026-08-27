@@ -31,6 +31,7 @@ public final class AuxiliaryBoneLayout {
     private final Map<GeometryDocument.Bone, Entry> byBone;
     private final Map<String, Entry> byName;
     private final Map<Integer, Vector3f> jointPivots;
+    private final Map<Integer, Vector3f> extendedArmatureJointPivots;
     private final Map<Integer, Integer> toolAnchorPoseIndices;
     private final Map<Integer, Entry> toolLocatorEntries;
     private final float horizontalScale;
@@ -40,6 +41,7 @@ public final class AuxiliaryBoneLayout {
                                 Map<GeometryDocument.Bone, Entry> byBone,
                                 Map<String, Entry> byName,
                                 Map<Integer, Vector3f> jointPivots,
+                                Map<Integer, Vector3f> extendedArmatureJointPivots,
                                 Map<Integer, Integer> toolAnchorPoseIndices,
                                 Map<Integer, Entry> toolLocatorEntries,
                                 float horizontalScale, float verticalScale) {
@@ -47,6 +49,7 @@ public final class AuxiliaryBoneLayout {
         this.byBone = Map.copyOf(byBone);
         this.byName = Map.copyOf(byName);
         this.jointPivots = Map.copyOf(jointPivots);
+        this.extendedArmatureJointPivots = Map.copyOf(extendedArmatureJointPivots);
         this.toolAnchorPoseIndices = Map.copyOf(toolAnchorPoseIndices);
         this.toolLocatorEntries = Map.copyOf(toolLocatorEntries);
         this.horizontalScale = positiveScale(horizontalScale);
@@ -107,7 +110,8 @@ public final class AuxiliaryBoneLayout {
             }
         }
         return new AuxiliaryBoneLayout(entries, byBone, byName,
-                estimate.pivots(), toolSources, toolLocators,
+                estimate.pivots(), estimate.extendedArmaturePivots(),
+                toolSources, toolLocators,
                 horizontalScale, verticalScale);
     }
 
@@ -135,6 +139,13 @@ public final class AuxiliaryBoneLayout {
     /** Model-scaled bind pivot used to retarget an attachment between humanoid seams. */
     public Vector3f jointPivot(int joint) {
         Vector3f pivot = jointPivots.get(joint);
+        return pivot == null ? null : new Vector3f(pivot);
+    }
+
+    /** Bind pivot used only when an integration has extended Epic Fight's armature. */
+    Vector3f jointPivot(int joint, boolean extendedArmature) {
+        Vector3f pivot = (extendedArmature
+                ? extendedArmatureJointPivots : jointPivots).get(joint);
         return pivot == null ? null : new Vector3f(pivot);
     }
 

@@ -59,6 +59,30 @@ class ParallelAnimationProgramTest {
     }
 
     @Test
+    void restartsTheRouletteTimelineForARepeatedMaidRequest() {
+        OfficialRoamingVariables.RouletteState sameGeneration =
+                new OfficialRoamingVariables.RouletteState("extra0", true, 4L);
+        OfficialRoamingVariables.RouletteState nextGeneration =
+                new OfficialRoamingVariables.RouletteState("extra0", true, 5L);
+
+        assertFalse(ParallelAnimationProgram.rouletteTimelineChanged(
+                "extra0", 4L, sameGeneration));
+        assertTrue(ParallelAnimationProgram.rouletteTimelineChanged(
+                "extra0", 4L, nextGeneration));
+        assertTrue(ParallelAnimationProgram.rouletteTimelineChanged(
+                "extra1", 5L, nextGeneration));
+        assertFalse(ParallelAnimationProgram.rouletteTimelineChanged(
+                "extra0", 4L,
+                new OfficialRoamingVariables.RouletteState("extra0", false, 5L)));
+    }
+
+    @Test
+    void leavesPlayerRouletteAudioToOfficialYsmButOwnsMaidAudio() {
+        assertFalse(ParallelAnimationProgram.compatOwnsRouletteSound(true));
+        assertTrue(ParallelAnimationProgram.compatOwnsRouletteSound(false));
+    }
+
+    @Test
     void distanceLodKeepsNearActorsContinuousAndBoundsFarUpdateRates() {
         assertEquals(0.0D, ParallelAnimationProgram.lodIntervalSeconds(16.0D * 16.0D));
         assertEquals(1.0D / 20.0D,

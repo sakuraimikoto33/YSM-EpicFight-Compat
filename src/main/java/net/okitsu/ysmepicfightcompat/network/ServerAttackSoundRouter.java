@@ -6,6 +6,7 @@ import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.sounds.SoundEvent;
 import net.minecraft.world.InteractionHand;
 import net.minecraft.world.entity.LivingEntity;
+import net.okitsu.ysmepicfightcompat.integration.tlm.TouhouMaidSelectionAccess;
 import net.okitsu.ysmepicfightcompat.network.message.AttackSwingSoundMessage;
 import yesman.epicfight.api.animation.types.AttackAnimation;
 import yesman.epicfight.world.capabilities.entitypatch.LivingEntityPatch;
@@ -13,7 +14,7 @@ import yesman.epicfight.world.capabilities.entitypatch.LivingEntityPatch;
 import java.util.Map;
 import java.util.WeakHashMap;
 
-/** Preserves the attacking player identity until each client chooses Epic Fight or YSM audio. */
+/** Preserves attacker identity until each client chooses Epic Fight or YSM audio. */
 public final class ServerAttackSoundRouter {
     private static final Map<LivingEntity, Integer> SEQUENCES = new WeakHashMap<>();
 
@@ -27,7 +28,12 @@ public final class ServerAttackSoundRouter {
         }
         LivingEntity entity = patch.getOriginal();
         ResourceLocation soundId = BuiltInRegistries.SOUND_EVENT.getKey(sound);
-        if (!(entity instanceof ServerPlayer player) || soundId == null) {
+        ServerPlayer player = entity instanceof ServerPlayer serverPlayer
+                ? serverPlayer : null;
+        boolean ysmMaid = player == null
+                && TouhouMaidSelectionAccess.integrationLoaded()
+                && TouhouMaidSelectionAccess.resolve(entity) != null;
+        if ((player == null && !ysmMaid) || soundId == null) {
             patch.playSound(sound, minimumPitch, maximumPitch);
             return;
         }
@@ -38,9 +44,14 @@ public final class ServerAttackSoundRouter {
         synchronized (SEQUENCES) {
             sequence = SEQUENCES.merge(entity, 1, (previous, one) -> previous + 1);
         }
-        CompatNetwork.toTrackersAndSelf(player, new AttackSwingSoundMessage(
-                player.getId(), player.getUUID(), hand, sequence, soundId,
-                player.getX(), player.getY(), player.getZ(), 1.0F, pitch));
+        AttackSwingSoundMessage message = new AttackSwingSoundMessage(
+                entity.getId(), entity.getUUID(), hand, sequence, soundId,
+                entity.getX(), entity.getY(), entity.getZ(), 1.0F, pitch);
+        if (player != null) {
+            CompatNetwork.toTrackersAndSelf(player, message);
+        } else {
+            CompatNetwork.toTrackers(entity, message);
+        }
     }
 
     private static InteractionHand attackHand(AttackAnimation animation,

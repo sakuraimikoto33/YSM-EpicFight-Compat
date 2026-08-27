@@ -6,11 +6,13 @@ import net.minecraft.world.entity.player.Player;
 import net.okitsu.ysmepicfightcompat.CompatMod;
 import net.okitsu.ysmepicfightcompat.animation.MovementAnimationType;
 import net.okitsu.ysmepicfightcompat.config.ClientPreferences;
+import net.okitsu.ysmepicfightcompat.integration.tlm.TouhouMaidSelectionAccess;
 import net.okitsu.ysmepicfightcompat.render.PlayerSelectionResolver;
 
 import javax.annotation.Nullable;
 import java.util.List;
 import java.util.Map;
+import java.util.UUID;
 
 /** Resolves local movement rules and synchronizes only the current pose decision. */
 public final class ClientMovementAnimationPreferences {
@@ -35,6 +37,17 @@ public final class ClientMovementAnimationPreferences {
         if (local != null && local.getUUID().equals(entity.getUUID())) {
             return localPolicy().usesYsm(selectedModelId, movement);
         }
+        if (TouhouMaidSelectionAccess.isSupportedMaid(entity)) {
+            UUID ownerUuid = TouhouMaidSelectionAccess.ownerUuid(entity);
+            if (local != null && local.getUUID().equals(ownerUuid)) {
+                return localPolicy().usesYsm(selectedModelId, movement);
+            }
+            return RemoteMaidPreferences.movement(entity, selectedModelId)
+                    .usesYsm(selectedModelId, movement);
+        }
+        if (!(entity instanceof Player)) {
+            return localPolicy().usesYsm(selectedModelId, movement);
+        }
         return RemoteMovementAnimationPreferences.find(entity.getUUID())
                 .usesYsm(selectedModelId, movement);
     }
@@ -54,6 +67,15 @@ public final class ClientMovementAnimationPreferences {
         if (local != null && local.getUUID().equals(entity.getUUID())) {
             return null;
         }
+        if (TouhouMaidSelectionAccess.isSupportedMaid(entity)) {
+            UUID ownerUuid = TouhouMaidSelectionAccess.ownerUuid(entity);
+            return local != null && local.getUUID().equals(ownerUuid) ? null
+                    : RemoteMaidPreferences.movement(entity, selectedModelId)
+                    .semanticMovementFor(selectedModelId);
+        }
+        if (!(entity instanceof Player)) {
+            return null;
+        }
         return RemoteMovementAnimationPreferences.find(entity.getUUID())
                 .semanticMovementFor(selectedModelId);
     }
@@ -67,9 +89,7 @@ public final class ClientMovementAnimationPreferences {
         }
         String modelId = selectedModelId(local);
         MovementAnimationType movement = MovementAnimationType.resolve(local);
-        MovementAnimationDisplayState current = new MovementAnimationDisplayState(
-                modelId, movement,
-                movement != null && localPolicy().usesYsm(modelId, movement));
+        MovementAnimationDisplayState current = resolveState(modelId, movement);
         if (!current.equals(lastSent)) {
             lastSent = current;
             CompatNetwork.sendMovementAnimationPreferences(current);
@@ -80,6 +100,12 @@ public final class ClientMovementAnimationPreferences {
         lastSent = null;
         invalidRulesLogged = false;
         RemoteMovementAnimationPreferences.beginConnection();
+    }
+
+    static MovementAnimationDisplayState resolveState(
+            String modelId, @Nullable MovementAnimationType movement) {
+        return new MovementAnimationDisplayState(modelId, movement,
+                movement != null && localPolicy().usesYsm(modelId, movement));
     }
 
     private static String selectedModelId(Player player) {

@@ -12,6 +12,7 @@ import net.minecraft.world.item.UseAnim;
 import net.okitsu.ysmepicfightcompat.CompatMod;
 import net.okitsu.ysmepicfightcompat.animation.DefaultPoseProgram;
 import net.okitsu.ysmepicfightcompat.animation.ParallelAnimationProgram;
+import net.okitsu.ysmepicfightcompat.integration.tlm.TouhouMaidRenderBridge;
 import net.okitsu.ysmepicfightcompat.render.RenderFrameContext;
 import org.joml.Vector3f;
 import yesman.epicfight.api.client.model.Mesh;
@@ -98,6 +99,16 @@ public final class CompatHumanoidMesh extends HumanoidMesh {
                                         boolean epicFightActionActive) {
         parallelAnimations.advanceOutputs(entity, firstPerson,
                 epicFightActionActive);
+    }
+
+    /** Drops sounds, particles, and controller state owned by one unloaded entity. */
+    public void releaseAnimationState(LivingEntity entity) {
+        parallelAnimations.releaseEntity(entity);
+    }
+
+    /** Drops all entity-scoped outputs before this converted mesh leaves the cache. */
+    public void releaseAllAnimationStates() {
+        parallelAnimations.releaseAllEntities();
     }
 
     /** Returns whether an authored custom-bow action owns this model's complete pose. */
@@ -236,21 +247,35 @@ public final class CompatHumanoidMesh extends HumanoidMesh {
                 : getRenderProperties() == null ? null : getRenderProperties().customTexturePath();
         RenderType actualType = selectedTexture == null ? requestedType
                 : EpicFightRenderTypes.replaceTexture(selectedTexture, requestedType);
-        ComputeShaderSetup compute = computeSetup();
-        if (compute != null) {
-            compute.drawWithShader(this, matrices, buffers, actualType, light,
-                    red, green, blue, alpha, overlay, armature, poses);
-        } else {
-            if (CPU_FALLBACK_LOGGED.compareAndSet(false, true)) {
-                CompatMod.LOG.warn(
-                        "YSM-EF Compat: compute skinning is unavailable; using Epic Fight's CPU path");
+        float meshScale = TouhouMaidRenderBridge.meshDrawScale(this);
+        boolean restoreScale = meshScale != 1.0F;
+        if (restoreScale) {
+            matrices.pushPose();
+            matrices.scale(meshScale, meshScale, meshScale);
+        }
+        try {
+            ComputeShaderSetup compute = computeSetup();
+            if (compute != null) {
+                compute.drawWithShader(this, matrices, buffers, actualType, light,
+                        red, green, blue, alpha, overlay, armature, poses);
+            } else {
+                if (CPU_FALLBACK_LOGGED.compareAndSet(false, true)) {
+                    CompatMod.LOG.warn(
+                            "YSM-EF Compat: compute skinning is unavailable; using Epic Fight's CPU path");
+                }
+                // replaceTexture and getTriangulated share Epic Fight's render-type cache.
+                // A texture replacement can therefore leave the original QUADS mode in that
+                // cache, even though this mesh emits triangle triplets. Use the independent
+                // conversion so CPU skinning never regroups every four vertices into a quad.
+                drawPosed(matrices,
+                        buffers.getBuffer(EpicFightRenderTypes.makeTriangulated(actualType)),
+                        drawingFunction, light, red, green, blue, alpha, overlay,
+                        armature, poses);
             }
-            // replaceTexture and getTriangulated share Epic Fight's render-type cache.
-            // A texture replacement can therefore leave the original QUADS mode in that
-            // cache, even though this mesh emits triangle triplets. Use the independent
-            // conversion so CPU skinning never regroups every four vertices into a quad.
-            drawPosed(matrices, buffers.getBuffer(EpicFightRenderTypes.makeTriangulated(actualType)),
-                    drawingFunction, light, red, green, blue, alpha, overlay, armature, poses);
+        } finally {
+            if (restoreScale) {
+                matrices.popPose();
+            }
         }
     }
 

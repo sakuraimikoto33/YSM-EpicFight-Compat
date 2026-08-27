@@ -7,7 +7,9 @@ import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.sounds.SoundEvent;
 import net.minecraft.sounds.SoundSource;
 import net.minecraft.world.entity.Entity;
+import net.minecraft.world.entity.LivingEntity;
 import net.okitsu.ysmepicfightcompat.CompatMod;
+import net.okitsu.ysmepicfightcompat.integration.tlm.TouhouMaidSelectionAccess;
 import net.okitsu.ysmepicfightcompat.mesh.CombatMeshCache;
 import net.okitsu.ysmepicfightcompat.mesh.CompatHumanoidMesh;
 import net.okitsu.ysmepicfightcompat.network.message.AttackSwingSoundMessage;
@@ -22,10 +24,10 @@ import java.util.UUID;
 public final class ClientAttackSoundRouter {
     private static final long DISCOVERY_WAIT_TICKS = 1L;
 
-    private record Key(UUID playerId, int sequence) {
+    private record Key(UUID entityUuid, int sequence) {
     }
 
-    private record Replacement(AbstractClientPlayer player, String modelId,
+    private record Replacement(LivingEntity entity, String modelId,
                                CompatHumanoidMesh mesh) {
     }
 
@@ -47,17 +49,17 @@ public final class ClientAttackSoundRouter {
             play(level, message);
             return;
         }
-        if (AttackSoundOwnership.consume(replacement.player(), message.hand(),
+        if (AttackSoundOwnership.consume(replacement.entity(), message.hand(),
                 replacement.modelId())) {
             logSuppressed(replacement, message, "played YSM sound");
             return;
         }
         if (replacement.mesh().hasAttackSoundRoute(
-                replacement.player(), message.hand())) {
+                replacement.entity(), message.hand())) {
             logSuppressed(replacement, message, "authored YSM sound route");
             return;
         }
-        PENDING.putIfAbsent(new Key(message.playerId(), message.sequence()),
+        PENDING.putIfAbsent(new Key(message.entityUuid(), message.sequence()),
                 new Pending(message, level.getGameTime()));
     }
 
@@ -79,14 +81,14 @@ public final class ClientAttackSoundRouter {
                 iterator.remove();
                 continue;
             }
-            if (AttackSoundOwnership.consume(replacement.player(), message.hand(),
+            if (AttackSoundOwnership.consume(replacement.entity(), message.hand(),
                     replacement.modelId())) {
                 logSuppressed(replacement, message, "played YSM sound");
                 iterator.remove();
                 continue;
             }
             if (replacement.mesh().hasAttackSoundRoute(
-                    replacement.player(), message.hand())) {
+                    replacement.entity(), message.hand())) {
                 logSuppressed(replacement, message, "authored YSM sound route");
                 iterator.remove();
                 continue;
@@ -94,8 +96,8 @@ public final class ClientAttackSoundRouter {
             long age = Math.max(0L, now - pending.receivedAt());
             if (age >= DISCOVERY_WAIT_TICKS) {
                 CompatMod.LOG.debug(
-                        "YSM-EF Compat: keeping Epic Fight swing sound '{}' for player='{}' model='{}' hand={} because no authored YSM attack sound route became active",
-                        message.sound(), replacement.player().getScoreboardName(),
+                        "YSM-EF Compat: keeping Epic Fight swing sound '{}' for entity='{}' model='{}' hand={} because no authored YSM attack sound route became active",
+                        message.sound(), replacement.entity().getScoreboardName(),
                         replacement.modelId(), message.hand());
                 play(level, message);
                 iterator.remove();
@@ -108,30 +110,52 @@ public final class ClientAttackSoundRouter {
         AttackSoundOwnership.clear();
     }
 
+    /** Drops delayed fallback and ownership state when one tracked entity leaves. */
+    public static synchronized void release(LivingEntity entity) {
+        if (entity == null) {
+            return;
+        }
+        UUID entityUuid = entity.getUUID();
+        PENDING.keySet().removeIf(key -> key.entityUuid().equals(entityUuid));
+        AttackSoundOwnership.release(entity);
+    }
+
     private static Replacement replacement(ClientLevel level,
                                            AttackSwingSoundMessage message) {
-        Entity entity = level.getEntity(message.entityId());
-        if (!(entity instanceof AbstractClientPlayer player)
-                || !player.getUUID().equals(message.playerId())) {
+        Entity candidate = level.getEntity(message.entityId());
+        if (!(candidate instanceof LivingEntity entity)
+                || !entity.getUUID().equals(message.entityUuid())) {
             return null;
         }
-        PlayerSelectionResolver.Selection selection = PlayerSelectionResolver.current(player);
-        if (selection == null) {
+        String modelId;
+        if (entity instanceof AbstractClientPlayer player) {
+            PlayerSelectionResolver.Selection selection =
+                    PlayerSelectionResolver.current(player);
+            modelId = selection == null ? null : selection.modelId();
+        } else {
+            TouhouMaidSelectionAccess.Selection selection =
+                    TouhouMaidSelectionAccess.resolve(entity);
+            modelId = selection == null ? null : selection.modelId();
+        }
+        if (modelId == null) {
             return null;
         }
-        CompatHumanoidMesh mesh = CombatMeshCache.readyMesh(selection.modelId());
-        if (mesh == null || !mesh.replacesAttackItem(player, message.hand())) {
+        CompatHumanoidMesh mesh = CombatMeshCache.readyMesh(modelId);
+        if (mesh == null || !mesh.replacesAttackItem(entity, message.hand())) {
             return null;
         }
-        return new Replacement(player, selection.modelId(), mesh);
+        return new Replacement(entity, modelId, mesh);
     }
 
     private static void play(ClientLevel level, AttackSwingSoundMessage message) {
         SoundEvent sound = BuiltInRegistries.SOUND_EVENT.getOptional(message.sound())
                 .orElse(null);
         if (sound != null) {
+            Entity entity = level.getEntity(message.entityId());
+            SoundSource source = entity instanceof LivingEntity living
+                    ? living.getSoundSource() : SoundSource.PLAYERS;
             level.playLocalSound(message.x(), message.y(), message.z(), sound,
-                    SoundSource.PLAYERS, message.volume(), message.pitch(), false);
+                    source, message.volume(), message.pitch(), false);
         }
     }
 
@@ -139,8 +163,8 @@ public final class ClientAttackSoundRouter {
                                       AttackSwingSoundMessage message,
                                       String reason) {
         CompatMod.LOG.debug(
-                "YSM-EF Compat: suppressing Epic Fight swing sound '{}' for player='{}' model='{}' hand={} ({})",
-                message.sound(), replacement.player().getScoreboardName(),
+                "YSM-EF Compat: suppressing Epic Fight swing sound '{}' for entity='{}' model='{}' hand={} ({})",
+                message.sound(), replacement.entity().getScoreboardName(),
                 replacement.modelId(), message.hand(), reason);
     }
 }

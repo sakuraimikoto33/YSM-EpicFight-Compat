@@ -156,7 +156,7 @@ final class EntityAnimationEnvironment implements ExpressionEngine.Environment {
     }
 
     void stopSoundScope(String scope) {
-        ClientSoundOutput.stopScope(entity, scope);
+        ClientSoundOutput.stopScope(entity, modelId, scope);
     }
 
     void playParticleEffect(DeclarativeParticleEffect effect, boolean scoped) {
@@ -166,17 +166,17 @@ final class EntityAnimationEnvironment implements ExpressionEngine.Environment {
         if (!effect.preEffectScript().isBlank()) {
             ExpressionEngine.compile(effect.preEffectScript()).evaluate(this);
         }
-        ClientParticleOutput.emitEffect(entity, soundScope, effect, scoped);
+        ClientParticleOutput.emitEffect(entity, modelId, soundScope, effect, scoped);
     }
 
     void stopParticleScope(String scope) {
-        ClientParticleOutput.stopScope(entity, scope);
+        ClientParticleOutput.stopScope(entity, modelId, scope);
     }
 
     void reset() {
         physics.reset();
-        ClientSoundOutput.stopAll(entity);
-        ClientParticleOutput.stopAll(entity);
+        ClientSoundOutput.stopModel(entity, modelId);
+        ClientParticleOutput.stopModel(entity, modelId);
         attackReplacementHands = Set.of();
         attackSoundHand = null;
     }
@@ -490,7 +490,8 @@ final class EntityAnimationEnvironment implements ExpressionEngine.Environment {
         }
         String id = ClientSoundOutput.identifier(textArguments, numericArguments, 0);
         boolean global = size > 1 && arg(numericArguments, 1) != 0.0D;
-        return flag(ClientSoundOutput.stop(entity, soundScope, id, global));
+        return flag(ClientSoundOutput.stop(
+                entity, modelId, soundScope, id, global));
     }
 
     private double stopAllSounds(String[] textArguments, double[] numericArguments) {
@@ -506,7 +507,7 @@ final class EntityAnimationEnvironment implements ExpressionEngine.Environment {
         }
         boolean global = numericArguments != null && numericArguments.length == 1
                 && arg(numericArguments, 0) != 0.0D;
-        ClientSoundOutput.stopAll(entity, soundScope, global);
+        ClientSoundOutput.stopAll(entity, modelId, soundScope, global);
         return 1.0D;
     }
 

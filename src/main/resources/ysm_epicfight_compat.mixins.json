@@ -16,8 +16,11 @@
     "FirstPersonRenderScopeMixin",
     "FirstPersonArmorGateMixin",
     "HeldItemCorrectionMixin",
+    "PatchedLivingEntityRendererMixin",
     "PatchedItemInHandLayerMixin",
     "PlayerStateCapabilityMixin",
+    "TouhouMaidAnimationStateMixin",
+    "TouhouMaidRendererMixin",
     "TridentHeldItemCorrectionMixin",
     "YsmConfigurationExpressionMixin"
   ],

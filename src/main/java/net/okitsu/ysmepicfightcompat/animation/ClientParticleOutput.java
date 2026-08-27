@@ -37,8 +37,11 @@ final class ClientParticleOutput {
                     return size() > MAX_CACHE_ENTRIES;
                 }
             });
-    private static final Map<LivingEntity, Map<String, List<BoundParticle>>> SCOPES =
+    private static final Map<LivingEntity, Map<Scope, List<BoundParticle>>> SCOPES =
             new WeakHashMap<>();
+
+    private record Scope(String modelId, String name) {
+    }
 
     private record BoundParticle(Particle particle, String locator, boolean bound) {
     }
@@ -73,7 +76,7 @@ final class ClientParticleOutput {
         return true;
     }
 
-    static boolean emitEffect(LivingEntity entity, String scope,
+    static boolean emitEffect(LivingEntity entity, String modelId, String scope,
                               DeclarativeParticleEffect effect, boolean scoped) {
         if (entity == null || entity.isRemoved() || effect == null
                 || effect.effect().isBlank()) {
@@ -93,7 +96,7 @@ final class ClientParticleOutput {
         if (created == null || (!scoped && !effect.bindToActor())) {
             return created != null;
         }
-        String normalizedScope = scope == null || scope.isBlank() ? "controller" : scope;
+        Scope normalizedScope = scope(modelId, scope);
         SCOPES.computeIfAbsent(entity, ignored -> new LinkedHashMap<>())
                 .computeIfAbsent(normalizedScope, ignored -> new ArrayList<>())
                 .add(new BoundParticle(created, effect.locator(), effect.bindToActor()));
@@ -101,7 +104,7 @@ final class ClientParticleOutput {
     }
 
     static void update(LivingEntity entity) {
-        Map<String, List<BoundParticle>> scopes = SCOPES.get(entity);
+        Map<Scope, List<BoundParticle>> scopes = SCOPES.get(entity);
         if (scopes == null) {
             return;
         }
@@ -123,13 +126,12 @@ final class ClientParticleOutput {
         }
     }
 
-    static void stopScope(LivingEntity entity, String scope) {
-        Map<String, List<BoundParticle>> scopes = SCOPES.get(entity);
+    static void stopScope(LivingEntity entity, String modelId, String scope) {
+        Map<Scope, List<BoundParticle>> scopes = SCOPES.get(entity);
         if (scopes == null) {
             return;
         }
-        List<BoundParticle> particles = scopes.remove(
-                scope == null || scope.isBlank() ? "controller" : scope);
+        List<BoundParticle> particles = scopes.remove(scope(modelId, scope));
         if (particles != null) {
             particles.forEach(bound -> bound.particle().remove());
         }
@@ -139,10 +141,28 @@ final class ClientParticleOutput {
     }
 
     static void stopAll(LivingEntity entity) {
-        Map<String, List<BoundParticle>> scopes = SCOPES.remove(entity);
+        Map<Scope, List<BoundParticle>> scopes = SCOPES.remove(entity);
         if (scopes != null) {
             scopes.values().forEach(particles ->
                     particles.forEach(bound -> bound.particle().remove()));
+        }
+    }
+
+    static void stopModel(LivingEntity entity, String modelId) {
+        Map<Scope, List<BoundParticle>> scopes = SCOPES.get(entity);
+        if (scopes == null || modelId == null) {
+            return;
+        }
+        List<Scope> owned = scopes.keySet().stream()
+                .filter(scope -> scope.modelId().equals(modelId)).toList();
+        for (Scope scope : owned) {
+            List<BoundParticle> particles = scopes.remove(scope);
+            if (particles != null) {
+                particles.forEach(bound -> bound.particle().remove());
+            }
+        }
+        if (scopes.isEmpty()) {
+            SCOPES.remove(entity);
         }
     }
 
@@ -150,6 +170,11 @@ final class ClientParticleOutput {
         SCOPES.values().forEach(scopes -> scopes.values().forEach(particles ->
                 particles.forEach(bound -> bound.particle().remove())));
         SCOPES.clear();
+    }
+
+    private static Scope scope(String modelId, String name) {
+        return new Scope(modelId == null ? "" : modelId,
+                name == null || name.isBlank() ? "controller" : name);
     }
 
     static Request request(String[] textArguments, double[] numericArguments,

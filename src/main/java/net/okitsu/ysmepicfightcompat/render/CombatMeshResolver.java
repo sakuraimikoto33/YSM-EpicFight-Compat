@@ -25,7 +25,11 @@ public final class CombatMeshResolver {
             return null;
         }
         PlayerSelectionResolver.Selection selection = PlayerSelectionResolver.current(player);
-        return selection == null ? null : forSelection(player, selection.modelId(),
+        if (selection == null) {
+            CombatMeshCache.observeEntitySelection(player, null);
+            return null;
+        }
+        return forSelection(player, selection.modelId(),
                 selection.textureName(), player.getGameProfile().getName());
     }
 
@@ -40,7 +44,8 @@ public final class CombatMeshResolver {
         if (entity == null || modelId == null || modelId.isBlank()) {
             return null;
         }
-        AssetAccessor<CompatHumanoidMesh> source = CombatMeshCache.find(modelId);
+        CombatMeshCache.observeEntitySelection(entity, modelId);
+        AssetAccessor<CompatHumanoidMesh> source = CombatMeshCache.find(modelId, entity);
         if (source == null) {
             if (LOGGED_MISSES.add(entity.getUUID() + "|" + modelId)) {
                 CompatMod.LOG.debug(

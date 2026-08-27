@@ -40,10 +40,20 @@ public final class SelectionBroadcaster {
 
     @SubscribeEvent
     public static void startedTracking(PlayerEvent.StartTracking event) {
-        if (event.getEntity() instanceof ServerPlayer recipient
-                && event.getTarget() instanceof ServerPlayer tracked) {
+        if (!(event.getEntity() instanceof ServerPlayer recipient)) {
+            return;
+        }
+        ServerModelTransfers.startedTracking(recipient, event.getTarget());
+        if (event.getTarget() instanceof ServerPlayer tracked) {
             send(tracked, recipient);
             ConfigurationVariableBroadcaster.send(tracked, recipient);
+        }
+    }
+
+    @SubscribeEvent
+    public static void stoppedTracking(PlayerEvent.StopTracking event) {
+        if (event.getEntity() instanceof ServerPlayer recipient) {
+            ServerModelTransfers.stoppedTracking(recipient, event.getTarget());
         }
     }
 
@@ -51,6 +61,7 @@ public final class SelectionBroadcaster {
     public static void playerLoggedOut(PlayerEvent.PlayerLoggedOutEvent event) {
         LAST_SENT.remove(event.getEntity().getUUID());
         if (event.getEntity() instanceof ServerPlayer player) {
+            ServerModelTransfers.playerDisconnected(player);
             ConfigurationVariableBroadcaster.remove(player);
         }
     }

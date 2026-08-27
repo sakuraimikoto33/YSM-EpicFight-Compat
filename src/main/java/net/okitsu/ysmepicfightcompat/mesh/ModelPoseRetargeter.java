@@ -57,8 +57,10 @@ final class ModelPoseRetargeter {
         Arrays.fill(parents, Integer.MIN_VALUE);
         traversalCount = 0;
         boolean[] seen = new boolean[JOINT_COUNT];
+        boolean extendedArmature = armature.getJointNumber() > JOINT_COUNT;
         if (armature.rootJoint == null
-                || !prepareJoint(armature.rootJoint, -1, new OpenMatrix4f(), seen)) {
+                || !prepareJoint(armature.rootJoint, -1, new OpenMatrix4f(), seen,
+                extendedArmature)) {
             return false;
         }
         if (traversalCount != JOINT_COUNT) {
@@ -73,9 +75,27 @@ final class ModelPoseRetargeter {
     }
 
     private boolean prepareJoint(Joint joint, int parent,
-                                 OpenMatrix4f parentTargetBindWorld, boolean[] seen) {
+                                  OpenMatrix4f parentTargetBindWorld, boolean[] seen,
+                                  boolean extendedArmature) {
         int id = joint.getId();
-        if (id < 0 || id >= JOINT_COUNT || seen[id]) {
+        if (id < 0) {
+            return false;
+        }
+        if (id >= JOINT_COUNT) {
+            // Optional Epic Fight integrations may append their own joints to the
+            // standard humanoid armature. They do not index this mesh, but rejecting
+            // one used to disable every model-specific bind pivot and made limbs orbit
+            // EFTLM's maid pivots during attacks. Extension subtrees are independent
+            // prop/claw bones and can be ignored. A standard joint below an extension
+            // is not the canonical humanoid hierarchy, so reject that malformed shape.
+            for (Joint child : joint.getSubJoints()) {
+                if (containsHumanoidJoint(child)) {
+                    return false;
+                }
+            }
+            return true;
+        }
+        if (seen[id]) {
             return false;
         }
         seen[id] = true;
@@ -84,7 +104,7 @@ final class ModelPoseRetargeter {
         referenceLocals[id].load(joint.getLocalTransform());
         targetLocals[id].load(referenceLocals[id]);
 
-        Vector3f pivot = layout.jointPivot(id);
+        Vector3f pivot = layout.jointPivot(id, extendedArmature);
         if (pivot != null) {
             OpenMatrix4f pivotWorld = translation(pivot);
             if (parent < 0) {
@@ -106,11 +126,24 @@ final class ModelPoseRetargeter {
                 parentTargetBindWorld, targetLocals[id], new OpenMatrix4f());
         OpenMatrix4f.invert(targetBindWorld, targetToOrigin[id]);
         for (Joint child : joint.getSubJoints()) {
-            if (!prepareJoint(child, id, targetBindWorld, seen)) {
+            if (!prepareJoint(child, id, targetBindWorld, seen, extendedArmature)) {
                 return false;
             }
         }
         return true;
+    }
+
+    private static boolean containsHumanoidJoint(Joint joint) {
+        int id = joint.getId();
+        if (id >= 0 && id < JOINT_COUNT) {
+            return true;
+        }
+        for (Joint child : joint.getSubJoints()) {
+            if (containsHumanoidJoint(child)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private static OpenMatrix4f translation(Vector3f value) {

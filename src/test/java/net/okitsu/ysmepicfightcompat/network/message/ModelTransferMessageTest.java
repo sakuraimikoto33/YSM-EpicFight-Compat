@@ -28,7 +28,7 @@ class ModelTransferMessageTest {
                 4, playerId, InteractionHand.MAIN_HAND, 2, sound,
                 1.0D, 2.0D, 3.0D, 1.0F, 1.0F);
 
-        assertEquals(playerId, message.playerId());
+        assertEquals(playerId, message.entityUuid());
         assertEquals(sound, message.sound());
         assertThrows(IllegalArgumentException.class, () ->
                 new AttackSwingSoundMessage(4, playerId, InteractionHand.MAIN_HAND,
@@ -103,7 +103,9 @@ class ModelTransferMessageTest {
     @Test
     void validatesConditionalRequestDigestsAndCopiesArrays() {
         byte[] digest = ModelDiskCache.sha256(new byte[]{1});
-        ModelRequestMessage request = new ModelRequestMessage("server/model", digest);
+        UUID sourceUuid = UUID.randomUUID();
+        ModelRequestMessage request = new ModelRequestMessage(
+                "server/model", 42, sourceUuid, digest);
         digest[0] ^= 1;
         assertArrayEquals(ModelDiskCache.sha256(new byte[]{1}),
                 request.knownPayloadDigest());
@@ -112,7 +114,23 @@ class ModelTransferMessageTest {
         assertArrayEquals(ModelDiskCache.sha256(new byte[]{1}),
                 request.knownPayloadDigest());
         assertThrows(IllegalArgumentException.class,
-                () -> new ModelRequestMessage("server/model", new byte[1]));
+                () -> new ModelRequestMessage(
+                        "server/model", 42, sourceUuid, new byte[1]));
+        assertThrows(IllegalArgumentException.class,
+                () -> new ModelRequestMessage(
+                        "server/model", -1, sourceUuid, new byte[0]));
+        assertThrows(IllegalArgumentException.class,
+                () -> new ModelRequestMessage(
+                        "あ".repeat(ModelRequestMessage.MAX_MODEL_ID_BYTES),
+                        42, sourceUuid, new byte[0]));
+
+        FriendlyByteBuf buffer = new FriendlyByteBuf(Unpooled.buffer());
+        ModelRequestMessage.write(request, buffer);
+        ModelRequestMessage decoded = ModelRequestMessage.read(buffer);
+        assertEquals(request.modelId(), decoded.modelId());
+        assertEquals(request.sourceEntityId(), decoded.sourceEntityId());
+        assertEquals(request.sourceEntityUuid(), decoded.sourceEntityUuid());
+        assertArrayEquals(request.knownPayloadDigest(), decoded.knownPayloadDigest());
     }
 
     @Test

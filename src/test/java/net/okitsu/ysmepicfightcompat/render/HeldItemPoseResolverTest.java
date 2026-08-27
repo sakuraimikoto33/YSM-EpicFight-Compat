@@ -68,6 +68,31 @@ class HeldItemPoseResolverTest {
         assertMatrixEquals(expected, receiver);
     }
 
+    @Test
+    void scalesOnlyAToolPoseTranslationWithoutMutatingItsSource() {
+        OpenMatrix4f source = new OpenMatrix4f()
+                .translate(2.0F, 3.0F, 4.0F)
+                .rotateDeg(35.0F, Vec3f.Y_AXIS);
+        OpenMatrix4f original = new OpenMatrix4f(source);
+
+        OpenMatrix4f adjusted = HeldItemPoseResolver.scaleToolTranslation(
+                source, 1.25F);
+
+        assertEquals(original.m00, adjusted.m00, 0.00001F);
+        assertEquals(original.m01, adjusted.m01, 0.00001F);
+        assertEquals(original.m02, adjusted.m02, 0.00001F);
+        assertEquals(original.m10, adjusted.m10, 0.00001F);
+        assertEquals(original.m11, adjusted.m11, 0.00001F);
+        assertEquals(original.m12, adjusted.m12, 0.00001F);
+        assertEquals(original.m20, adjusted.m20, 0.00001F);
+        assertEquals(original.m21, adjusted.m21, 0.00001F);
+        assertEquals(original.m22, adjusted.m22, 0.00001F);
+        assertEquals(original.m30 * 1.25F, adjusted.m30, 0.00001F);
+        assertEquals(original.m31 * 1.25F, adjusted.m31, 0.00001F);
+        assertEquals(original.m32 * 1.25F, adjusted.m32, 0.00001F);
+        assertMatrixEquals(original, source);
+    }
+
     private static OpenMatrix4f[] matrices() {
         OpenMatrix4f[] result = new OpenMatrix4f[HumanoidRig.EPIC_JOINT_COUNT];
         for (int index = 0; index < result.length; index++) {

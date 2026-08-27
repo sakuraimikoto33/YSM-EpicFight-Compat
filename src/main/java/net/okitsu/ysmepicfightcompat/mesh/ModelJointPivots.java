@@ -35,10 +35,12 @@ final class ModelJointPivots {
     }
 
     record Estimate(Map<Integer, Vector3f> pivots,
-                    Map<Integer, GeometryDocument.Bone> toolSources) {
+                    Map<Integer, GeometryDocument.Bone> toolSources,
+                    Map<Integer, Vector3f> extendedArmaturePivots) {
         Estimate {
             pivots = Map.copyOf(pivots);
             toolSources = Map.copyOf(toolSources);
+            extendedArmaturePivots = Map.copyOf(extendedArmaturePivots);
         }
     }
 
@@ -255,10 +257,11 @@ final class ModelJointPivots {
     static Estimate estimateWithSources(GeometryDocument geometry,
                                         float horizontalScale, float verticalScale) {
         if (geometry == null || !validScale(horizontalScale) || !validScale(verticalScale)) {
-            return new Estimate(Map.of(), Map.of());
+            return new Estimate(Map.of(), Map.of(), Map.of());
         }
         Map<Integer, VerticalExtent> extents = new HashMap<>();
         Map<Integer, Vector3f> lowerLimbPivots = new HashMap<>();
+        Map<Integer, PivotCluster> authoredUpperArmPivots = new HashMap<>();
         Map<Integer, AnchorCluster> toolLocators = new HashMap<>();
         Map<GeometryDocument.Bone, SegmentCandidate> segments = new IdentityHashMap<>();
         Map<CentralRole, PivotCluster> centralControls = new EnumMap<>(CentralRole.class);
@@ -284,6 +287,16 @@ final class ModelJointPivots {
                         bone, visit.parentTransform(), horizontalScale, verticalScale);
                 if (pivot != null) {
                     lowerLimbPivots.putIfAbsent(HumanoidRig.jointFor(bone), pivot);
+                }
+            }
+            if (primary && HumanoidRig.isUpperArmControl(bone)) {
+                int joint = HumanoidRig.directJointFor(bone);
+                if (isOnCompatibleArmBranch(bone, joint)) {
+                    authoredUpperArmPivots.computeIfAbsent(
+                                    joint, ignored -> new PivotCluster())
+                            .include(transformedPivot(
+                                    bone, visit.parentTransform(),
+                                    horizontalScale, verticalScale));
                 }
             }
             if (primary && isToolLocator(bone)
@@ -368,7 +381,24 @@ final class ModelJointPivots {
         Map<Integer, GeometryDocument.Bone> toolSources = new HashMap<>();
         putTool(result, toolSources, HumanoidRig.RIGHT_TOOL, rightTool);
         putTool(result, toolSources, HumanoidRig.LEFT_TOOL, leftTool);
-        return new Estimate(result, toolSources);
+        Map<Integer, Vector3f> extendedArmaturePivots = new HashMap<>(result);
+        // EFTLM appends integration joints to its humanoid armature and rotates the
+        // shoulder chain much more aggressively than the standard player armature.
+        // Its upper arms must therefore rotate around the authored Bedrock/YSM bind
+        // pivot. Keep the geometry-derived top ring as the standard-player behavior
+        // and as the fallback for models without one unambiguous primary arm control.
+        replacePair(extendedArmaturePivots,
+                HumanoidRig.RIGHT_SHOULDER, HumanoidRig.RIGHT_ARM,
+                pivotValue(authoredUpperArmPivots, HumanoidRig.RIGHT_ARM));
+        replacePair(extendedArmaturePivots,
+                HumanoidRig.LEFT_SHOULDER, HumanoidRig.LEFT_ARM,
+                pivotValue(authoredUpperArmPivots, HumanoidRig.LEFT_ARM));
+        return new Estimate(result, toolSources, extendedArmaturePivots);
+    }
+
+    private static Vector3f pivotValue(Map<Integer, PivotCluster> pivots, int joint) {
+        PivotCluster cluster = pivots.get(joint);
+        return cluster == null ? null : cluster.value();
     }
 
     private static Vector3f selectTorsoPivot(
@@ -794,6 +824,13 @@ final class ModelJointPivots {
         }
         target.put(first, new Vector3f(pivot));
         target.put(second, new Vector3f(pivot));
+    }
+
+    private static void replacePair(Map<Integer, Vector3f> target, int first, int second,
+                                    Vector3f pivot) {
+        if (pivot != null) {
+            putPair(target, first, second, pivot);
+        }
     }
 
     private static void put(Map<Integer, Vector3f> target, int joint, Vector3f pivot) {

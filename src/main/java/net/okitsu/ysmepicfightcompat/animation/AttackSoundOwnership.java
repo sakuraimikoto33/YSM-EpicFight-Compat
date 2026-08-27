@@ -12,7 +12,7 @@ final class AttackSoundOwnership {
     private static final float RESTART_EPSILON = 0.0001F;
     private static final int MAX_CLAIM_AGE_TICKS = 6;
 
-    private record Key(UUID playerId, InteractionHand hand) {
+    private record Key(UUID entityUuid, InteractionHand hand) {
     }
 
     static final class Observation {
@@ -88,6 +88,13 @@ final class AttackSoundOwnership {
         }
         observation.observe(signal.source(), signal.elapsed());
         return observation.consume(modelId, entity.tickCount);
+    }
+
+    static synchronized void release(LivingEntity entity) {
+        if (entity != null) {
+            UUID entityUuid = entity.getUUID();
+            OBSERVATIONS.keySet().removeIf(key -> key.entityUuid().equals(entityUuid));
+        }
     }
 
     static synchronized void clear() {

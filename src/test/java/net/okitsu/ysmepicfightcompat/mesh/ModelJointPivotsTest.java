@@ -467,6 +467,25 @@ class ModelJointPivotsTest {
     }
 
     @Test
+    void preservesTheStandardArmSeamButUsesTheAuthoredPivotForExtendedArmatures() {
+        GeometryDocument geometry = new GeometryDocument();
+        GeometryDocument.Bone arm = faceBone("RightArm", -1.0F, 1.0F, 1.0F, 2.0F);
+        arm.pivot(-0.5F, 1.25F, 0.25F);
+        geometry.add(arm);
+        geometry.linkHierarchy();
+
+        ModelJointPivots.Estimate estimate = ModelJointPivots.estimateWithSources(
+                geometry, 0.5F, 0.75F);
+
+        assertVectorEquals(new Vector3f(0.0F, 1.5F, 0.0F),
+                estimate.pivots().get(HumanoidRig.RIGHT_ARM));
+        assertVectorEquals(new Vector3f(-0.25F, 0.9375F, 0.125F),
+                estimate.extendedArmaturePivots().get(HumanoidRig.RIGHT_SHOULDER));
+        assertVectorEquals(new Vector3f(-0.25F, 0.9375F, 0.125F),
+                estimate.extendedArmaturePivots().get(HumanoidRig.RIGHT_ARM));
+    }
+
+    @Test
     void refusesNonFiniteOrNonPositiveModelScales() {
         GeometryDocument geometry = new GeometryDocument();
         geometry.add(faceBone("RightArm", -1.0F, 1.0F, -5.0F, 0.0F));

@@ -122,8 +122,9 @@ final class ClientSoundOutput {
         if (sounds.size() >= MAX_ACTIVE_PER_ENTITY) {
             return false;
         }
+        String owner = modelId == null ? "" : modelId;
         if (request.id() != null) {
-            ActiveSound existing = find(sounds, targetScope, request.id());
+            ActiveSound existing = find(sounds, owner, targetScope, request.id());
             if (existing != null) {
                 if (!request.forceReplace()) {
                     return false;
@@ -139,20 +140,25 @@ final class ClientSoundOutput {
             }
             return false;
         }
-        sounds.add(new ActiveSound(modelId == null ? "" : modelId,
+        sounds.add(new ActiveSound(owner,
                 targetScope, request.id(), instance));
         Minecraft.getInstance().getSoundManager().play(instance);
         instance.markStarted();
         return true;
     }
 
-    static synchronized boolean stop(LivingEntity entity, String scope, String id,
-                                     boolean global) {
+    static synchronized boolean stop(LivingEntity entity, String modelId,
+                                     String scope, String id, boolean global) {
         List<ActiveSound> sounds = ACTIVE.get(entity);
         if (sounds == null || id == null) {
             return false;
         }
-        ActiveSound existing = find(sounds, global ? GLOBAL_SCOPE : normalizedScope(scope), id);
+        String owner = modelId == null ? "" : modelId;
+        ActiveSound existing = sounds.stream().filter(active ->
+                active.modelId().equals(owner)
+                        && active.scope().equals(global
+                        ? GLOBAL_SCOPE : normalizedScope(scope))
+                        && id.equals(active.id())).findFirst().orElse(null);
         if (existing == null) {
             return false;
         }
@@ -164,13 +170,18 @@ final class ClientSoundOutput {
         return true;
     }
 
-    static synchronized void stopAll(LivingEntity entity, String scope, boolean global) {
-        stopMatching(entity, active -> active.scope().equals(
+    static synchronized void stopAll(LivingEntity entity, String modelId,
+                                     String scope, boolean global) {
+        String owner = modelId == null ? "" : modelId;
+        stopMatching(entity, active -> active.modelId().equals(owner)
+                && active.scope().equals(
                 global ? GLOBAL_SCOPE : normalizedScope(scope)));
     }
 
-    static synchronized void stopScope(LivingEntity entity, String scope) {
-        stopMatching(entity, active -> active.scope().equals(normalizedScope(scope)));
+    static synchronized void stopScope(LivingEntity entity, String modelId, String scope) {
+        String owner = modelId == null ? "" : modelId;
+        stopMatching(entity, active -> active.modelId().equals(owner)
+                && active.scope().equals(normalizedScope(scope)));
     }
 
     static synchronized void stopAll(LivingEntity entity) {
@@ -184,6 +195,13 @@ final class ClientSoundOutput {
         for (LivingEntity entity : List.copyOf(ACTIVE.keySet())) {
             stopMatching(entity, active -> active.modelId().equals(modelId));
         }
+    }
+
+    static synchronized void stopModel(LivingEntity entity, String modelId) {
+        if (entity == null || modelId == null) {
+            return;
+        }
+        stopMatching(entity, active -> active.modelId().equals(modelId));
     }
 
     static synchronized void clear() {
@@ -309,8 +327,10 @@ final class ClientSoundOutput {
         return MethodHandles.lookup().unreflect(method);
     }
 
-    private static ActiveSound find(List<ActiveSound> sounds, String scope, String id) {
-        return sounds.stream().filter(active -> active.scope().equals(scope)
+    private static ActiveSound find(List<ActiveSound> sounds, String modelId,
+                                    String scope, String id) {
+        return sounds.stream().filter(active -> active.modelId().equals(modelId)
+                && active.scope().equals(scope)
                 && id.equals(active.id())).findFirst().orElse(null);
     }
 

@@ -8,15 +8,28 @@ import net.okitsu.ysmepicfightcompat.cache.ModelDiskCache;
 import net.okitsu.ysmepicfightcompat.network.geometry.ServerModelTransfers;
 
 import java.util.Arrays;
+import java.nio.charset.StandardCharsets;
+import java.util.UUID;
 import java.util.function.Supplier;
 
-/** Client request for a currently selected server model, optionally validated by digest. */
-public record ModelRequestMessage(String modelId, byte[] knownPayloadDigest) {
+/**
+ * Client request for the server model selected by one entity the recipient is tracking.
+ *
+ * <p>The entity identity is part of the authorization boundary: a model id alone does not
+ * prove that the requesting client is allowed to receive that model.</p>
+ */
+public record ModelRequestMessage(String modelId, int sourceEntityId,
+                                  UUID sourceEntityUuid, byte[] knownPayloadDigest) {
     public static final int MAX_MODEL_ID_BYTES = 4096;
 
     public ModelRequestMessage {
-        if (modelId == null || modelId.isBlank()) {
+        if (modelId == null || modelId.isBlank()
+                || modelId.getBytes(StandardCharsets.UTF_8).length
+                > MAX_MODEL_ID_BYTES) {
             throw new IllegalArgumentException("Empty model id");
+        }
+        if (sourceEntityId < 0 || sourceEntityUuid == null) {
+            throw new IllegalArgumentException("Invalid model source entity");
         }
         if (knownPayloadDigest == null || (knownPayloadDigest.length != 0
                 && knownPayloadDigest.length != ModelDiskCache.DIGEST_BYTES)) {
@@ -25,8 +38,9 @@ public record ModelRequestMessage(String modelId, byte[] knownPayloadDigest) {
         knownPayloadDigest = Arrays.copyOf(knownPayloadDigest, knownPayloadDigest.length);
     }
 
-    public ModelRequestMessage(String modelId) {
-        this(modelId, new byte[0]);
+    public ModelRequestMessage(String modelId, int sourceEntityId,
+                               UUID sourceEntityUuid) {
+        this(modelId, sourceEntityId, sourceEntityUuid, new byte[0]);
     }
 
     @Override
@@ -36,11 +50,14 @@ public record ModelRequestMessage(String modelId, byte[] knownPayloadDigest) {
 
     public static void write(ModelRequestMessage message, FriendlyByteBuf output) {
         output.writeUtf(message.modelId(), MAX_MODEL_ID_BYTES);
+        output.writeVarInt(message.sourceEntityId());
+        output.writeUUID(message.sourceEntityUuid());
         output.writeByteArray(message.knownPayloadDigest());
     }
 
     public static ModelRequestMessage read(FriendlyByteBuf input) {
         return new ModelRequestMessage(input.readUtf(MAX_MODEL_ID_BYTES),
+                input.readVarInt(), input.readUUID(),
                 input.readByteArray(ModelDiskCache.DIGEST_BYTES));
     }
 
@@ -51,6 +68,7 @@ public record ModelRequestMessage(String modelId, byte[] knownPayloadDigest) {
         if (sender != null && context.getDirection().getReceptionSide().isServer()
                 && CompatNetwork.isConnected(sender)) {
             context.enqueueWork(() -> ServerModelTransfers.request(sender, message.modelId(),
+                    message.sourceEntityId(), message.sourceEntityUuid(),
                     message.knownPayloadDigest()));
         }
         context.setPacketHandled(true);

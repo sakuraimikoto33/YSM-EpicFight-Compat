@@ -5,7 +5,11 @@ import com.mojang.blaze3d.systems.RenderSystem;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.renderer.texture.DynamicTexture;
 import net.minecraft.resources.ResourceLocation;
+import net.minecraft.world.entity.Entity;
+import net.minecraft.world.entity.LivingEntity;
+import net.minecraft.world.entity.player.Player;
 import net.okitsu.ysmepicfightcompat.CompatMod;
+import net.okitsu.ysmepicfightcompat.animation.ClientAttackSoundRouter;
 import net.okitsu.ysmepicfightcompat.animation.DefaultPoseProgram;
 import net.okitsu.ysmepicfightcompat.animation.ParallelAnimationProgram;
 import net.okitsu.ysmepicfightcompat.assets.LocalModelRepository;
@@ -13,6 +17,9 @@ import net.okitsu.ysmepicfightcompat.assets.ModelBundle;
 import net.okitsu.ysmepicfightcompat.assets.OfficialTextureResolver;
 import net.okitsu.ysmepicfightcompat.cache.ClientLocalModelCache;
 import net.okitsu.ysmepicfightcompat.config.ClientPreferences;
+import net.okitsu.ysmepicfightcompat.integration.tlm.TouhouMaidAnimationStateAccess;
+import net.okitsu.ysmepicfightcompat.integration.tlm.TouhouMaidRenderBridge;
+import net.okitsu.ysmepicfightcompat.integration.tlm.TouhouMaidSelectionAccess;
 import net.okitsu.ysmepicfightcompat.network.geometry.ClientModelTransfers;
 import net.okitsu.ysmepicfightcompat.render.EpicFightPoseOwnership;
 import net.okitsu.ysmepicfightcompat.render.PlayerSelectionResolver;
@@ -31,6 +38,7 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Queue;
 import java.util.Set;
+import java.util.WeakHashMap;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.ExecutorService;
@@ -54,6 +62,7 @@ public final class CombatMeshCache {
     private static final Set<String> DECODING = ConcurrentHashMap.newKeySet();
     private static final Queue<TextureUpload> READY_UPLOADS = new ConcurrentLinkedQueue<>();
     private static final Map<String, Integer> RELEASE_AFTER_TICKS = new ConcurrentHashMap<>();
+    private static final Map<LivingEntity, String> ENTITY_MODELS = new WeakHashMap<>();
 
     private static final ExecutorService WORKERS = Executors.newFixedThreadPool(
             Math.max(2, Math.min(4, Runtime.getRuntime().availableProcessors())), task -> {
@@ -99,6 +108,11 @@ public final class CombatMeshCache {
     }
 
     public static synchronized boolean ensure(String modelId) {
+        return ensure(modelId, null);
+    }
+
+    public static synchronized boolean ensure(
+            String modelId, LivingEntity sourceEntity) {
         if (modelId == null || modelId.isBlank()) {
             return false;
         }
@@ -111,7 +125,8 @@ public final class CombatMeshCache {
             return false;
         }
         boolean local = LocalModelRepository.exists(modelId);
-        ModelBundle remote = local ? null : ClientModelTransfers.findOrRequest(modelId);
+        ModelBundle remote = local || sourceEntity == null
+                ? null : ClientModelTransfers.findOrRequest(modelId, sourceEntity);
         if (!local && remote == null) {
             return false;
         }
@@ -130,7 +145,12 @@ public final class CombatMeshCache {
     }
 
     public static AssetAccessor<CompatHumanoidMesh> find(String modelId) {
-        ensure(modelId);
+        return find(modelId, null);
+    }
+
+    public static AssetAccessor<CompatHumanoidMesh> find(
+            String modelId, LivingEntity sourceEntity) {
+        ensure(modelId, sourceEntity);
         MeshHandle handle = MESHES.get(modelId);
         if (handle != null) {
             markUsed(modelId);
@@ -154,6 +174,8 @@ public final class CombatMeshCache {
         for (net.minecraft.client.player.AbstractClientPlayer player
                 : minecraft.level.players()) {
             PlayerSelectionResolver.Selection selection = PlayerSelectionResolver.current(player);
+            observeEntitySelection(player,
+                    selection == null ? null : selection.modelId());
             CompatHumanoidMesh mesh = selection == null
                     ? null : readyMesh(selection.modelId());
             if (mesh == null) {
@@ -166,10 +188,73 @@ public final class CombatMeshCache {
             mesh.advanceAnimationOutputs(player, firstPerson,
                     EpicFightPoseOwnership.actionOwnsPose(player, patch));
         }
+        if (!TouhouMaidSelectionAccess.integrationLoaded()) {
+            return;
+        }
+        for (Entity candidate : minecraft.level.entitiesForRendering()) {
+            if (!(candidate instanceof LivingEntity entity)
+                    || entity instanceof Player) {
+                continue;
+            }
+            TouhouMaidSelectionAccess.Selection selection =
+                    TouhouMaidSelectionAccess.resolve(entity);
+            observeEntitySelection(entity,
+                    selection == null ? null : selection.modelId());
+            CompatHumanoidMesh mesh = selection == null
+                    ? null : readyMesh(selection.modelId());
+            if (mesh == null) {
+                continue;
+            }
+            LivingEntityPatch<?> patch = EpicFightCapabilities.getEntityPatch(
+                    entity, LivingEntityPatch.class);
+            if (TouhouMaidRenderBridge.supportsPatch(patch)) {
+                mesh.advanceAnimationOutputs(entity, false,
+                        EpicFightPoseOwnership.actionOwnsPose(entity, patch));
+            } else {
+                mesh.releaseAnimationState(entity);
+                ClientAttackSoundRouter.release(entity);
+            }
+        }
     }
 
     public static boolean isReady(String modelId) {
         return modelId != null && MESHES.containsKey(modelId);
+    }
+
+    /** Releases animation outputs for a tracked entity without evicting shared meshes. */
+    public static void releaseEntity(LivingEntity entity) {
+        if (entity == null) {
+            return;
+        }
+        TouhouMaidAnimationStateAccess.release(entity);
+        ClientAttackSoundRouter.release(entity);
+        synchronized (ENTITY_MODELS) {
+            ENTITY_MODELS.remove(entity);
+        }
+        MESHES.values().forEach(handle ->
+                handle.mesh().releaseAnimationState(entity));
+    }
+
+    /** Releases the previous converted model immediately after any entity model switch. */
+    public static void observeEntitySelection(
+            LivingEntity entity, String selectedModelId) {
+        if (entity == null) {
+            return;
+        }
+        String previous;
+        synchronized (ENTITY_MODELS) {
+            previous = selectedModelId == null
+                    ? ENTITY_MODELS.remove(entity)
+                    : ENTITY_MODELS.put(entity, selectedModelId);
+        }
+        if (previous != null && !previous.equals(selectedModelId)) {
+            TouhouMaidAnimationStateAccess.release(entity);
+            ClientAttackSoundRouter.release(entity);
+            CompatHumanoidMesh mesh = readyMesh(previous);
+            if (mesh != null) {
+                mesh.releaseAnimationState(entity);
+            }
+        }
     }
 
     public static ResourceLocation texture(String modelId, String textureName) {
@@ -280,7 +365,10 @@ public final class CombatMeshCache {
 
     public static synchronized void clear() {
         GENERATION.incrementAndGet();
-        MESHES.values().forEach(handle -> handle.mesh().destroy());
+        MESHES.values().forEach(handle -> {
+            handle.mesh().releaseAllAnimationStates();
+            handle.mesh().destroy();
+        });
         UPLOADED.forEach(key -> RELEASE_AFTER_TICKS.put(key, RELEASE_DELAY));
         MESHES.clear();
         PENDING_MODELS.clear();
@@ -297,6 +385,9 @@ public final class CombatMeshCache {
         synchronized (RECENCY) {
             RECENCY.clear();
         }
+        synchronized (ENTITY_MODELS) {
+            ENTITY_MODELS.clear();
+        }
         OfficialTextureResolver.clear();
         ParallelAnimationProgram.clearSoundOutput();
     }
@@ -309,21 +400,8 @@ public final class CombatMeshCache {
             acquired = true;
             ModelBundle source = remote != null ? remote : ClientLocalModelCache.load(modelId);
             Conversion conversion = bake(source);
-            synchronized (CombatMeshCache.class) {
-                PENDING_MODELS.remove(modelId);
-                if (expectedGeneration != GENERATION.get()) {
-                    if (conversion != null) {
-                        conversion.mesh().destroy();
-                    }
-                    return;
-                }
-                if (conversion == null) {
-                    FAILED_STAMPS.put(modelId,
-                            local ? LocalModelRepository.metadataStamp(modelId) : 0L);
-                    return;
-                }
-                register(conversion);
-            }
+            Minecraft.getInstance().execute(() -> completeConversion(
+                    modelId, local, expectedGeneration, conversion));
         } catch (InterruptedException exception) {
             Thread.currentThread().interrupt();
             PENDING_MODELS.remove(modelId);
@@ -338,6 +416,26 @@ public final class CombatMeshCache {
                 CONVERSION_PERMITS.release();
             }
         }
+    }
+
+    /** Publishes and replaces render resources only on Minecraft's render thread. */
+    private static synchronized void completeConversion(
+            String modelId, boolean local, int expectedGeneration,
+            Conversion conversion) {
+        PENDING_MODELS.remove(modelId);
+        if (expectedGeneration != GENERATION.get()) {
+            if (conversion != null) {
+                conversion.mesh().releaseAllAnimationStates();
+                conversion.mesh().destroy();
+            }
+            return;
+        }
+        if (conversion == null) {
+            FAILED_STAMPS.put(modelId,
+                    local ? LocalModelRepository.metadataStamp(modelId) : 0L);
+            return;
+        }
+        register(conversion);
     }
 
     private static Conversion bake(ModelBundle source) {
@@ -378,7 +476,11 @@ public final class CombatMeshCache {
         }
         MeshHandle handle = new MeshHandle(ResourceLocation.fromNamespaceAndPath(
                 NAMESPACE, "memory/entity/" + safePath(conversion.modelId())), conversion.mesh());
-        MESHES.put(conversion.modelId(), handle);
+        MeshHandle previous = MESHES.put(conversion.modelId(), handle);
+        if (previous != null) {
+            previous.mesh().releaseAllAnimationStates();
+            previous.mesh().destroy();
+        }
         markUsed(conversion.modelId());
         CompatMod.LOG.info(
                 "YSM-EF Compat: converted '{}' in memory ({} faces)",
@@ -403,6 +505,7 @@ public final class CombatMeshCache {
     private static synchronized void evict(String modelId) {
         MeshHandle handle = MESHES.remove(modelId);
         if (handle != null) {
+            handle.mesh().releaseAllAnimationStates();
             handle.mesh().destroy();
         }
         discardFallbacks(modelId);

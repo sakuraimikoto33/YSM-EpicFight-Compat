@@ -4,12 +4,15 @@ import net.minecraft.client.Minecraft;
 import net.minecraft.world.InteractionHand;
 import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.entity.player.Player;
+import net.minecraft.world.item.ItemStack;
 import net.okitsu.ysmepicfightcompat.CompatMod;
 import net.okitsu.ysmepicfightcompat.config.ClientPreferences;
+import net.okitsu.ysmepicfightcompat.integration.tlm.TouhouMaidSelectionAccess;
 import net.okitsu.ysmepicfightcompat.render.PlayerSelectionResolver;
 
 import java.util.List;
 import java.util.Map;
+import java.util.UUID;
 
 /** Resolves local rules and synchronizes only their per-hand display result. */
 public final class ClientHeldItemModelPreferences {
@@ -29,6 +32,12 @@ public final class ClientHeldItemModelPreferences {
     }
 
     public static boolean usesYsm(LivingEntity entity, InteractionHand hand) {
+        return usesYsm(entity, selectedModelId(entity), hand);
+    }
+
+    /** Resolves the subject owner's synchronized result without synchronizing rules. */
+    public static boolean usesYsm(
+            LivingEntity entity, String selectedModelId, InteractionHand hand) {
         if (entity == null || hand == null) {
             return false;
         }
@@ -38,12 +47,30 @@ public final class ClientHeldItemModelPreferences {
             return localPolicy().usesYsm(selectedModelId(local),
                     entity.getItemInHand(hand));
         }
+        if (TouhouMaidSelectionAccess.isSupportedMaid(entity)) {
+            UUID ownerUuid = TouhouMaidSelectionAccess.ownerUuid(entity);
+            if (local != null && local.getUUID().equals(ownerUuid)) {
+                return localPolicy().usesYsm(selectedModelId,
+                        entity.getItemInHand(hand));
+            }
+            return RemoteMaidPreferences.heldItems(entity, selectedModelId)
+                    .usesYsm(hand);
+        }
+        if (!(entity instanceof Player)) {
+            return localPolicy().usesYsm(selectedModelId,
+                    entity.getItemInHand(hand));
+        }
         return RemoteHeldItemModelPreferences.find(entity.getUUID()).usesYsm(hand);
     }
 
     /** Resolves the independent switch-animation rule for an Epic-rendered item. */
     public static boolean usesYsmSwitchAnimation(
             LivingEntity entity, InteractionHand hand) {
+        return usesYsmSwitchAnimation(entity, selectedModelId(entity), hand);
+    }
+
+    public static boolean usesYsmSwitchAnimation(
+            LivingEntity entity, String selectedModelId, InteractionHand hand) {
         if (entity == null || hand == null) {
             return false;
         }
@@ -52,6 +79,19 @@ public final class ClientHeldItemModelPreferences {
         if (local != null && local.getUUID().equals(entity.getUUID())) {
             return localSwitchAnimationPolicy().usesYsmForSwitchAnimation(
                     selectedModelId(local), entity.getItemInHand(hand));
+        }
+        if (TouhouMaidSelectionAccess.isSupportedMaid(entity)) {
+            UUID ownerUuid = TouhouMaidSelectionAccess.ownerUuid(entity);
+            if (local != null && local.getUUID().equals(ownerUuid)) {
+                return localSwitchAnimationPolicy().usesYsmForSwitchAnimation(
+                        selectedModelId, entity.getItemInHand(hand));
+            }
+            return RemoteMaidPreferences.heldItems(entity, selectedModelId)
+                    .usesYsmSwitchAnimation(hand);
+        }
+        if (!(entity instanceof Player)) {
+            return localSwitchAnimationPolicy().usesYsmForSwitchAnimation(
+                    selectedModelId, entity.getItemInHand(hand));
         }
         return RemoteHeldItemModelPreferences.find(entity.getUUID())
                 .usesYsmSwitchAnimation(hand);
@@ -67,13 +107,9 @@ public final class ClientHeldItemModelPreferences {
         String modelId = selectedModelId(local);
         HeldItemModelPolicy policy = localPolicy();
         HeldItemModelPolicy switchAnimationPolicy = localSwitchAnimationPolicy();
-        HeldItemModelDisplayState current = new HeldItemModelDisplayState(
-                policy.usesYsm(modelId, local.getMainHandItem()),
-                policy.usesYsm(modelId, local.getOffhandItem()),
-                switchAnimationPolicy.usesYsmForSwitchAnimation(
-                        modelId, local.getMainHandItem()),
-                switchAnimationPolicy.usesYsmForSwitchAnimation(
-                        modelId, local.getOffhandItem()));
+        HeldItemModelDisplayState current = resolveState(
+                modelId, local.getMainHandItem(), local.getOffhandItem(),
+                policy, switchAnimationPolicy);
         if (!current.equals(lastSent)) {
             lastSent = current;
             CompatNetwork.sendHeldItemPreferences(current);
@@ -86,9 +122,35 @@ public final class ClientHeldItemModelPreferences {
         RemoteHeldItemModelPreferences.beginConnection();
     }
 
+    static HeldItemModelDisplayState resolveState(
+            String modelId, ItemStack mainHand, ItemStack offHand) {
+        return resolveState(modelId, mainHand, offHand,
+                localPolicy(), localSwitchAnimationPolicy());
+    }
+
+    private static HeldItemModelDisplayState resolveState(
+            String modelId, ItemStack mainHand, ItemStack offHand,
+            HeldItemModelPolicy policy,
+            HeldItemModelPolicy switchAnimationPolicy) {
+        return new HeldItemModelDisplayState(
+                policy.usesYsm(modelId, mainHand),
+                policy.usesYsm(modelId, offHand),
+                switchAnimationPolicy.usesYsmForSwitchAnimation(modelId, mainHand),
+                switchAnimationPolicy.usesYsmForSwitchAnimation(modelId, offHand));
+    }
+
     private static String selectedModelId(Player player) {
         PlayerSelectionResolver.Selection selection =
                 PlayerSelectionResolver.current(player);
+        return selection == null ? "" : selection.modelId();
+    }
+
+    private static String selectedModelId(LivingEntity entity) {
+        if (entity instanceof Player player) {
+            return selectedModelId(player);
+        }
+        TouhouMaidSelectionAccess.Selection selection =
+                TouhouMaidSelectionAccess.resolve(entity);
         return selection == null ? "" : selection.modelId();
     }
 

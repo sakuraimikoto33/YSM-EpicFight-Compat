@@ -2,11 +2,13 @@ package net.okitsu.ysmepicfightcompat.network.geometry;
 
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.world.entity.Entity;
 import net.okitsu.ysmepicfightcompat.CompatMod;
 import net.okitsu.ysmepicfightcompat.assets.LocalModelRepository;
 import net.okitsu.ysmepicfightcompat.assets.ModelBundle;
 import net.okitsu.ysmepicfightcompat.cache.ModelDiskCache;
 import net.okitsu.ysmepicfightcompat.cache.ServerModelDiskCache;
+import net.okitsu.ysmepicfightcompat.integration.tlm.TouhouMaidSelectionAccess;
 import net.okitsu.ysmepicfightcompat.network.CompatNetwork;
 import net.okitsu.ysmepicfightcompat.network.PlayerSelectionNbt;
 import net.okitsu.ysmepicfightcompat.network.message.ModelChunkMessage;
@@ -15,9 +17,11 @@ import java.io.IOException;
 import java.security.MessageDigest;
 import java.util.Arrays;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -27,6 +31,13 @@ import java.util.concurrent.atomic.AtomicInteger;
 public final class ServerModelTransfers {
     private static final int MAX_CACHE_ENTRIES = 8;
     private static final long MAX_CACHE_BYTES = 128L * 1024 * 1024;
+    private static final int MAX_PENDING_MODELS = 32;
+    private static final int MAX_PENDING_PER_RECIPIENT = 2;
+    private static final long RATE_WINDOW_NANOS = 10_000_000_000L;
+    private static final long MAX_DATA_BYTES_PER_WINDOW = 128L * 1024 * 1024;
+    private static final ModelTransferRateLimiter RATE_LIMITER =
+            new ModelTransferRateLimiter(RATE_WINDOW_NANOS, 16L,
+                    MAX_DATA_BYTES_PER_WINDOW);
     private static final ExecutorService ENCODERS = Executors.newFixedThreadPool(2, task -> {
         Thread worker = new Thread(task, "ysm-ef-model-sender");
         worker.setDaemon(true);
@@ -35,10 +46,15 @@ public final class ServerModelTransfers {
     private static final LinkedHashMap<String, Cached> CACHE =
             new LinkedHashMap<>(16, 0.75F, true);
     private static final Map<String, PendingBatch> WAITERS = new LinkedHashMap<>();
+    private static final Map<UUID, Integer> PENDING_BY_RECIPIENT =
+            new LinkedHashMap<>();
+    private static final Map<UUID, Set<UUID>> TRACKED_ENTITIES =
+            new LinkedHashMap<>();
     private static final AtomicInteger GENERATION = new AtomicInteger();
     private static long cachedBytes;
 
-    private record Request(UUID playerId, byte[] knownPayloadDigest) {
+    private record Request(UUID recipientUuid, int sourceEntityId,
+                           UUID sourceEntityUuid, byte[] knownPayloadDigest) {
         private Request {
             knownPayloadDigest = Arrays.copyOf(knownPayloadDigest, knownPayloadDigest.length);
         }
@@ -57,40 +73,114 @@ public final class ServerModelTransfers {
     }
 
     public static void request(ServerPlayer recipient, String modelId,
+                               int sourceEntityId, UUID sourceEntityUuid,
                                byte[] knownPayloadDigest) {
-        if (!CompatNetwork.isConnected(recipient) || modelId == null || modelId.isBlank()) {
+        if (!CompatNetwork.isConnected(recipient) || modelId == null || modelId.isBlank()
+                || sourceEntityId < 0 || sourceEntityUuid == null
+                || knownPayloadDigest == null
+                || knownPayloadDigest.length != 0
+                && knownPayloadDigest.length != ModelDiskCache.DIGEST_BYTES) {
             return;
         }
         MinecraftServer server = recipient.server;
-        if (!selectedByOnlinePlayer(server, modelId) || !LocalModelRepository.exists(modelId)) {
+        if (!RATE_LIMITER.allowRequest(recipient.getUUID(), System.nanoTime())) {
+            return;
+        }
+        if (!authorizedSelection(recipient, sourceEntityId, sourceEntityUuid, modelId)) {
+            return;
+        }
+        if (!LocalModelRepository.exists(modelId)) {
             ServerModelDiskCache.remove(modelId);
             CompatNetwork.toPlayer(recipient, ModelChunkMessage.unavailable(modelId));
             return;
         }
         boolean start;
+        boolean accepted;
         int expectedGeneration = GENERATION.get();
         synchronized (WAITERS) {
             PendingBatch batch = WAITERS.get(modelId);
-            if (batch == null || batch.generation() != expectedGeneration) {
+            if (batch != null && batch.generation() != expectedGeneration) {
+                removeBatch(modelId, batch);
+                batch = null;
+            }
+            UUID recipientUuid = recipient.getUUID();
+            boolean replacing = batch != null
+                    && batch.requests().containsKey(recipientUuid);
+            accepted = replacing || (PENDING_BY_RECIPIENT.getOrDefault(
+                    recipientUuid, 0) < MAX_PENDING_PER_RECIPIENT
+                    && (batch != null || WAITERS.size() < MAX_PENDING_MODELS));
+            if (!accepted) {
+                start = false;
+            } else if (batch == null) {
                 batch = new PendingBatch(expectedGeneration, new LinkedHashMap<>());
                 WAITERS.put(modelId, batch);
                 start = true;
             } else {
                 start = false;
             }
-            batch.requests().put(recipient.getUUID(),
-                    new Request(recipient.getUUID(), knownPayloadDigest));
+            if (accepted) {
+                if (!replacing) {
+                    PENDING_BY_RECIPIENT.merge(recipientUuid, 1, Integer::sum);
+                }
+                batch.requests().put(recipientUuid,
+                        new Request(recipientUuid, sourceEntityId,
+                                sourceEntityUuid, knownPayloadDigest));
+            }
         }
-        if (start) {
+        if (accepted && start) {
             ENCODERS.execute(() -> prepare(server, modelId, expectedGeneration));
         }
+    }
+
+    /** Records the exact server tracking relation used to authorize model transfer. */
+    public static void startedTracking(ServerPlayer recipient, Entity target) {
+        if (recipient == null || target == null) {
+            return;
+        }
+        synchronized (WAITERS) {
+            TRACKED_ENTITIES.computeIfAbsent(recipient.getUUID(), ignored ->
+                    new LinkedHashSet<>()).add(target.getUUID());
+        }
+    }
+
+    public static void stoppedTracking(ServerPlayer recipient, Entity target) {
+        if (recipient == null || target == null) {
+            return;
+        }
+        synchronized (WAITERS) {
+            Set<UUID> tracked = TRACKED_ENTITIES.get(recipient.getUUID());
+            if (tracked != null) {
+                tracked.remove(target.getUUID());
+                if (tracked.isEmpty()) {
+                    TRACKED_ENTITIES.remove(recipient.getUUID());
+                }
+            }
+        }
+    }
+
+    public static void playerDisconnected(ServerPlayer player) {
+        if (player == null) {
+            return;
+        }
+        UUID playerUuid = player.getUUID();
+        synchronized (WAITERS) {
+            TRACKED_ENTITIES.remove(playerUuid);
+            TRACKED_ENTITIES.values().forEach(tracked -> tracked.remove(playerUuid));
+            WAITERS.values().forEach(batch ->
+                    batch.requests().remove(playerUuid));
+            PENDING_BY_RECIPIENT.remove(playerUuid);
+        }
+        RATE_LIMITER.remove(playerUuid);
     }
 
     public static void clear() {
         GENERATION.incrementAndGet();
         synchronized (WAITERS) {
             WAITERS.clear();
+            PENDING_BY_RECIPIENT.clear();
+            TRACKED_ENTITIES.clear();
         }
+        RATE_LIMITER.clear();
         synchronized (CACHE) {
             CACHE.clear();
             cachedBytes = 0;
@@ -126,18 +216,22 @@ public final class ServerModelTransfers {
             if (batch == null || batch.generation() != expectedGeneration) {
                 return;
             }
-            WAITERS.remove(modelId);
+            removeBatch(modelId, batch);
             requests = List.copyOf(batch.requests().values());
         }
         if (expectedGeneration != GENERATION.get()) {
             return;
         }
         for (Request request : requests) {
-            ServerPlayer player = server.getPlayerList().getPlayer(request.playerId());
+            ServerPlayer player = server.getPlayerList().getPlayer(request.recipientUuid());
             if (!CompatNetwork.isConnected(player)) {
                 continue;
             }
-            if (prepared == null || !selectedByOnlinePlayer(server, modelId)) {
+            if (!authorizedSelection(player, request.sourceEntityId(),
+                    request.sourceEntityUuid(), modelId)) {
+                continue;
+            }
+            if (prepared == null) {
                 CompatNetwork.toPlayer(player, ModelChunkMessage.unavailable(modelId));
             } else if (request.knownPayloadDigest().length == ModelDiskCache.DIGEST_BYTES
                     && MessageDigest.isEqual(request.knownPayloadDigest(),
@@ -145,7 +239,10 @@ public final class ServerModelTransfers {
                 CompatNetwork.toPlayer(player,
                         ModelChunkMessage.unchanged(modelId, prepared.payloadDigest()));
             } else {
-                sendChunks(player, modelId, prepared);
+                if (RATE_LIMITER.allowData(player.getUUID(), System.nanoTime(),
+                        prepared.bytes().length)) {
+                    sendChunks(player, modelId, prepared);
+                }
             }
         }
     }
@@ -198,14 +295,39 @@ public final class ServerModelTransfers {
         return new Prepared(payloadDigest, payload);
     }
 
-    private static boolean selectedByOnlinePlayer(MinecraftServer server, String modelId) {
-        for (ServerPlayer player : server.getPlayerList().getPlayers()) {
-            PlayerSelectionNbt.Selection selection = PlayerSelectionNbt.read(player);
-            if (selection != null && modelId.equals(selection.modelId())) {
-                return true;
+    private static boolean authorizedSelection(
+            ServerPlayer recipient, int sourceEntityId,
+            UUID sourceEntityUuid, String modelId) {
+        Entity source = recipient.serverLevel().getEntity(sourceEntityId);
+        if (source == null || source.isRemoved()
+                || !sourceEntityUuid.equals(source.getUUID())) {
+            return false;
+        }
+        boolean self = source == recipient;
+        boolean tracked = self;
+        if (source != recipient) {
+            synchronized (WAITERS) {
+                Set<UUID> trackedEntities =
+                        TRACKED_ENTITIES.get(recipient.getUUID());
+                tracked = trackedEntities != null
+                        && trackedEntities.contains(sourceEntityUuid);
             }
         }
-        return false;
+        String selectedModelId;
+        if (source instanceof ServerPlayer player) {
+            PlayerSelectionNbt.Selection selection = PlayerSelectionNbt.read(player);
+            selectedModelId = selection == null ? null : selection.modelId();
+        } else if (TouhouMaidSelectionAccess.integrationLoaded()) {
+            TouhouMaidSelectionAccess.Selection selection =
+                    TouhouMaidSelectionAccess.resolve(source);
+            selectedModelId = selection == null ? null : selection.modelId();
+        } else {
+            selectedModelId = null;
+        }
+        return ModelTransferAuthorization.permits(
+                sourceEntityId, sourceEntityUuid,
+                source.getId(), source.getUUID(), self, tracked,
+                modelId, selectedModelId);
     }
 
     private static void sendChunks(ServerPlayer recipient, String modelId, Prepared prepared) {
@@ -230,7 +352,22 @@ public final class ServerModelTransfers {
         synchronized (WAITERS) {
             PendingBatch batch = WAITERS.get(modelId);
             if (batch != null && batch.generation() == expectedGeneration) {
-                WAITERS.remove(modelId);
+                removeBatch(modelId, batch);
+            }
+        }
+    }
+
+    /** Must be called while holding {@link #WAITERS}. */
+    private static void removeBatch(String modelId, PendingBatch batch) {
+        if (!WAITERS.remove(modelId, batch)) {
+            return;
+        }
+        for (UUID recipientUuid : batch.requests().keySet()) {
+            int remaining = PENDING_BY_RECIPIENT.getOrDefault(recipientUuid, 0) - 1;
+            if (remaining <= 0) {
+                PENDING_BY_RECIPIENT.remove(recipientUuid);
+            } else {
+                PENDING_BY_RECIPIENT.put(recipientUuid, remaining);
             }
         }
     }

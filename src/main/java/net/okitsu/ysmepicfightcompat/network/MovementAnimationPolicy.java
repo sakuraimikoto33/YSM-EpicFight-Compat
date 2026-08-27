@@ -134,7 +134,7 @@ public final class MovementAnimationPolicy {
         return MovementAnimationType.fromConfigKey(value) != null;
     }
 
-    static boolean isValidModelId(String modelId) {
+    public static boolean isValidModelId(String modelId) {
         return !modelId.isEmpty() && modelId.length() <= MAX_MODEL_ID_LENGTH
                 && modelId.chars().noneMatch(Character::isISOControl);
     }

@@ -2,6 +2,7 @@ package net.okitsu.ysmepicfightcompat.network.geometry;
 
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.multiplayer.ServerData;
+import net.minecraft.world.entity.LivingEntity;
 import net.okitsu.ysmepicfightcompat.CompatMod;
 import net.okitsu.ysmepicfightcompat.assets.ModelBundle;
 import net.okitsu.ysmepicfightcompat.cache.ClientLocalModelCache;
@@ -35,6 +36,8 @@ public final class ClientModelTransfers {
     private static final Map<UUID, Assembly> ASSEMBLIES = new ConcurrentHashMap<>();
     private static final Map<String, Cached> CACHED = new ConcurrentHashMap<>();
     private static final Map<String, Integer> LOOKUPS = new ConcurrentHashMap<>();
+    private static final Map<String, RequestSource> REQUEST_SOURCES =
+            new ConcurrentHashMap<>();
     private static final AtomicInteger GENERATION = new AtomicInteger();
     private static final ExecutorService DECODER = Executors.newSingleThreadExecutor(task -> {
         Thread worker = new Thread(task, "ysm-ef-model-receiver");
@@ -43,6 +46,9 @@ public final class ClientModelTransfers {
     });
 
     private record Cached(String serverIdentity, ModelDiskCache.Entry entry) {
+    }
+
+    private record RequestSource(int entityId, UUID entityUuid) {
     }
 
     private static final class Assembly {
@@ -68,10 +74,12 @@ public final class ClientModelTransfers {
     private ClientModelTransfers() {
     }
 
-    public static ModelBundle findOrRequest(String modelId) {
-        if (!validModelId(modelId)) {
+    public static ModelBundle findOrRequest(String modelId, LivingEntity source) {
+        if (!validModelId(modelId) || source == null || source.getId() < 0) {
             return null;
         }
+        REQUEST_SOURCES.put(modelId,
+                new RequestSource(source.getId(), source.getUUID()));
         ModelBundle ready = READY.remove(modelId);
         if (ready != null || Minecraft.getInstance().getConnection() == null) {
             return ready;
@@ -109,6 +117,7 @@ public final class ClientModelTransfers {
         ASSEMBLIES.clear();
         CACHED.clear();
         LOOKUPS.clear();
+        REQUEST_SOURCES.clear();
         DECODER.execute(() -> {
             ClientLocalModelCache.maintain();
             RemoteModelDiskCache.maintain();
@@ -137,8 +146,7 @@ public final class ClientModelTransfers {
                 Minecraft.getInstance().execute(() -> {
                     if (expectedGeneration == GENERATION.get()
                             && Minecraft.getInstance().getConnection() != null) {
-                        CompatNetwork.CHANNEL.sendToServer(
-                                new ModelRequestMessage(modelId, known));
+                        sendRequest(modelId, known);
                     }
                 });
             } finally {
@@ -258,7 +266,16 @@ public final class ClientModelTransfers {
             return;
         }
         LAST_REQUEST.put(modelId, System.nanoTime());
-        CompatNetwork.CHANNEL.sendToServer(new ModelRequestMessage(modelId));
+        sendRequest(modelId, new byte[0]);
+    }
+
+    private static void sendRequest(String modelId, byte[] knownPayloadDigest) {
+        RequestSource source = REQUEST_SOURCES.get(modelId);
+        if (source == null || Minecraft.getInstance().getConnection() == null) {
+            return;
+        }
+        CompatNetwork.CHANNEL.sendToServer(new ModelRequestMessage(
+                modelId, source.entityId(), source.entityUuid(), knownPayloadDigest));
     }
 
     private static String currentServerIdentity() {

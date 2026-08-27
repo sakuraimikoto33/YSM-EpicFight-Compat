@@ -9,8 +9,8 @@ import net.okitsu.ysmepicfightcompat.animation.ClientAttackSoundRouter;
 import java.util.UUID;
 import java.util.function.Supplier;
 
-/** Server-authoritative Epic Fight swing sound with its attacking-player identity intact. */
-public record AttackSwingSoundMessage(int entityId, UUID playerId, InteractionHand hand,
+/** Server-authoritative Epic Fight swing sound with its attacker identity intact. */
+public record AttackSwingSoundMessage(int entityId, UUID entityUuid, InteractionHand hand,
                                       int sequence, ResourceLocation sound,
                                       double x, double y, double z,
                                       float volume, float pitch) {
@@ -18,7 +18,7 @@ public record AttackSwingSoundMessage(int entityId, UUID playerId, InteractionHa
     private static final float MAX_PITCH = 4.0F;
 
     public AttackSwingSoundMessage {
-        if (entityId < 0 || playerId == null || hand == null || sound == null
+        if (entityId < 0 || entityUuid == null || hand == null || sound == null
                 || !Double.isFinite(x) || !Double.isFinite(y) || !Double.isFinite(z)
                 || !Float.isFinite(volume) || volume < 0.0F || volume > MAX_VOLUME
                 || !Float.isFinite(pitch) || pitch < 0.0F || pitch > MAX_PITCH) {
@@ -28,7 +28,7 @@ public record AttackSwingSoundMessage(int entityId, UUID playerId, InteractionHa
 
     public static void write(AttackSwingSoundMessage message, FriendlyByteBuf output) {
         output.writeVarInt(message.entityId());
-        output.writeUUID(message.playerId());
+        output.writeUUID(message.entityUuid());
         output.writeEnum(message.hand());
         output.writeInt(message.sequence());
         output.writeResourceLocation(message.sound());
