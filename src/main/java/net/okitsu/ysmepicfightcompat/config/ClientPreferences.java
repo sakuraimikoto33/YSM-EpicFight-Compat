@@ -88,10 +88,10 @@ public final class ClientPreferences {
                         HeldItemModelPolicy::isValidConfiguration);
         USE_YSM_MOVEMENT_ANIMATIONS_BY_DEFAULT = config
                 .comment("Use full-body YSM movement animations by default.",
-                        "This is disabled by default so Epic Fight keeps locomotion ownership unless a model rule opts in.",
+                        "This is enabled by default; model-specific rules can opt individual movement states out.",
                         "Only the current resolved movement state is synchronized; these rules remain local.")
                 .translation("config.ysm_epicfight_compat.use_ysm_movement_animations_by_default")
-                .define("useYsmMovementAnimationsByDefault", false);
+                .define("useYsmMovementAnimationsByDefault", true);
         MOVEMENT_ANIMATION_OVERRIDES = config
                 .comment("Model-specific movement states that use the opposite of the default.",
                         "Each model ID is a table key whose value is a list of semantic movement names.",
