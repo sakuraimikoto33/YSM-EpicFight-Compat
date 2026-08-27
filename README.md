@@ -18,7 +18,7 @@ YSM Epic Fight Compat is a Forge mod that renders player models selected in the 
 - Uses the model and texture selected by each player in single-player and multiplayer.
 - Keeps parsed local models, validated remote models, and generated server transfer data in separate bounded disk caches without writing model JSON or standalone texture images.
 - Supports Epic Fight's third-person and first-person combat rendering.
-- Uses model-authored YSM full-body movement by default for walking, running, sneaking, jumping, creative and elytra flight, swimming, crawling, and ladder movement, with per-model state exceptions. Epic Fight actions immediately regain pose ownership from configured movement.
+- Uses model-authored YSM full-body movement for walking, running, sneaking, jumping, creative and elytra flight, swimming, crawling, and ladder movement. It is enabled by default and supports per-model state exclusions; Epic Fight actions immediately regain pose ownership from configured movement.
 - Applies YSM auxiliary-bone, automatic, conditional, riding, roulette, item-switch, and Animation Controller motion through pose paths appropriate to each animation.
 - Uses a model-authored YSM weapon or tool when the selected model actually defines one for the held item; otherwise Epic Fight keeps rendering the item.
 - Plays an authored YSM full-body hold transition, when the model provides one, after an item changes. Model-authored replacements follow the held-item model setting, while ordinary items rendered by Epic Fight use an independent switch-animation setting.
@@ -38,7 +38,7 @@ When a converted model is active, armor, head equipment, and elytra are hidden b
 
 Install this mod and all requirements in the `mods` directory. For multiplayer, install YSM Epic Fight Compat on both the dedicated server and every participating client so that player selections and server-provided models can be resolved consistently.
 
-[Configured](https://www.curseforge.com/minecraft/mc-mods/configured) is optional. When it is installed, client options such as YSM's battle-mode overlay, model-cache limits, the held-item replacement and item-switch animation policies, YSM movement ownership, and their model-specific exceptions can be changed in game. The model-specific editors appear inside the normal Client settings and add the currently selected model ID as an editable entry. The mod starts normally without Configured, but that settings screen is unavailable.
+[Configured](https://www.curseforge.com/minecraft/mc-mods/configured) is optional. When it is installed, client options such as YSM's battle-mode overlay, model-cache limits, YSM held-item replacements, YSM item-switch animations, YSM movement animations, and their model-specific exclusions can be changed in game. An exclusion disables the matching behavior while its main YSM setting is enabled and never enables it while that setting is disabled. The model-specific editors appear inside the normal Client settings and add the currently selected model ID as an editable entry. The mod starts normally without Configured, but that settings screen is unavailable.
 
 ## Building
 
