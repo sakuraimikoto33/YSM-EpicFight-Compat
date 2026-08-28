@@ -46,7 +46,7 @@ EpicFight_TouhouLittleMaidはモデル行列へ `0.8` のスケールを適用�
 
 `EpicFightPoseOwnership` は、Epic Fightのentity stateフラグ、正確なaction motion、表示中のmain-frame・reboundアニメーション、照準、アイテム使用、腕振り、ダメージ、knockdown状態を確認します。これらのアクションは、設定された移動姿勢と持ち替え姿勢の担当を即座に解除します。独自弓の使用・リリースだけは後述する別のモデル定義アクション経路です。`MovementPoseTransition` は、通常の移動姿勢担当が切り替わる際に、直前に表示した完全なskinから3tickかけてブレンドしますが、Epic Fightのアクション開始は遅延させません。クリエイティブ飛行ではYSMの移動姿勢または持ち替え姿勢がモデルを担当している間だけ公式のbody yaw規則を適用し、エリトラ飛行とアクションの外側変換はEpic Fight側を維持します。
 
-`AutomaticAnimationSelector` はさらに、YSMの状態、装備条件、手持ち品条件、乗り物、同乗者用クリップを保持します。騎乗状態は完全姿勢の経路で処理し、Epic Fightの騎乗ポーズを二重に適用しません。ルーレットクリップはモデル空間のroot・胴体移動を維持します。プレイヤーのルーレット音声は公式YSMが担当しますが、EFTLMレンダラーが公式メイド描画を迂回する対応メイドでは互換ランタイムが音声を担当し、監視したルーレットgenerationにより同名アニメーションの再開始を識別します。手持ち品用クリップは後述の置換・エフェクトのみ・持ち替え規則に従います。通常アイテムはYSMの持ち替え姿勢だけが再生されている間もEpic Fightのアイテムレイヤーに残ります。
+`AutomaticAnimationSelector` はさらに、YSMの状態、装備条件、手持ち品条件、乗り物、同乗者用クリップを保持します。モデル使用者の解決済み設定によりYSMが騎乗中の乗り物を描画する場合、騎乗状態は完全姿勢の経路で処理し、Epic Fightの騎乗ポーズを二重に適用しません。YSM乗り物経路を無効にした場合は乗り物・同乗者用クリップとlocator補正も適用せず、乗り物と騎乗姿勢をEpic Fightまたはバニラへ委ねます。ルーレットクリップはモデル空間のroot・胴体移動を維持します。プレイヤーのルーレット音声は公式YSMが担当しますが、EFTLMレンダラーが公式メイド描画を迂回する対応メイドでは互換ランタイムが音声を担当し、監視したルーレットgenerationにより同名アニメーションの再開始を識別します。手持ち品用クリップは後述の置換・エフェクトのみ・持ち替え規則に従います。通常アイテムはYSMの持ち替え姿勢だけが再生されている間もEpic Fightのアイテムレイヤーに残ります。
 
 アニメーションクリップでは、ループまたは最終フレーム保持の再生方式、Molang `blend_weight`、キーフレーム補間、ループ境界をまたぐタイムラインの時系列順を保持します。ジオメトリに存在しないMolang疑似ボーンのトラックも、変数更新の副作用を維持するため定義順に評価しますが、姿勢行列は割り当てません。入れ子のMolang関数は呼び出し階層ごとに引数フレームを分離し、内側の関数が呼び出し元の引数を書き換えないようにします。
 
@@ -65,6 +65,14 @@ Epic Fightのアクション、ルーレット再生、独自の全身アクシ�
 検出した独自弓は、Epic Fightの左手弓規則へ移さず、暫定的にYSM定義のメインハンド・右手位置へ取り付けます。引き絞りとリリース中は、腕だけの上書きで肩が分離しないよう、YSM定義の全身ポーズで戦闘ポーズを置き換えます。照準yawは現在のEpic Fightモデル方向から算出し、Epic Fightの短いrebound信号が終わった後も1回限りのリリースを継続し、保存したYSM最終ポーズからEpic Fightへ1フレームで切り替えずにブレンドします。弓のエフェクトだけを持つジオメトリは、弓や全身ポーズを置き換えずにEpic Fightの左Tool jointへ取り付けます。
 
 `AttackAnimationSoundMixin` が差し替えるのはEpic Fightの攻撃フェーズの振り音だけで、命中音と衝撃音は変更しません。`ServerAttackSoundRouter` は対応する攻撃エンティティのID・UUID、手、正確なEpic Fightサウンド、pitch、シーケンスを、認可済みの各追跡クライアントへ保持して送ります。クライアントは、有効な変換モデルが攻撃アイテムを置き換え、そのYSMタイムラインが音声を実際に再生したか、モデル定義の攻撃音声経路を持つ場合だけEpic Fightの代替音を抑止します。制限付きの確認待ち時間内に音声経路が有効にならなければ、元のEpic Fight振り音をローカル再生します。
+
+## モデル定義の投射物・釣り針・乗り物
+
+モデル固有の投射物、釣り針、乗り物ジオメトリは引き続き公式YSMが描画し、互換Mod側でモデルを再構築しません。`YsmProjectileRendererMixin`、`YsmFishingHookRendererMixin`、`YsmVehicleRendererMixin` は、Epic Fight戦闘モード中に公式YSMへそのエンティティの描画を継続させるか、Epic Fightまたはバニラの元のレンダラーへ戻すかを決定します。`YsmVehiclePreviewMixin` は同じ決定をYSMの乗客locator変換にも適用し、非表示にしたYSM乗り物が表示中の騎乗者だけを移動させることを防ぎます。戦闘モード外ではこれらの制御は公式YSMを変更しません。4つの対象メソッドとオーバーレイメソッドはYSM Mapping APIの管理済み意味キーと安定したsource aliasだけを通じて参照し、このプロジェクトは実行時の難読化名を保持しません。
+
+投射物の担当判定では、モデル定義の手持ち品とエフェクトのみのジオメトリを区別します。変換済みモデルが弓またはトライデントの常時表示される置換モデルを定義している場合、その投射物はYSM手持ち品モデル方針に従います。定義していない場合は、`useYsmProjectileModels` と `projectileModelExclusions` が投射物専用ジオメトリを維持するかを決定します。チャージ済みstackの状態をアイテムIDだけから再構築できないため、クロスボウの投射物は常に投射物専用方針を使用します。釣り針は釣竿に対する手持ち品モデル方針に従います。乗り物は `useYsmVehicleModels` と `vehicleModelExclusions` に従い、Epic Fight側を選択した場合はYSMの乗り物とlocatorと同時に、対応する騎乗アニメーション経路も無効にします。
+
+専用サーバーは投射物の発射時に所有者、選択モデル、元アイテム、エンティティタイプをsnapshotとして確定するため、発射後の持ち替えや追跡中の所有者を一時的に取得できない状況で、飛行中エンティティの担当が変化しません。所有者を取得できる間はEpic Fightモードを更新し、短い追跡の空白では最後に同期した値を維持します。乗り物は現在の最初のプレイヤー乗客に追従します。`SubEntityPreferenceBroadcaster` は該当モデル使用者のクライアントだけにローカル方針の解決を要求し、不透明な所有者epochとsource revisionに対して応答を認証してから、容量制限付きの解決済みsnapshotを追跡クライアントへ配信します。不明または古い判定は、戦闘モード中は元のレンダラーへ安全側にフォールバックします。設定トグルと、エンティティタイプタグselectorを含むモデル別除外テーブルはローカルに残り、同期しません。
 
 ## Animation Controllerと補助出力
 
@@ -120,9 +128,11 @@ Epic Fightのアクション、ルーレット再生、独自の全身アクシ�
 
 ## クライアント設定
 
-クライアント設定は `config/ysm_epicfight_compat/ysm_epicfight_compat-client.toml`、統合・専用サーバー共通のキャッシュ設定は同じ階層の `ysm_epicfight_compat-common.toml` に保存します。`CombatOverlayMixin` は、公式YSMの各オーバーレイフレームを `CombatOverlayPolicy` へ委譲します。クライアント設定は、Epic Fightの戦闘モード中だけ左上のYSMプレイヤーオーバーレイを抑止します。値は各オーバーレイフレームで読み取るため、設定のライブ再読み込みは再起動せずに反映されます。
+クライアント設定は `config/ysm_epicfight_compat/ysm_epicfight_compat-client.toml`、統合・専用サーバー共通のキャッシュ設定は同じ階層の `ysm_epicfight_compat-common.toml` に保存します。`CombatOverlayMixin` はYSM Mapping APIの管理済み `ysm.client.renderer.model_preview.render_player_overlay.method` キーを通じて公式YSMのオーバーレイメソッドへ到達し、各フレームを `CombatOverlayPolicy` へ委譲します。クライアント設定は、Epic Fightの戦闘モード中だけ左上のYSMプレイヤーオーバーレイを抑止します。値は各オーバーレイフレームで読み取るため、設定のライブ再読み込みは再起動せずに反映されます。
 
 `useYsmHeldItemModels` と `useYsmHeldItemSwitchAnimations` はどちらも初期状態で有効です。`heldItemModelExclusions` と `heldItemSwitchAnimationExclusions` は独立したモデルIDテーブルで、値にはアイテムIDまたは `#item_tag` のselectorを指定します。一致したselectorは、対応するメイン設定が有効な場合にその機能を無効として扱います。メイン設定が無効な場合、除外対象がYSMの機能を有効化することはありません。`minecraft:air` を使うと空手への持ち替えを対象にできます。モデル独自の置換品とそのアニメーションは必ず手持ち品モデル方針を使用し、持ち替えアニメーション方針はEpic Fightが通常アイテムを維持する場合だけ使用します。
+
+`useYsmProjectileModels` と `useYsmVehicleModels` も初期状態で有効です。`projectileModelExclusions` と `vehicleModelExclusions` は、モデルIDごとにエンティティIDまたは `#entity_type_tag` selectorを指定します。手持ち品テーブルと同様、一致したselectorは有効なメイン設定を無効化することだけができます。クライアントは認可された各投射物、釣り針、乗り物について解決済みの表示判定だけを送信し、トグルとテーブルはローカルに維持します。釣り針と、実際のモデル定義の弓・トライデントに制御される投射物は、これらの投射物ルールではなく手持ち品方針を使用します。
 
 `useYsmMovementAnimations` も初期状態で有効です。`movementAnimationExclusions` はモデルIDごとに、アニメーション節で列挙した移動状態名を指定します。指定した状態はメイン設定が有効な場合だけYSM移動アニメーションを無効とし、メイン設定が無効な場合に姿勢担当を有効化することはありません。`ClientMovementAnimationPreferences` は、現在の正規化済みモデルID、意味上の移動状態、解決済みの姿勢担当bitを送信します。リモートプレイヤーの速度とクリエイティブ飛行能力だけではモデル使用者の状態を常に再構築できないため、`MovementAnimationPreferenceBroadcaster` がその結果を追跡クライアントへ中継します。
 
@@ -134,7 +144,7 @@ Epic Fightのアクション、ルーレット再生、独自の全身アクシ�
 
 手持ち品方針と移動方針は、別々の不透明epoch、source revision、pending要求、query、update、判定キャッシュ、リモートfingerprintを使用します。手持ち品fingerprintには所有者、メイド、正規化済みモデルID、両手のアイテムIDを含め、そのepochには手持ち品・持ち替え設定、それぞれの除外、クライアントのitem tag generationを含めます。移動fingerprintには所有者、メイド、正規化済みモデルID、サーバーが確定した意味上の移動状態を含め、そのepochは移動設定と除外だけで変化します。一方の方針の更新や応答が、もう一方のpending状態を無効化することはありません。
 
-Configured 2.2.3以降は任意です。文字列targetの `@Pseudo` Mixinで、Configuredが扱えない動的テーブルのleafだけを `ConfiguredHeldItemRules` へ置き換え、Configured APIへのリンクを任意統合の境界内へ限定します。手持ち品置換、持ち替えアニメーション、移動状態の各除外エディターは通常のClientフォルダー内に表示し、現在選択中のモデルIDを空の編集行として追加します。空の行は設定ファイルへ書きません。Configuredがない場合は対象クラスが読み込まれず、ゲーム内設定画面だけが利用できなくなります。
+Configured 2.2.3以降は任意です。文字列targetの `@Pseudo` Mixinで、Configuredが扱えない動的テーブルのleafだけを `ConfiguredHeldItemRules` へ置き換え、Configured APIへのリンクを任意統合の境界内へ限定します。手持ち品置換、持ち替えアニメーション、移動状態、投射物、乗り物の各除外エディターは通常のClientフォルダー内に表示し、現在選択中のモデルIDを空の編集行として追加します。空の行は設定ファイルへ書きません。Configuredがない場合は対象クラスが読み込まれず、ゲーム内設定画面だけが利用できなくなります。
 
 ## ソース構成
 
@@ -144,6 +154,6 @@ Configured 2.2.3以降は任意です。文字列targetの `@Pseudo` Mixinで、
 | アニメーション、Molang、Controller、サウンド、パーティクル | `animation` |
 | リグ対応、変換、キャッシュ | `mesh`, `cache` |
 | Epic Fight描画とレイヤー | `render`, `render.layer`, `event`, `mixin` |
-| 選択状態、ジオメトリ、モデル変数、移動姿勢担当、手持ち品表示の同期 | `network`, `network.geometry`, `network.message` |
+| 選択状態、ジオメトリ、モデル変数、移動姿勢担当、手持ち品表示、サブエンティティ表示の同期 | `network`, `network.geometry`, `network.message` |
 | Touhou Little Maid・EFTLM任意アダプター | `integration.tlm`、一部の `mixin`・`network` クラス |
 | クライアント設定、Configured任意統合、警告処理 | `config`, `integration.configured`, `compat` |
