@@ -47,7 +47,7 @@
       "required": true
     },
     {
-      "key": "combat_overlay.render.method",
+      "key": "ysm.client.renderer.model_preview.render_player_overlay.method",
       "kind": "METHOD",
       "required": true,
       "sourceAlias": {
@@ -56,15 +56,6 @@
           "name": "renderPlayerOverlay",
           "descriptor": "(Lnet/minecraft/client/gui/GuiGraphics;Lnet/minecraft/client/player/LocalPlayer;DDFFIF)V"
         }
-      },
-      "definition": {
-        "common": {
-          "requiredAccess": 8,
-          "descriptorShapes": [
-            "(L@minecraft;L@minecraft;DDFFIF)V"
-          ]
-        },
-        "forge": {}
       }
     },
     {
@@ -180,7 +171,7 @@
   ],
   "mixinRequirements": {
     "net.okitsu.ysmepicfightcompat.mixin.CombatOverlayMixin": [
-      "combat_overlay.render.method"
+      "ysm.client.renderer.model_preview.render_player_overlay.method"
     ],
     "net.okitsu.ysmepicfightcompat.mixin.PlayerStateCapabilityMixin": [
       "ysm.player_state.capability.class"

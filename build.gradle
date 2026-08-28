@@ -303,6 +303,11 @@ tasks.register('verifyDistributions') {
                         'YsmConfigurationExpressionMixin must require its curated mapped method')
             }
             def subEntityMappings = [
+                    'net.okitsu.ysmepicfightcompat.mixin.CombatOverlayMixin': [
+                            key: 'ysm.client.renderer.model_preview.render_player_overlay.method',
+                            owner: 'net/okitsu/ysmepicfightcompat/ysmref/ModelPreviewRendererAlias',
+                            name: 'renderPlayerOverlay'
+                    ],
                     'net.okitsu.ysmepicfightcompat.mixin.YsmProjectileRendererMixin': [
                             key: 'ysm.client.renderer.custom_projectile.render.method',
                             owner: 'net/okitsu/ysmepicfightcompat/ysmref/CustomProjectileRendererAlias',
