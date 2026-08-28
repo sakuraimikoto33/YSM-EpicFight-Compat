@@ -302,6 +302,42 @@ tasks.register('verifyDistributions') {
                 throw new GradleException(
                         'YsmConfigurationExpressionMixin must require its curated mapped method')
             }
+            def subEntityMappings = [
+                    'net.okitsu.ysmepicfightcompat.mixin.YsmProjectileRendererMixin': [
+                            key: 'ysm.client.renderer.custom_projectile.render.method',
+                            owner: 'net/okitsu/ysmepicfightcompat/ysmref/CustomProjectileRendererAlias',
+                            name: 'renderProjectile'
+                    ],
+                    'net.okitsu.ysmepicfightcompat.mixin.YsmFishingHookRendererMixin': [
+                            key: 'ysm.client.renderer.custom_fishing_hook.render.method',
+                            owner: 'net/okitsu/ysmepicfightcompat/ysmref/CustomFishingHookRendererAlias',
+                            name: 'tryRenderCustomHook'
+                    ],
+                    'net.okitsu.ysmepicfightcompat.mixin.YsmVehicleRendererMixin': [
+                            key: 'ysm.client.renderer.custom_vehicle.render.method',
+                            owner: 'net/okitsu/ysmepicfightcompat/ysmref/CustomVehicleRendererAlias',
+                            name: 'renderVehicle'
+                    ],
+                    'net.okitsu.ysmepicfightcompat.mixin.YsmVehiclePreviewMixin': [
+                            key: 'ysm.client.renderer.model_preview.render_vehicle.method',
+                            owner: 'net/okitsu/ysmepicfightcompat/ysmref/ModelPreviewRendererAlias',
+                            name: 'renderVehicleModel'
+                    ]
+            ]
+            subEntityMappings.each { mixin, expected ->
+                def request = requestJson.symbols.find { it.key == expected.key }
+                if (request?.kind != 'METHOD' || request?.required != true
+                        || request?.sourceAlias?.common?.owner != expected.owner
+                        || request?.sourceAlias?.common?.name != expected.name
+                        || request.containsKey('definition')) {
+                    throw new GradleException(
+                            "${expected.key} must retain its curated required source alias without a consumer definition")
+                }
+                if (requestJson.mixinRequirements[mixin] != [expected.key]) {
+                    throw new GradleException(
+                            "${mixin} must require only ${expected.key}")
+                }
+            }
             if (mixinJson.refmapWrapper) {
                 def wrapperPath = mixinJson.package.replace('.', '/') + '/' +
                         mixinJson.refmapWrapper.replace('.', '/') + '.class'
@@ -316,7 +352,15 @@ tasks.register('verifyDistributions') {
                     PlayerStateCapabilityMixin:
                             'net.okitsu.ysmepicfightcompat.ysmref.PlayerStateCapabilityAlias',
                     YsmConfigurationExpressionMixin:
-                            'net.okitsu.ysmepicfightcompat.ysmref.AnimationRouletteScreenAlias'
+                            'net.okitsu.ysmepicfightcompat.ysmref.AnimationRouletteScreenAlias',
+                    YsmProjectileRendererMixin:
+                            'net.okitsu.ysmepicfightcompat.ysmref.CustomProjectileRendererAlias',
+                    YsmFishingHookRendererMixin:
+                            'net.okitsu.ysmepicfightcompat.ysmref.CustomFishingHookRendererAlias',
+                    YsmVehicleRendererMixin:
+                            'net.okitsu.ysmepicfightcompat.ysmref.CustomVehicleRendererAlias',
+                    YsmVehiclePreviewMixin:
+                            'net.okitsu.ysmepicfightcompat.ysmref.ModelPreviewRendererAlias'
             ].each { mixinName, sourceAlias ->
                 def mixinPath = mixinJson.package.replace('.', '/') +
                         "/${mixinName}.class"

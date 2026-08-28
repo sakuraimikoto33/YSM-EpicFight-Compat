@@ -17,4 +17,14 @@ class AutomaticAnimationSelectorTest {
         assertFalse(AutomaticAnimationSelector.officialHeldItemMatches(
                 true, false, true));
     }
+
+    @Test
+    void disabledYsmVehicleRemovesOnlyMountedAnimationSelection() {
+        assertFalse(AutomaticAnimationSelector.usesYsmMountedAnimations(
+                true, false));
+        assertTrue(AutomaticAnimationSelector.usesYsmMountedAnimations(
+                true, true));
+        assertTrue(AutomaticAnimationSelector.usesYsmMountedAnimations(
+                false, false));
+    }
 }

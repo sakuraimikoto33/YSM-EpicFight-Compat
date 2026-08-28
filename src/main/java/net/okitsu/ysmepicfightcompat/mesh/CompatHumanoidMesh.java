@@ -8,6 +8,7 @@ import net.minecraft.resources.ResourceLocation;
 import net.minecraft.world.InteractionHand;
 import net.minecraft.world.entity.HumanoidArm;
 import net.minecraft.world.entity.LivingEntity;
+import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.UseAnim;
 import net.okitsu.ysmepicfightcompat.CompatMod;
 import net.okitsu.ysmepicfightcompat.animation.DefaultPoseProgram;
@@ -74,6 +75,11 @@ public final class CompatHumanoidMesh extends HumanoidMesh {
     /** Returns whether the model authors the held prop for this item condition. */
     public boolean replacesHeldItem(LivingEntity entity, InteractionHand hand) {
         return parallelAnimations.replacesHeldItem(entity, hand);
+    }
+
+    /** Returns whether this model authors steady held geometry for an arbitrary item. */
+    public boolean authorsHeldItem(LivingEntity entity, ItemStack stack) {
+        return parallelAnimations.authorsHeldItem(entity, stack);
     }
 
     /** Returns whether this item has a YSM replacement rule for an attack. */

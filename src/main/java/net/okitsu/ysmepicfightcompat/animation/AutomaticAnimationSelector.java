@@ -8,6 +8,7 @@ import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.entity.animal.Pig;
 import net.minecraft.world.entity.vehicle.Boat;
 import net.minecraft.world.item.ItemStack;
+import net.okitsu.ysmepicfightcompat.render.SubEntityRenderPolicy;
 
 import java.util.ArrayList;
 import java.util.EnumMap;
@@ -140,12 +141,22 @@ final class AutomaticAnimationSelector {
 
     Selection select(LivingEntity entity, double now, State state,
                      MovementAnimationType synchronizedMovement) {
+        boolean ysmVehicle = !entity.isPassenger()
+                || SubEntityRenderPolicy.usesYsmVehicleForRider(entity);
+        return select(entity, now, state, synchronizedMovement, ysmVehicle);
+    }
+
+    Selection select(LivingEntity entity, double now, State state,
+                     MovementAnimationType synchronizedMovement,
+                     boolean ysmVehicle) {
+        boolean ysmMountedAnimations = usesYsmMountedAnimations(
+                entity.isPassenger(), ysmVehicle);
         observeAttacked(entity, now, state);
         state.heldItemChanges.clear();
 
         List<ActiveClip> result = new ArrayList<>();
         MainState selectedMain = mainState(
-                entity, now, state, synchronizedMovement);
+                entity, now, state, synchronizedMovement, ysmMountedAnimations);
         ActiveClip main = track(state, "main", selectedMain.clip(),
                 selectedMain.clip(), now);
         add(result, main);
@@ -156,9 +167,14 @@ final class AutomaticAnimationSelector {
         addArmor(result, entity, EquipmentSlot.CHEST, "chest", state, now);
         addArmor(result, entity, EquipmentSlot.LEGS, "legs", state, now);
         addArmor(result, entity, EquipmentSlot.FEET, "feet", state, now);
-        addRide(result, entity, state, now);
+        addRide(result, entity, state, now, ysmMountedAnimations);
         return new Selection(result, main, selectedMain.movement(),
                 state.heldItemChanges);
+    }
+
+    static boolean usesYsmMountedAnimations(boolean passenger,
+                                            boolean ysmVehicle) {
+        return !passenger || ysmVehicle;
     }
 
     boolean hasUnobservedHeldItemChange(LivingEntity entity,
@@ -187,7 +203,8 @@ final class AutomaticAnimationSelector {
     }
 
     private MainState mainState(LivingEntity entity, double now, State state,
-                                MovementAnimationType synchronizedMovement) {
+                                MovementAnimationType synchronizedMovement,
+                                boolean ysmMountedAnimations) {
         if (entity.isDeadOrDying()) {
             return main(firstAvailable("death", "idle", "new_idle_empty"));
         }
@@ -202,6 +219,9 @@ final class AutomaticAnimationSelector {
             return main("attacked");
         }
         if (entity.isPassenger()) {
+            if (!ysmMountedAnimations) {
+                return main(firstAvailable("idle", "new_idle_empty"));
+            }
             Entity vehicle = entity.getVehicle();
             if (vehicle instanceof Boat) {
                 return main(firstAvailable(
@@ -303,10 +323,12 @@ final class AutomaticAnimationSelector {
     }
 
     private void addRide(List<ActiveClip> result, LivingEntity entity, State state,
-                         double now) {
+                         double now, boolean ysmMountedAnimations) {
         Entity vehicle = entity.getVehicle();
-        String vehicleClip = entityCondition("vehicle", vehicle);
-        String vehicleToken = vehicle == null ? "" : channelToken(vehicle);
+        String vehicleClip = ysmMountedAnimations
+                ? entityCondition("vehicle", vehicle) : null;
+        String vehicleToken = !ysmMountedAnimations || vehicle == null
+                ? "" : channelToken(vehicle);
         add(result, track(state, "vehicle", vehicleClip, vehicleToken, now));
 
         Entity matchingPassenger = null;

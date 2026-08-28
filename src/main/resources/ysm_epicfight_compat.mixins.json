@@ -22,7 +22,11 @@
     "TouhouMaidAnimationStateMixin",
     "TouhouMaidRendererMixin",
     "TridentHeldItemCorrectionMixin",
-    "YsmConfigurationExpressionMixin"
+    "YsmConfigurationExpressionMixin",
+    "YsmFishingHookRendererMixin",
+    "YsmProjectileRendererMixin",
+    "YsmVehiclePreviewMixin",
+    "YsmVehicleRendererMixin"
   ],
   "injectors": {
     "defaultRequire": 1

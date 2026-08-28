@@ -10,6 +10,7 @@ import net.minecraft.client.Minecraft;
 import net.minecraft.network.chat.Component;
 import net.minecraft.world.entity.player.Player;
 import net.okitsu.ysmepicfightcompat.config.ClientPreferences;
+import net.okitsu.ysmepicfightcompat.network.EntityModelPolicy;
 import net.okitsu.ysmepicfightcompat.network.HeldItemModelPolicy;
 import net.okitsu.ysmepicfightcompat.network.MovementAnimationPolicy;
 import net.okitsu.ysmepicfightcompat.render.PlayerSelectionResolver;
@@ -35,13 +36,17 @@ public final class ConfiguredHeldItemRules {
     private ConfiguredHeldItemRules() {
     }
 
+    static boolean recognizesRuleEntry(String entryName) {
+        return RuleKind.fromEntryName(entryName) != null;
+    }
+
     /** Called through an Object-only mixin boundary to avoid hard optional linkage. */
     public static boolean isPlaceholder(Object entry) {
         if (!(entry instanceof IConfigEntry configEntry) || !configEntry.isLeaf()) {
             return false;
         }
         IConfigValue<?> value = configEntry.getValue();
-        return value != null && RuleKind.fromEntryName(value.getName()) != null;
+        return value != null && recognizesRuleEntry(value.getName());
     }
 
     /** Stable cache key used by the Object-only mixin boundary. */
@@ -316,6 +321,14 @@ public final class ConfiguredHeldItemRules {
                 "config.ysm_epicfight_compat.held_item_model_exclusions",
                 "config.ysm_epicfight_compat.held_item_model_entry.tooltip",
                 "config.ysm_epicfight_compat.held_item_model_entry.invalid"),
+        PROJECTILE("projectileModelExclusions",
+                "config.ysm_epicfight_compat.projectile_model_exclusions",
+                "config.ysm_epicfight_compat.projectile_model_entry.tooltip",
+                "config.ysm_epicfight_compat.projectile_model_entry.invalid"),
+        VEHICLE("vehicleModelExclusions",
+                "config.ysm_epicfight_compat.vehicle_model_exclusions",
+                "config.ysm_epicfight_compat.vehicle_model_entry.tooltip",
+                "config.ysm_epicfight_compat.vehicle_model_entry.invalid"),
         HELD_ITEM_SWITCH("heldItemSwitchAnimationExclusions",
                 "config.ysm_epicfight_compat.held_item_switch_animation_exclusions",
                 "config.ysm_epicfight_compat.held_item_switch_animation_entry.tooltip",
@@ -350,6 +363,8 @@ public final class ConfiguredHeldItemRules {
         private Map<String, List<String>> initialRules() {
             return switch (this) {
                 case HELD_ITEM -> ClientPreferences.heldItemModelExclusions();
+                case PROJECTILE -> ClientPreferences.projectileModelExclusions();
+                case VEHICLE -> ClientPreferences.vehicleModelExclusions();
                 case HELD_ITEM_SWITCH ->
                         ClientPreferences.heldItemSwitchAnimationExclusions();
                 case MOVEMENT -> ClientPreferences.movementAnimationExclusions();
@@ -359,6 +374,8 @@ public final class ConfiguredHeldItemRules {
         private void save(Map<String, List<String>> rules) {
             switch (this) {
                 case HELD_ITEM -> ClientPreferences.setHeldItemModelExclusions(rules);
+                case PROJECTILE -> ClientPreferences.setProjectileModelExclusions(rules);
+                case VEHICLE -> ClientPreferences.setVehicleModelExclusions(rules);
                 case HELD_ITEM_SWITCH ->
                         ClientPreferences.setHeldItemSwitchAnimationExclusions(rules);
                 case MOVEMENT -> ClientPreferences.setMovementAnimationExclusions(rules);
@@ -366,20 +383,28 @@ public final class ConfiguredHeldItemRules {
         }
 
         private int maxModels() {
-            return this == MOVEMENT ? MovementAnimationPolicy.MAX_MODELS
-                    : HeldItemModelPolicy.MAX_MODELS;
+            return switch (this) {
+                case MOVEMENT -> MovementAnimationPolicy.MAX_MODELS;
+                case PROJECTILE, VEHICLE -> EntityModelPolicy.MAX_MODELS;
+                default -> HeldItemModelPolicy.MAX_MODELS;
+            };
         }
 
         private int maxSelectorsPerModel() {
-            return this == MOVEMENT
-                    ? MovementAnimationPolicy.MAX_SELECTORS_PER_MODEL
-                    : HeldItemModelPolicy.MAX_SELECTORS_PER_MODEL;
+            return switch (this) {
+                case MOVEMENT -> MovementAnimationPolicy.MAX_SELECTORS_PER_MODEL;
+                case PROJECTILE, VEHICLE ->
+                        EntityModelPolicy.MAX_SELECTORS_PER_MODEL;
+                default -> HeldItemModelPolicy.MAX_SELECTORS_PER_MODEL;
+            };
         }
 
         private boolean isValidSelector(Object value) {
-            return this == MOVEMENT
-                    ? MovementAnimationPolicy.isValidSelector(value)
-                    : HeldItemModelPolicy.isValidSelector(value);
+            return switch (this) {
+                case MOVEMENT -> MovementAnimationPolicy.isValidSelector(value);
+                case PROJECTILE, VEHICLE -> EntityModelPolicy.isValidSelector(value);
+                default -> HeldItemModelPolicy.isValidSelector(value);
+            };
         }
 
         private String entryName() {

@@ -2,6 +2,7 @@ package net.okitsu.ysmepicfightcompat.event;
 
 import net.minecraft.client.Minecraft;
 import net.minecraft.world.entity.LivingEntity;
+import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.player.Player;
 import net.minecraftforge.api.distmarker.Dist;
 import net.minecraftforge.client.event.ClientPlayerNetworkEvent;
@@ -21,8 +22,10 @@ import net.okitsu.ysmepicfightcompat.mesh.CombatMeshCache;
 import net.okitsu.ysmepicfightcompat.network.ClientHeldItemModelPreferences;
 import net.okitsu.ysmepicfightcompat.network.ClientMovementAnimationPreferences;
 import net.okitsu.ysmepicfightcompat.network.ClientMaidPreferenceSync;
+import net.okitsu.ysmepicfightcompat.network.ClientSubEntityModelPreferences;
 import net.okitsu.ysmepicfightcompat.network.RemoteMaidPreferences;
 import net.okitsu.ysmepicfightcompat.network.RemoteSelectionState;
+import net.okitsu.ysmepicfightcompat.network.RemoteSubEntityModelPreferences;
 import net.okitsu.ysmepicfightcompat.network.geometry.ClientModelTransfers;
 import net.okitsu.ysmepicfightcompat.render.PlayerSelectionResolver;
 
@@ -49,6 +52,7 @@ public final class ClientMaintenanceEvents {
         ClientHeldItemModelPreferences.beginConnection();
         ClientMovementAnimationPreferences.beginConnection();
         ClientMaidPreferenceSync.beginConnection();
+        ClientSubEntityModelPreferences.beginConnection();
         TouhouMaidRenderBridge.clear();
         reloadCountdown = -1;
         failureCountdown = 0;
@@ -57,16 +61,19 @@ public final class ClientMaintenanceEvents {
 
     @SubscribeEvent
     public static void playerLeftLevel(EntityLeaveLevelEvent event) {
-        if (!event.getLevel().isClientSide()
-                || !(event.getEntity() instanceof LivingEntity entity)) {
+        if (!event.getLevel().isClientSide()) {
             return;
         }
-        CombatMeshCache.releaseEntity(entity);
-        if (TouhouMaidSelectionAccess.isSupportedMaid(entity)) {
-            RemoteMaidPreferences.remove(entity.getUUID());
-        }
-        if (entity instanceof Player player) {
-            OfficialConfigurationVariables.reset(player);
+        Entity removed = event.getEntity();
+        RemoteSubEntityModelPreferences.remove(removed.getUUID());
+        if (removed instanceof LivingEntity entity) {
+            CombatMeshCache.releaseEntity(entity);
+            if (TouhouMaidSelectionAccess.isSupportedMaid(entity)) {
+                RemoteMaidPreferences.remove(entity.getUUID());
+            }
+            if (entity instanceof Player player) {
+                OfficialConfigurationVariables.reset(player);
+            }
         }
     }
 
@@ -83,6 +90,7 @@ public final class ClientMaintenanceEvents {
         if (event.getUpdateCause()
                 == TagsUpdatedEvent.UpdateCause.CLIENT_PACKET_RECEIVED) {
             ClientMaidPreferenceSync.itemTagsUpdated();
+            ClientSubEntityModelPreferences.entityTypesUpdated();
         }
     }
 
@@ -97,6 +105,7 @@ public final class ClientMaintenanceEvents {
         ClientHeldItemModelPreferences.tickSync();
         ClientMovementAnimationPreferences.tickSync();
         ClientMaidPreferenceSync.tickSync();
+        ClientSubEntityModelPreferences.tickSync();
         CombatMeshCache.releaseExpiredTextures();
         if (++failureCountdown >= FAILURE_RECHECK_INTERVAL) {
             failureCountdown = 0;
@@ -107,6 +116,7 @@ public final class ClientMaintenanceEvents {
         } else if (reloadCountdown == 0) {
             reloadCountdown = -1;
             Minecraft.getInstance().execute(() -> {
+                ClientSubEntityModelPreferences.modelDefinitionsUpdated();
                 PlayerSelectionResolver.clear();
                 ClientModelTransfers.clear();
                 TouhouMaidRenderBridge.clear();

@@ -4,6 +4,7 @@ import com.electronwill.nightconfig.core.Config;
 import net.minecraftforge.common.ForgeConfigSpec;
 import net.minecraftforge.fml.ModLoadingContext;
 import net.minecraftforge.fml.config.ModConfig;
+import net.okitsu.ysmepicfightcompat.network.EntityModelPolicy;
 import net.okitsu.ysmepicfightcompat.network.HeldItemModelPolicy;
 import net.okitsu.ysmepicfightcompat.network.MovementAnimationPolicy;
 
@@ -26,6 +27,12 @@ public final class ClientPreferences {
     public static final ForgeConfigSpec.BooleanValue USE_YSM_HELD_ITEM_MODELS;
     public static final ForgeConfigSpec.ConfigValue<Config>
             HELD_ITEM_MODEL_EXCLUSIONS;
+    public static final ForgeConfigSpec.BooleanValue USE_YSM_PROJECTILE_MODELS;
+    public static final ForgeConfigSpec.ConfigValue<Config>
+            PROJECTILE_MODEL_EXCLUSIONS;
+    public static final ForgeConfigSpec.BooleanValue USE_YSM_VEHICLE_MODELS;
+    public static final ForgeConfigSpec.ConfigValue<Config>
+            VEHICLE_MODEL_EXCLUSIONS;
     public static final ForgeConfigSpec.BooleanValue
             USE_YSM_HELD_ITEM_SWITCH_ANIMATIONS;
     public static final ForgeConfigSpec.ConfigValue<Config>
@@ -86,6 +93,36 @@ public final class ClientPreferences {
                 .translation("config.ysm_epicfight_compat.held_item_model_exclusions")
                 .define("heldItemModelExclusions", Config::inMemory,
                         HeldItemModelPolicy::isValidConfiguration);
+        USE_YSM_PROJECTILE_MODELS = config
+                .comment("Use model-authored YSM projectile models when no corresponding YSM held-item model controls the projectile.",
+                        "Only the resolved projectile display state is synchronized; these rules remain local.",
+                        "Default: true")
+                .translation("config.ysm_epicfight_compat.use_ysm_projectile_models")
+                .define("useYsmProjectileModels", true);
+        PROJECTILE_MODEL_EXCLUSIONS = config
+                .comment("Model-specific entity IDs or #entity_type_tags that disable YSM projectile models.",
+                        "The list never enables YSM projectile models when the main setting is disabled.",
+                        "Rule contents remain local; only the resolved projectile display state is synchronized.",
+                        "Example: \"wine_fox/22_elf\" = [\"minecraft:arrow\", \"#minecraft:arrows\"].",
+                        "Default: {}")
+                .translation("config.ysm_epicfight_compat.projectile_model_exclusions")
+                .define("projectileModelExclusions", Config::inMemory,
+                        EntityModelPolicy::isValidConfiguration);
+        USE_YSM_VEHICLE_MODELS = config
+                .comment("Use model-authored YSM vehicle models when available.",
+                        "Only the resolved vehicle display state is synchronized; these rules remain local.",
+                        "Default: true")
+                .translation("config.ysm_epicfight_compat.use_ysm_vehicle_models")
+                .define("useYsmVehicleModels", true);
+        VEHICLE_MODEL_EXCLUSIONS = config
+                .comment("Model-specific entity IDs or #entity_type_tags that disable YSM vehicle models.",
+                        "The list never enables YSM vehicle models when the main setting is disabled.",
+                        "Rule contents remain local; only the resolved vehicle display state is synchronized.",
+                        "Example: \"wine_fox/01_taisho_maid\" = [\"minecraft:boat\", \"#minecraft:boats\"].",
+                        "Default: {}")
+                .translation("config.ysm_epicfight_compat.vehicle_model_exclusions")
+                .define("vehicleModelExclusions", Config::inMemory,
+                        EntityModelPolicy::isValidConfiguration);
         USE_YSM_HELD_ITEM_SWITCH_ANIMATIONS = config
                 .comment("Use official YSM held-item switch animations when the current item is not replaced by model-authored geometry.",
                         "A model-authored replacement continues to follow useYsmHeldItemModels and heldItemModelExclusions.",
@@ -155,6 +192,30 @@ public final class ClientPreferences {
         HELD_ITEM_MODEL_EXCLUSIONS.set(
                 HeldItemModelPolicy.encodeConfiguration(rules));
         HELD_ITEM_MODEL_EXCLUSIONS.clearCache();
+    }
+
+    public static Map<String, List<String>> projectileModelExclusions() {
+        return EntityModelPolicy.decodeConfiguration(
+                PROJECTILE_MODEL_EXCLUSIONS.get());
+    }
+
+    public static void setProjectileModelExclusions(
+            Map<String, ? extends Collection<String>> rules) {
+        PROJECTILE_MODEL_EXCLUSIONS.set(
+                EntityModelPolicy.encodeConfiguration(rules));
+        PROJECTILE_MODEL_EXCLUSIONS.clearCache();
+    }
+
+    public static Map<String, List<String>> vehicleModelExclusions() {
+        return EntityModelPolicy.decodeConfiguration(
+                VEHICLE_MODEL_EXCLUSIONS.get());
+    }
+
+    public static void setVehicleModelExclusions(
+            Map<String, ? extends Collection<String>> rules) {
+        VEHICLE_MODEL_EXCLUSIONS.set(
+                EntityModelPolicy.encodeConfiguration(rules));
+        VEHICLE_MODEL_EXCLUSIONS.clearCache();
     }
 
     public static Map<String, List<String>> heldItemSwitchAnimationExclusions() {

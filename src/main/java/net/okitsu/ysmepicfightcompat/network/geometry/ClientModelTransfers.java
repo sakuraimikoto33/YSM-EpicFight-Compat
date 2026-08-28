@@ -10,6 +10,7 @@ import net.okitsu.ysmepicfightcompat.cache.ModelDiskCache;
 import net.okitsu.ysmepicfightcompat.cache.RemoteModelDiskCache;
 import net.okitsu.ysmepicfightcompat.mesh.CombatMeshCache;
 import net.okitsu.ysmepicfightcompat.network.CompatNetwork;
+import net.okitsu.ysmepicfightcompat.network.ClientSubEntityModelPreferences;
 import net.okitsu.ysmepicfightcompat.network.message.ModelChunkMessage;
 import net.okitsu.ysmepicfightcompat.network.message.ModelRequestMessage;
 
@@ -241,6 +242,7 @@ public final class ClientModelTransfers {
                 READY.put(modelId, model);
                 LAST_REQUEST.remove(modelId);
                 CombatMeshCache.remoteArrived(modelId);
+                ClientSubEntityModelPreferences.modelDefinitionsUpdated();
                 CompatMod.LOG.info(
                         "YSM-EF Compat: received server model '{}'", modelId);
             } catch (IOException | RuntimeException exception) {

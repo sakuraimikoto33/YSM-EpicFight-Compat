@@ -35,6 +35,11 @@ public final class ClientHeldItemModelPreferences {
         return usesYsm(entity, selectedModelId(entity), hand);
     }
 
+    /** Resolves the local owner's held-item rule for an immutable launch snapshot. */
+    public static boolean usesYsmLocal(String modelId, ItemStack stack) {
+        return localPolicy().usesYsm(modelId, stack);
+    }
+
     /** Resolves the subject owner's synchronized result without synchronizing rules. */
     public static boolean usesYsm(
             LivingEntity entity, String selectedModelId, InteractionHand hand) {

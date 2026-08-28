@@ -16,6 +16,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
+import java.util.function.BiPredicate;
 
 /**
  * Detects item conditions for which an official YSM model authors its own held prop.
@@ -178,6 +179,44 @@ final class CustomHeldItemPolicy {
                         == AnimationConditionMatcher.ItemAction.HOLD)
                 .anyMatch(rule -> AnimationConditionMatcher.matchesItem(
                         entity, stack, rule.selector(), rule.action(), hand));
+    }
+
+    /**
+     * Whether this model authors a steady held-item replacement for the supplied
+     * item, independent of the entity's current hands and client display setting.
+     *
+     * <p>Projectile ownership is fixed when the projectile is created. Looking at
+     * the live hand after that point is incorrect for thrown tridents and for bows
+     * followed by an immediate item switch. The immutable HOLD rules already exclude
+     * use-only effects such as a bow magic circle, so they are also the authoritative
+     * distinction between a real held prop and a projectile-only model.</p>
+     */
+    boolean authorsHeldItemAtRest(LivingEntity entity, ItemStack stack) {
+        if (entity == null || stack == null || stack.isEmpty()) {
+            return false;
+        }
+        return authorsHeldItemAtRest((hand, selector) ->
+                AnimationConditionMatcher.matchesItem(
+                        entity, stack, selector,
+                        AnimationConditionMatcher.ItemAction.HOLD, hand));
+    }
+
+    /** Structural HOLD-rule lookup shared by launch snapshots and focused tests. */
+    boolean authorsHeldItemAtRest(
+            BiPredicate<InteractionHand, String> selectorMatcher) {
+        if (selectorMatcher == null) {
+            return false;
+        }
+        for (InteractionHand hand : InteractionHand.values()) {
+            boolean authored = rules.getOrDefault(hand, List.of()).stream()
+                    .filter(rule -> rule.action()
+                            == AnimationConditionMatcher.ItemAction.HOLD)
+                    .anyMatch(rule -> selectorMatcher.test(hand, rule.selector()));
+            if (authored) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /** Matches one automatic clip to the held item without depending on tick ordering. */

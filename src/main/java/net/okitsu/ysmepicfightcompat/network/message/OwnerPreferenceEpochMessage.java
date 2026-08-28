@@ -4,6 +4,7 @@ import net.minecraft.network.FriendlyByteBuf;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraftforge.network.NetworkEvent;
 import net.okitsu.ysmepicfightcompat.network.MaidPreferenceBroadcaster;
+import net.okitsu.ysmepicfightcompat.network.SubEntityPreferenceBroadcaster;
 
 import java.util.UUID;
 import java.util.function.Supplier;
@@ -33,9 +34,13 @@ public record OwnerPreferenceEpochMessage(
         NetworkEvent.Context context = suppliedContext.get();
         ServerPlayer sender = context.getSender();
         if (sender != null && context.getDirection().getReceptionSide().isServer()) {
-            context.enqueueWork(() -> MaidPreferenceBroadcaster.acceptEpoch(
-                    sender, message.heldItemPolicyEpoch(),
-                    message.movementPolicyEpoch()));
+            context.enqueueWork(() -> {
+                MaidPreferenceBroadcaster.acceptEpoch(
+                        sender, message.heldItemPolicyEpoch(),
+                        message.movementPolicyEpoch());
+                SubEntityPreferenceBroadcaster.acceptEpoch(
+                        sender, message.heldItemPolicyEpoch());
+            });
         }
         context.setPacketHandled(true);
     }

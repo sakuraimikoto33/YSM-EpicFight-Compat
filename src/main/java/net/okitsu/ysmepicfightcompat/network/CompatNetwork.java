@@ -25,6 +25,9 @@ import net.okitsu.ysmepicfightcompat.network.message.MaidPreferenceSnapshotMessa
 import net.okitsu.ysmepicfightcompat.network.message.MaidPreferenceUpdateMessage;
 import net.okitsu.ysmepicfightcompat.network.message.OwnerPreferenceEpochMessage;
 import net.okitsu.ysmepicfightcompat.network.message.SelectionUpdateMessage;
+import net.okitsu.ysmepicfightcompat.network.message.SubEntityPreferenceQueryMessage;
+import net.okitsu.ysmepicfightcompat.network.message.SubEntityPreferenceSnapshotMessage;
+import net.okitsu.ysmepicfightcompat.network.message.SubEntityPreferenceUpdateMessage;
 
 import java.util.Map;
 import java.util.Optional;
@@ -110,10 +113,25 @@ public final class CompatNetwork {
                 MaidMovementPreferenceUpdateMessage::read,
                 MaidMovementPreferenceUpdateMessage::receive,
                 Optional.of(NetworkDirection.PLAY_TO_SERVER));
-        CHANNEL.registerMessage(id, MaidPreferenceSnapshotMessage.class,
+        CHANNEL.registerMessage(id++, MaidPreferenceSnapshotMessage.class,
                 MaidPreferenceSnapshotMessage::write,
                 MaidPreferenceSnapshotMessage::read,
                 MaidPreferenceSnapshotMessage::receive,
+                Optional.of(NetworkDirection.PLAY_TO_CLIENT));
+        CHANNEL.registerMessage(id++, SubEntityPreferenceQueryMessage.class,
+                SubEntityPreferenceQueryMessage::write,
+                SubEntityPreferenceQueryMessage::read,
+                SubEntityPreferenceQueryMessage::receive,
+                Optional.of(NetworkDirection.PLAY_TO_CLIENT));
+        CHANNEL.registerMessage(id++, SubEntityPreferenceUpdateMessage.class,
+                SubEntityPreferenceUpdateMessage::write,
+                SubEntityPreferenceUpdateMessage::read,
+                SubEntityPreferenceUpdateMessage::receive,
+                Optional.of(NetworkDirection.PLAY_TO_SERVER));
+        CHANNEL.registerMessage(id, SubEntityPreferenceSnapshotMessage.class,
+                SubEntityPreferenceSnapshotMessage::write,
+                SubEntityPreferenceSnapshotMessage::read,
+                SubEntityPreferenceSnapshotMessage::receive,
                 Optional.of(NetworkDirection.PLAY_TO_CLIENT));
     }
 
@@ -156,6 +174,11 @@ public final class CompatNetwork {
 
     public static void sendMaidMovementPreferences(
             MaidMovementPreferenceUpdateMessage message) {
+        CHANNEL.sendToServer(message);
+    }
+
+    public static void sendSubEntityPreferences(
+            SubEntityPreferenceUpdateMessage message) {
         CHANNEL.sendToServer(message);
     }
 

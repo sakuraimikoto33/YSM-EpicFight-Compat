@@ -5,6 +5,7 @@ import net.minecraft.util.Mth;
 import net.minecraft.world.InteractionHand;
 import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.entity.player.Player;
+import net.minecraft.world.item.ItemStack;
 import net.okitsu.ysmepicfightcompat.CompatMod;
 import net.okitsu.ysmepicfightcompat.geometry.GeometryDocument;
 import net.okitsu.ysmepicfightcompat.mesh.AuxiliaryBoneLayout;
@@ -512,6 +513,11 @@ public final class ParallelAnimationProgram {
     public boolean replacesHeldItem(LivingEntity entity, InteractionHand hand) {
         return ClientHeldItemModelPreferences.usesYsm(entity, modelId, hand)
                 && customHeldItems.replaces(entity, hand);
+    }
+
+    /** Model-authored HOLD geometry without consulting the current display setting. */
+    public boolean authorsHeldItem(LivingEntity entity, ItemStack stack) {
+        return customHeldItems.authorsHeldItemAtRest(entity, stack);
     }
 
     /** Item-definition lookup used by server sound notifications before render catches up. */

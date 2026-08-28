@@ -11,6 +11,7 @@ import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class CustomHeldItemPolicyTest {
     @Test
@@ -82,6 +83,24 @@ class CustomHeldItemPolicyTest {
         assertEquals(Set.of("custom_staff"),
                 policy.epicItemEffectRoots(useEffect.name()));
         assertFalse(policy.replacesBodyPose(useEffect.name()));
+    }
+
+    @Test
+    void launchAuthorshipUsesOnlySteadyHoldReplacementRules() {
+        GeometryDocument geometry = handProps();
+        AnimationClip pre = clip("pre_parallel0", "custom_staff", scale(0.0D));
+        AnimationClip held = clip("hold_mainhand:sword",
+                "custom_staff", scale(1.0D));
+        AnimationClip useOnly = clip("use_mainhand:axe",
+                "custom_staff", scale(1.0D));
+        CustomHeldItemPolicy policy = CustomHeldItemPolicy.create(geometry,
+                Map.of(pre.name(), pre, held.name(), held, useOnly.name(), useOnly));
+
+        assertTrue(policy.authorsHeldItemAtRest((hand, selector) ->
+                hand == InteractionHand.MAIN_HAND && selector.equals(":sword")));
+        assertFalse(policy.authorsHeldItemAtRest((hand, selector) ->
+                hand == InteractionHand.MAIN_HAND && selector.equals(":axe")));
+        assertFalse(policy.authorsHeldItemAtRest(null));
     }
 
     private static AnimationClip clip(String name, String bone,

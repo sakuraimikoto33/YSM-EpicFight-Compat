@@ -2,9 +2,6 @@ package net.okitsu.ysmepicfightcompat.render;
 
 import net.minecraft.world.entity.player.Player;
 import net.okitsu.ysmepicfightcompat.config.ClientPreferences;
-import yesman.epicfight.world.capabilities.EpicFightCapabilities;
-import yesman.epicfight.world.capabilities.entitypatch.LivingEntityPatch;
-import yesman.epicfight.world.capabilities.entitypatch.player.PlayerPatch;
 
 /** Decides whether official YSM's extra player overlay may render this frame. */
 public final class CombatOverlayPolicy {
@@ -15,10 +12,7 @@ public final class CombatOverlayPolicy {
         if (player == null) {
             return false;
         }
-        LivingEntityPatch<?> patch = EpicFightCapabilities.getEntityPatch(
-                player, LivingEntityPatch.class);
-        return shouldSuppress(patch instanceof PlayerPatch<?> playerPatch
-                && playerPatch.isEpicFightMode());
+        return shouldSuppress(EpicFightMode.active(player));
     }
 
     static boolean shouldSuppress(boolean battleMode) {

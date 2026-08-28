@@ -27,6 +27,18 @@ class CachePreferencesTest {
                 "client", "heldItemModelExclusions"))
                 instanceof ForgeConfigSpec.ValueSpec);
         assertTrue(ClientPreferences.CLIENT_SPEC.getRaw(List.of(
+                "client", "useYsmProjectileModels"))
+                instanceof ForgeConfigSpec.ValueSpec);
+        assertTrue(ClientPreferences.CLIENT_SPEC.getRaw(List.of(
+                "client", "projectileModelExclusions"))
+                instanceof ForgeConfigSpec.ValueSpec);
+        assertTrue(ClientPreferences.CLIENT_SPEC.getRaw(List.of(
+                "client", "useYsmVehicleModels"))
+                instanceof ForgeConfigSpec.ValueSpec);
+        assertTrue(ClientPreferences.CLIENT_SPEC.getRaw(List.of(
+                "client", "vehicleModelExclusions"))
+                instanceof ForgeConfigSpec.ValueSpec);
+        assertTrue(ClientPreferences.CLIENT_SPEC.getRaw(List.of(
                 "client", "useYsmHeldItemSwitchAnimations"))
                 instanceof ForgeConfigSpec.ValueSpec);
         assertTrue(ClientPreferences.CLIENT_SPEC.getRaw(List.of(
@@ -42,6 +54,8 @@ class CachePreferencesTest {
                 .getDefault());
         assertTrue(ClientPreferences
                 .USE_YSM_HELD_ITEM_SWITCH_ANIMATIONS.getDefault());
+        assertTrue(ClientPreferences.USE_YSM_PROJECTILE_MODELS.getDefault());
+        assertTrue(ClientPreferences.USE_YSM_VEHICLE_MODELS.getDefault());
         assertEquals("ysm_epicfight_compat/ysm_epicfight_compat-common.toml",
                 ServerPreferences.CONFIG_FILE);
         assertTrue(ServerPreferences.COMMON_SPEC.getRaw(List.of(
@@ -70,6 +84,14 @@ class CachePreferencesTest {
                 "Example: \"wine_fox/21_saint\" = [\"minecraft:diamond_sword\", \"#forge:tools/bows\"].",
                 "Default: {}");
         assertCommentTail(ClientPreferences.CLIENT_SPEC,
+                List.of("client", "projectileModelExclusions"),
+                "Example: \"wine_fox/22_elf\" = [\"minecraft:arrow\", \"#minecraft:arrows\"].",
+                "Default: {}");
+        assertCommentTail(ClientPreferences.CLIENT_SPEC,
+                List.of("client", "vehicleModelExclusions"),
+                "Example: \"wine_fox/01_taisho_maid\" = [\"minecraft:boat\", \"#minecraft:boats\"].",
+                "Default: {}");
+        assertCommentTail(ClientPreferences.CLIENT_SPEC,
                 List.of("client", "heldItemSwitchAnimationExclusions"),
                 "Example: \"wine_fox/05_magical\" = [\"minecraft:diamond_pickaxe\", \"minecraft:air\", \"#forge:tools/pickaxes\"].",
                 "Default: {}");
@@ -83,6 +105,12 @@ class CachePreferencesTest {
                 "Default: true");
         assertCommentTail(ClientPreferences.CLIENT_SPEC,
                 List.of("client", "useYsmHeldItemModels"),
+                "Default: true");
+        assertCommentTail(ClientPreferences.CLIENT_SPEC,
+                List.of("client", "useYsmProjectileModels"),
+                "Default: true");
+        assertCommentTail(ClientPreferences.CLIENT_SPEC,
+                List.of("client", "useYsmVehicleModels"),
                 "Default: true");
         assertCommentTail(ClientPreferences.CLIENT_SPEC,
                 List.of("client", "useYsmHeldItemSwitchAnimations"),

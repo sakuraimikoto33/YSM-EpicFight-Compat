@@ -22,7 +22,13 @@ public final class ClientMaidPreferenceSync {
             Map<String, List<String>> heldItemExclusions,
             boolean switchAnimations,
             Map<String, List<String>> switchAnimationExclusions,
-            long itemTagGeneration) {
+            boolean projectileModels,
+            Map<String, List<String>> projectileExclusions,
+            boolean vehicleModels,
+            Map<String, List<String>> vehicleExclusions,
+            long itemTagGeneration,
+            long entityTagGeneration,
+            long modelDefinitionGeneration) {
     }
 
     private record MovementPolicyFingerprint(
@@ -94,6 +100,15 @@ public final class ClientMaidPreferenceSync {
         refreshAndPublish();
     }
 
+    /** Current opaque generation shared by held-item and sub-entity queries. */
+    public static UUID heldItemPolicyEpoch() {
+        Minecraft minecraft = Minecraft.getInstance();
+        if (minecraft.player != null && minecraft.getConnection() != null) {
+            refreshAndPublish();
+        }
+        return heldItemPolicyEpoch;
+    }
+
     public static void beginConnection() {
         lastHeldPolicy = null;
         lastMovementPolicy = null;
@@ -136,7 +151,13 @@ public final class ClientMaidPreferenceSync {
                 ClientPreferences.heldItemModelExclusions(),
                 ClientPreferences.USE_YSM_HELD_ITEM_SWITCH_ANIMATIONS.get(),
                 ClientPreferences.heldItemSwitchAnimationExclusions(),
-                itemTagGeneration);
+                ClientPreferences.USE_YSM_PROJECTILE_MODELS.get(),
+                ClientPreferences.projectileModelExclusions(),
+                ClientPreferences.USE_YSM_VEHICLE_MODELS.get(),
+                ClientPreferences.vehicleModelExclusions(),
+                itemTagGeneration,
+                ClientSubEntityModelPreferences.entityTagGeneration(),
+                ClientSubEntityModelPreferences.modelDefinitionGeneration());
     }
 
     private static MovementPolicyFingerprint movementFingerprint() {
