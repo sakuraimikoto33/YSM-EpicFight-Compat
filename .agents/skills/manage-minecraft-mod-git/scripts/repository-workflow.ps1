@@ -13,6 +13,7 @@ param(
     [string]$Authorization,
     [switch]$ConfirmExecution,
     [switch]$ContractVersionAuthorized,
+    [switch]$StableReleaseAuthorized,
     [string]$DependencyVersionReason = "",
     [string]$MinecraftVersion = "",
     [string[]]$MinecraftBranch = @(),
@@ -443,12 +444,35 @@ function Contract-Version-Lines {
     }
     @($findings)
 }
+function Assert-Mod-Version {
+    param([string[]]$Lines)
+
+    $semVerPattern = '^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(?:-((?:0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*)(?:\.(?:0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*))*))?(?:\+([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?$'
+    $stableReleasePattern = '^1\.0\.0(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$'
+    $changes = [Collections.Generic.List[object]]::new()
+    foreach ($line in $Lines) {
+        if ($line -notmatch '^\+(?!\+).*\b(?<property>modVersion|mod_version)\s*=\s*["'']?(?<version>[^\s"''#]+)["'']?') { continue }
+        $property = [string]$Matches.property
+        $version = [string]$Matches.version
+        if ($version -notmatch $semVerPattern) {
+            throw "Mod version '$version' is not valid Semantic Versioning 2.0.0. Use MAJOR.MINOR.PATCH with optional pre-release or build metadata."
+        }
+        $changes.Add([ordered]@{ property = $property; version = $version;
+            stableRelease = [bool]($version -match $stableReleasePattern) })
+    }
+    $stable = @($changes | Where-Object stableRelease)
+    if ($stable.Count -and -not $StableReleaseAuthorized) {
+        throw "The stable 1.0.0 mod release is a manual user decision and requires -StableReleaseAuthorized: $($stable.version -join ', ')"
+    }
+    @($changes)
+}
 function Assert-Contract-Version {
     $matches = @(Contract-Version-Lines)
+    $modVersions = @(Assert-Mod-Version -Lines $matches)
     if ($matches.Count -and -not $ContractVersionAuthorized) {
         throw "Product contract version changes require explicit authorization: $($matches -join ' | ')"
     }
-    @($matches)
+    [ordered]@{ lines = @($matches); modVersions = @($modVersions) }
 }
 function Dependency-Version-Lines {
     $diff = (Invoke-Git -Arguments @("diff", "--no-ext-diff", "--unified=0", "HEAD", "--")).Lines
@@ -511,13 +535,14 @@ function Assert-Policy {
         }
     }
     $minecraftChanges = @(Assert-Minecraft-Version)
-    $contract = @(Assert-Contract-Version)
+    $contract = Assert-Contract-Version
     $dependencies = Assert-Dependency-Version
     $dirty = (Pending-State).All
     if ($dirty.Count -and -not $PermitDirty) { throw "Working tree is dirty: $($dirty -join ', ')." }
     [ordered]@{ mainExists = $true; minecraftBranches = $allMinecraft; activeMinecraftBranches = $active;
         inactiveMinecraftBranches = @($allMinecraft | Where-Object { $_ -notin $active });
-        contractVersionLines = $contract; dependencyVersionLines = @($dependencies.lines);
+        contractVersionLines = @($contract.lines); modVersionChanges = @($contract.modVersions);
+        dependencyVersionLines = @($dependencies.lines);
         dependencyVersionReason = $dependencies.reason; minecraftVersionLines = @($minecraftChanges) }
 }
 function New-Log {
