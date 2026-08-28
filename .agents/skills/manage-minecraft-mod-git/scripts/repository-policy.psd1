@@ -3,7 +3,7 @@
     MinecraftBranchPattern = "^mc/[0-9A-Za-z][0-9A-Za-z._+-]*$"
     ActiveMinecraftBranchesFile = ".agents/active-minecraft-branches.txt"
     ContractVersionPatterns = @(
-        "^\+.*\bmodVersion\s*="
+        "^\+.*\b(?:modVersion|mod_version)\s*="
     )
     DependencyVersionPatterns = @(
         "^\+(?!\+).*\b(?:fabricLoomVersion|fabricLoaderVersion|modDevGradleVersion|neoForgeVersion|loaderVersion|loomVersion|gradleVersion)\s*="

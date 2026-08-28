@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
-  "sourceRevision": "bff447291fd5acd71e77fe45e70948581904d584",
-  "agentsBlockSha256": "39c5dc6927867dd5ae01e8dac647cc83f12fc48eb58870394265c384a1a6152a",
+  "sourceRevision": "cffd6caef7debde3495d8312df4250be922773f1",
+  "agentsBlockSha256": "50149322c8efd8a2211e6990194e5cf4da52d2951d051e92bfe5a435c242f888",
   "managedFiles": [
     {
       "path": ".agents/skills/manage-minecraft-mod-git/agents/openai.yaml",
@@ -13,7 +13,11 @@
     },
     {
       "path": ".agents/skills/manage-minecraft-mod-git/references/dependency-versions.md",
-      "sha256": "bf9996449388480e08c0d58a4ca492d264b56dd3dc50d3c99f1527dc833e33f6"
+      "sha256": "95fc3c91103c288c30fb55ad7b68cc9c00c83673af3df8ef1504fb4dee9df09d"
+    },
+    {
+      "path": ".agents/skills/manage-minecraft-mod-git/references/mod-versioning.md",
+      "sha256": "cce7f41927603ba737e399e3a0b831086ba35784d51ffa4705f29829230cacdd"
     },
     {
       "path": ".agents/skills/manage-minecraft-mod-git/references/task-boundaries.md",
@@ -21,11 +25,11 @@
     },
     {
       "path": ".agents/skills/manage-minecraft-mod-git/scripts/repository-policy.psd1",
-      "sha256": "b4665d2becf2159438068ccd53486786be23a308c0866b963516efdccd8bcd07"
+      "sha256": "768e20882345e8e522764fe7a098b0a497ba41b84fd7130b251eb19f63d3abad"
     },
     {
       "path": ".agents/skills/manage-minecraft-mod-git/scripts/repository-workflow.ps1",
-      "sha256": "4060fb54a93739310d5b935110bcf012fd1b8eb5f24a3d3b2354b9f4e5f949aa"
+      "sha256": "e7fd8595f224f2e46ba3c6165d075fe766fde2481b7e73de24270091c7a5274c"
     },
     {
       "path": ".agents/skills/manage-minecraft-mod-git/scripts/test-agent-workflows.ps1",
@@ -33,7 +37,7 @@
     },
     {
       "path": ".agents/skills/manage-minecraft-mod-git/scripts/test-repository-workflow.ps1",
-      "sha256": "7d6a89583bac1a5cb342d877d4f816fee8f676a87240259d0ffc0b7aafc3a3f4"
+      "sha256": "034e019ac92feffa7d5d91e118796f1cf96794717b48d1f8ccff13ef9e120781"
     },
     {
       "path": ".agents/skills/manage-minecraft-mod-git/scripts/verify-agent-workflows.ps1",
@@ -41,7 +45,7 @@
     },
     {
       "path": ".agents/skills/manage-minecraft-mod-git/SKILL.md",
-      "sha256": "2b99849d70812fe6b29f9a2e63303f87a897274dd059639d32b96b009e4f50cf"
+      "sha256": "29129d47a72eb5673b8471983c54281cc6cedee239d2cb700a0e718fdaa74274"
     },
     {
       "path": ".agents/skills/rewrite-minecraft-mod-history/agents/openai.yaml",

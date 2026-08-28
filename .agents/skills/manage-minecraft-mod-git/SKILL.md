@@ -1,6 +1,6 @@
 ---
 name: manage-minecraft-mod-git
-description: Inspect and manage Git state, task boundaries, branch ownership, Minecraft branch creation, exact-path commits, worktree-free main propagation, selected multi-version worktrees, validation, audits, and explicitly requested pushes in a configured Minecraft mod repository. Use before repository edits and for pending changes, task changes, Minecraft targets, commits, merges, propagation, validation, or pushes. Do not use for history rewriting or domain design policy.
+description: Inspect and manage Git state, task boundaries, branch ownership, mod release versions, Minecraft branch creation, exact-path commits, worktree-free main propagation, selected multi-version worktrees, validation, audits, and explicitly requested pushes in a configured Minecraft mod repository. Use before repository edits and for pending changes, task changes, mod versions, Minecraft targets, commits, merges, propagation, validation, or pushes. Do not use for history rewriting or domain design policy.
 ---
 
 # Manage Minecraft Mod Git
@@ -22,6 +22,7 @@ Use the scripts as the source of deterministic repository state. Do not read scr
 - Completion alone never authorizes a commit. Commit only exact task-owned paths on the expected owning branch.
 - Keep main-only work on `main`; after an authorized main commit, use `PropagateMain` for every configured active branch.
 - Read [cross-version-workflow.md](references/cross-version-workflow.md) only when direct edits are required on at least two active Minecraft branches.
+- Read [mod-versioning.md](references/mod-versioning.md) only when selecting, changing, or releasing a mod version.
 - Read [dependency-versions.md](references/dependency-versions.md) only when a dependency or toolchain version may change.
 - Merge only `main` into `mc/*`. Never merge an `mc/*` branch into `main`.
 - Supply every required validation repository explicitly with `-ValidationRepositoryRoot`; never infer sibling paths.

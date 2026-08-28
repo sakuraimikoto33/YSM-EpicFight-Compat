@@ -141,7 +141,7 @@ try {
     Set-File $repo $activeFile "mc/1.21.1`n"
     Set-File $repo ".agents/overlay-shared.txt" "shared base`n"
     Set-File $repo ".agents/delete-overlay.txt" "delete me`n"
-    Set-File $repo "gradle.properties" "modVersion=1`nloaderVersion=1`nminecraftVersion=1.21.1`n"
+    Set-File $repo "gradle.properties" "modVersion=0.1.0`nloaderVersion=1`nminecraftVersion=1.21.1`n"
     Set-File $repo "gradlew.bat" "@echo off`r`nexit /b 0`r`n"
     [void](Git $repo @("add", ".")); [void](Git $repo @("commit", "-q", "-m", "base"))
     [void](Git $repo @("branch", "port-base"))
@@ -249,15 +249,50 @@ try {
     Assert-True (@($committedSnapshot.Json.trackingChanges).Count -eq 1) "Tracking transition was not reported."
 
     [void](Git $repo @("switch", "-q", "main"))
-    Set-File $repo "gradle.properties" "modVersion=2`n"
+    Set-File $repo "gradle.properties" "modVersion=0.2.0`n"
     $guarded = Invoke-Workflow $repo @("-Operation", "Validate", "-AllowDirty", "-SkipBuild") -ExpectFailure
     Assert-True (-not $guarded.Json.success) "Product version guard should fail."
     Assert-True ($guarded.Json.error -match "contract version") "Guard failure reason missing: $($guarded.Json.error) line=$($guarded.Json.line) stack=$($guarded.Json.stack)"
     $authorized = Invoke-Workflow $repo @("-Operation", "Validate", "-AllowDirty", "-SkipBuild", "-ContractVersionAuthorized")
     Assert-True ($authorized.Json.success) "Authorized product version validation failed."
+    Assert-True ($authorized.Json.validation.policy.modVersionChanges[0].version -eq "0.2.0") "SemVer change was not reported."
+    Assert-True (-not $authorized.Json.validation.policy.modVersionChanges[0].stableRelease) "Development version was marked stable."
     [void](Git $repo @("restore", "gradle.properties"))
 
-    Set-File $repo "gradle.properties" "modVersion=1`nloaderVersion=2`nminecraftVersion=1.21.1`n"
+    Set-File $repo "gradle.properties" "modVersion=0.2`n"
+    $invalidSemVer = Invoke-Workflow $repo @("-Operation", "Validate", "-AllowDirty", "-SkipBuild",
+        "-ContractVersionAuthorized") -ExpectFailure
+    Assert-True ($invalidSemVer.Json.error -match "Semantic Versioning 2.0.0") "Invalid SemVer was not rejected."
+    [void](Git $repo @("restore", "gradle.properties"))
+
+    Set-File $repo "gradle.properties" "mod_version=0.2.0`n"
+    $snakeCaseVersion = Invoke-Workflow $repo @("-Operation", "Validate", "-AllowDirty", "-SkipBuild",
+        "-ContractVersionAuthorized")
+    Assert-True ($snakeCaseVersion.Json.success) "Snake-case mod version was rejected."
+    Assert-True ($snakeCaseVersion.Json.validation.policy.modVersionChanges[0].property -eq "mod_version") `
+        "Snake-case mod version was not guarded."
+    [void](Git $repo @("restore", "gradle.properties"))
+
+    Set-File $repo "gradle.properties" "modVersion=1.0.0-rc.1`n"
+    $preRelease = Invoke-Workflow $repo @("-Operation", "Validate", "-AllowDirty", "-SkipBuild",
+        "-ContractVersionAuthorized")
+    Assert-True ($preRelease.Json.success) "A valid 1.0.0 pre-release was rejected."
+    Assert-True (-not $preRelease.Json.validation.policy.modVersionChanges[0].stableRelease) `
+        "A 1.0.0 pre-release was marked as the stable release."
+    [void](Git $repo @("restore", "gradle.properties"))
+
+    Set-File $repo "gradle.properties" "modVersion=1.0.0`n"
+    $manualStable = Invoke-Workflow $repo @("-Operation", "Validate", "-AllowDirty", "-SkipBuild",
+        "-ContractVersionAuthorized") -ExpectFailure
+    Assert-True ($manualStable.Json.error -match "manual user decision") "Stable 1.0.0 lacked its manual decision guard."
+    $authorizedStable = Invoke-Workflow $repo @("-Operation", "Validate", "-AllowDirty", "-SkipBuild",
+        "-ContractVersionAuthorized", "-StableReleaseAuthorized")
+    Assert-True ($authorizedStable.Json.success) "Explicitly authorized stable 1.0.0 was rejected."
+    Assert-True ($authorizedStable.Json.validation.policy.modVersionChanges[0].stableRelease) `
+        "Stable 1.0.0 authorization was not reported."
+    [void](Git $repo @("restore", "gradle.properties"))
+
+    Set-File $repo "gradle.properties" "modVersion=0.1.0`nloaderVersion=2`nminecraftVersion=1.21.1`n"
     $unexplainedDependency = Invoke-Workflow $repo @("-Operation", "Validate", "-AllowDirty", "-SkipBuild") -ExpectFailure
     Assert-True ($unexplainedDependency.Json.error -match "Dependency version") "Unexplained dependency update was not rejected."
     $explainedDependency = Invoke-Workflow $repo @("-Operation", "Validate", "-AllowDirty", "-SkipBuild",
@@ -266,13 +301,13 @@ try {
     Assert-True ($explainedDependency.Json.validation.policy.dependencyVersionReason -eq "Required by the fixture fix") "Dependency evidence was not recorded."
     [void](Git $repo @("restore", "gradle.properties"))
 
-    Set-File $repo "gradle.properties" "modVersion=1`nloaderVersion=1`nminecraftVersion=1.22.0`n"
+    Set-File $repo "gradle.properties" "modVersion=0.1.0`nloaderVersion=1`nminecraftVersion=1.22.0`n"
     $wrongMinecraftBranch = Invoke-Workflow $repo @("-Operation", "Validate", "-AllowDirty", "-SkipBuild") -ExpectFailure
     Assert-True ($wrongMinecraftBranch.Json.error -match "Minecraft version") "Minecraft version changed outside its branch."
     [void](Git $repo @("restore", "gradle.properties"))
 
     [void](Git $repo @("switch", "-q", "mc/1.22.0"))
-    Set-File $repo "gradle.properties" "modVersion=1`nloaderVersion=1`nminecraftVersion=1.22.0`n"
+    Set-File $repo "gradle.properties" "modVersion=0.1.0`nloaderVersion=1`nminecraftVersion=1.22.0`n"
     $matchingMinecraftBranch = Invoke-Workflow $repo @("-Operation", "Validate", "-AllowDirty", "-SkipBuild")
     Assert-True ($matchingMinecraftBranch.Json.success) "Matching Minecraft branch version was rejected."
     Assert-True (@($matchingMinecraftBranch.Json.validation.policy.contractVersionLines).Count -eq 0) "Minecraft version entered the product contract guard."
@@ -584,7 +619,7 @@ try {
     Install-RepositoryProfile $noMain
     Set-File $noMain $shared "shared`n"
     Set-File $noMain $mixed "mixed`n"
-    Set-File $noMain "gradle.properties" "modVersion=1`nloaderVersion=1`nminecraftVersion=1.21.1`n"
+    Set-File $noMain "gradle.properties" "modVersion=0.1.0`nloaderVersion=1`nminecraftVersion=1.21.1`n"
     Set-File $noMain "gradlew.bat" "@echo off`r`nexit /b 0`r`n"
     Set-File $noMain (Join-Path $versionScope "value.txt") "base`n"
     [void](Git $noMain @("add", "."))

@@ -6,4 +6,4 @@ Read this reference only when a Minecraft, loader, library, Gradle plugin, wrapp
 - Keep dependencies and toolchains fixed unless the requested feature, fix, compatibility work, or build repair requires the smallest viable update.
 - Record the evidence and pass it with `-DependencyVersionReason` when validation or a mutation sees a guarded dependency diff.
 - Never update dependencies opportunistically.
-- Product, release, protocol, public API, schema, fingerprint, and definition revisions require their repository's explicit contract authorization.
+- Product, protocol, public API, schema, fingerprint, and definition revisions require their repository's explicit contract authorization. For a mod release version, also apply [mod-versioning.md](mod-versioning.md).
