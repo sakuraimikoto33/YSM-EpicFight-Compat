@@ -8,14 +8,14 @@ YSM Epic Fight Compat is a Forge mod that renders player models selected in the 
 
 - Minecraft 1.20.1
 - Forge 47.4.20 or later
-- Yes Steve Model 2.6.0 or later for Forge 1.20.1
-- Epic Fight 20.14.17 or later for Forge 1.20.1
+- [Yes Steve Model](https://modrinth.com/mod/yes-steve-model) 2.6.0 or later for Forge 1.20.1
+- [Epic Fight](https://modrinth.com/mod/epic-fight) 20.14.17 or later for Forge 1.20.1
 - [YSM Mapping API](https://github.com/sakuraimikoto33/YSM-Mapping-API) 0.1.5 or later
 
 Optional maid integration requires both:
 
-- Touhou Little Maid 1.5.x
-- EpicFight_TouhouLittleMaid 1.1.x through 1.3.x
+- [Touhou Little Maid](https://modrinth.com/mod/touhou-little-maid) 1.5.x
+- [EpicFight_TouhouLittleMaid](https://modrinth.com/mod/epicfight_touhoulittlemaid) 1.1.x through 1.3.x
 
 ## Features
 
