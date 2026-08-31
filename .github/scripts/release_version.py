@@ -23,6 +23,9 @@ SEMVER_PATTERN = re.compile(
     r"(?:\+(?P<build>[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?$"
 )
 MINECRAFT_VERSION_PATTERN = re.compile(r"^[0-9A-Za-z._-]+$")
+MAPPING_API_RELEASES_URL = (
+    "https://github.com/sakuraimikoto33/YSM-Mapping-API/releases"
+)
 
 
 @total_ordering
@@ -200,6 +203,26 @@ def history_url(repository: str, target: str, previous_tag: str | None) -> str:
     )
 
 
+def render_release_notes(
+    changelog_url: str,
+    mapping_api_minimum_version: str,
+    minecraft_version: str,
+) -> str:
+    SemVer.parse(mapping_api_minimum_version)
+    if not MINECRAFT_VERSION_PATTERN.fullmatch(minecraft_version):
+        raise ValueError(f"invalid minecraft_version: {minecraft_version}")
+    mapping_api_releases_url = (
+        f"{MAPPING_API_RELEASES_URL}?q="
+        f"{quote(f'mc{minecraft_version}', safe='')}"
+    )
+    return (
+        "## Required dependency\n\n"
+        f"- [YSM Mapping API]({mapping_api_releases_url}) "
+        f"{mapping_api_minimum_version} or later is required.\n\n"
+        f"[Full Changelog]({changelog_url})\n"
+    )
+
+
 def git_tags() -> list[str]:
     result = subprocess.run(
         ["git", "tag", "--list"],
@@ -224,6 +247,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--github-output", type=Path, required=True)
     parser.add_argument("--repository", default=os.environ.get("GITHUB_REPOSITORY"))
     parser.add_argument("--target", default=os.environ.get("GITHUB_SHA"))
+    parser.add_argument("--release-notes", type=Path)
     return parser.parse_args()
 
 
@@ -235,6 +259,10 @@ def main() -> int:
 
         mod_version = read_gradle_property(args.properties, "mod_version")
         minecraft_version = read_gradle_property(args.properties, "minecraft_version")
+        mapping_api_minimum_version = read_gradle_property(
+            args.properties, "ysm_mapping_api_version_range"
+        )
+        SemVer.parse(mapping_api_minimum_version)
         decision = decide_release(mod_version, minecraft_version, git_tags())
 
         for ignored_tag in decision.ignored_tags:
@@ -251,11 +279,23 @@ def main() -> int:
             "previous_tag": previous,
             "should_release": str(decision.should_release).lower(),
             "prerelease": str(decision.prerelease).lower(),
+            "mapping_api_minimum_version": mapping_api_minimum_version,
             "history_url": history_url(
                 args.repository, args.target, decision.previous_tag
             ),
         }
         write_github_output(args.github_output, output_values)
+
+        if args.release_notes is not None:
+            notes = render_release_notes(
+                output_values["history_url"],
+                mapping_api_minimum_version,
+                decision.minecraft_version,
+            )
+            with args.release_notes.open(
+                "w", encoding="utf-8", newline="\n"
+            ) as output:
+                output.write(notes)
 
         if decision.should_release:
             print(

@@ -9,6 +9,7 @@ from release_version import (
     decide_release,
     history_url,
     read_gradle_property,
+    render_release_notes,
 )
 
 
@@ -123,6 +124,25 @@ class InputOutputTest(unittest.TestCase):
             "https://github.com/owner/repo/commits/abc123",
             history_url("owner/repo", "abc123", None),
         )
+
+    def test_release_notes_include_required_mapping_api_version(self) -> None:
+        self.assertEqual(
+            "## Required dependency\n\n"
+            "- [YSM Mapping API](https://github.com/sakuraimikoto33/"
+            "YSM-Mapping-API/releases?q=mc1.20.1) 0.1.6 or later is required.\n\n"
+            "[Full Changelog](https://github.com/owner/repo/compare/old...new)\n",
+            render_release_notes(
+                "https://github.com/owner/repo/compare/old...new",
+                "0.1.6",
+                "1.20.1",
+            ),
+        )
+
+    def test_release_notes_reject_non_semver_minimum(self) -> None:
+        with self.assertRaises(ValueError):
+            render_release_notes(
+                "https://github.com/owner/repo", "latest", "1.20.1"
+            )
 
 
 if __name__ == "__main__":

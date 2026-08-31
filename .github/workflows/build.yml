@@ -192,7 +192,8 @@ jobs:
           python3 .github/scripts/release_version.py \
             --github-output "$recheck_output" \
             --repository "$GH_REPO" \
-            --target "$TARGET_SHA"
+            --target "$TARGET_SHA" \
+            --release-notes release-notes.md
 
           if ! grep -Fxq 'should_release=true' "$recheck_output"; then
             echo "::notice::Release skipped because a same or newer version was published while this workflow was running."
@@ -202,12 +203,12 @@ jobs:
           tag="$(sed -n 's/^tag=//p' "$recheck_output")"
           prerelease="$(sed -n 's/^prerelease=//p' "$recheck_output")"
           history_url="$(sed -n 's/^history_url=//p' "$recheck_output")"
-          if [[ "$tag" != "$CANDIDATE_TAG" || -z "$history_url" ]]; then
+          mapping_api_minimum_version="$(sed -n 's/^mapping_api_minimum_version=//p' "$recheck_output")"
+          if [[ "$tag" != "$CANDIDATE_TAG" || -z "$history_url" \
+            || -z "$mapping_api_minimum_version" || ! -s release-notes.md ]]; then
             echo "::error::Release metadata changed unexpectedly during the final check."
             exit 1
           fi
-
-          printf '[Full Changelog](%s)\n' "$history_url" > release-notes.md
 
           release_args=(
             "$tag"
