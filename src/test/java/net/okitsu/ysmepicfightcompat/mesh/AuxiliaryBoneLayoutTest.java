@@ -11,6 +11,44 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 
 class AuxiliaryBoneLayoutTest {
     @Test
+    void selectsOnlyAUniqueElytraLocator() {
+        GeometryDocument geometry = new GeometryDocument();
+        add(geometry, "UpperBody", null, 0.0F, 12.0F, 0.0F);
+        add(geometry, "Elytra", "UpperBody", 0.0F, 14.0F, 1.0F);
+        add(geometry, "eLyTrAlOcAtOr", "Elytra", 0.0F, 15.0F, 1.0F);
+        geometry.linkHierarchy();
+
+        AuxiliaryBoneLayout.Entry locator =
+                AuxiliaryBoneLayout.create(geometry).elytraLocatorEntry();
+
+        assertNotNull(locator);
+        assertEquals("eLyTrAlOcAtOr", locator.bone().name());
+
+        GeometryDocument direct = new GeometryDocument();
+        add(direct, "UpperBody", null, 0.0F, 12.0F, 0.0F);
+        add(direct, "ElytraLocator", "UpperBody", 0.0F, 15.0F, 1.0F);
+        direct.linkHierarchy();
+        assertNotNull(AuxiliaryBoneLayout.create(direct).elytraLocatorEntry(),
+                "the default-style direct locator must not require an Elytra parent");
+    }
+
+    @Test
+    void hidesElytraWhenTheLocatorIsMissingOrAmbiguous() {
+        GeometryDocument missing = new GeometryDocument();
+        add(missing, "UpperBody", null, 0.0F, 12.0F, 0.0F);
+        add(missing, "Elytra", "UpperBody", 0.0F, 14.0F, 1.0F);
+        missing.linkHierarchy();
+        assertNull(AuxiliaryBoneLayout.create(missing).elytraLocatorEntry());
+
+        GeometryDocument ambiguous = new GeometryDocument();
+        add(ambiguous, "UpperBody", null, 0.0F, 12.0F, 0.0F);
+        add(ambiguous, "ElytraLocator", "UpperBody", 0.0F, 15.0F, 1.0F);
+        add(ambiguous, "elytralocator", "UpperBody", 0.0F, 16.0F, 1.0F);
+        ambiguous.linkHierarchy();
+        assertNull(AuxiliaryBoneLayout.create(ambiguous).elytraLocatorEntry());
+    }
+
+    @Test
     void mapsCanonicalYsmControlsToAllEpicFightAttachmentJoints() {
         GeometryDocument geometry = canonicalGeometry();
         AuxiliaryBoneLayout layout = AuxiliaryBoneLayout.create(geometry);

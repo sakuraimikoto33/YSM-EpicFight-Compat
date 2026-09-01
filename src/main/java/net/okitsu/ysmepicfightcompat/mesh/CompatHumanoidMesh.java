@@ -220,6 +220,8 @@ public final class CompatHumanoidMesh extends HumanoidMesh {
                     OpenMatrix4f leftAuthoredItemPose = leftItemSwitch
                             ? auxiliaryPoses.authoredHeldItemPose(
                             complete, HumanoidRig.LEFT_TOOL) : null;
+                    OpenMatrix4f elytraLocatorPose =
+                            auxiliaryPoses.elytraLocatorPose(complete);
                     OpenMatrix4f[] attachmentPoses = projectsDisplayedAttachments(
                             frame.epicFightActionActive(),
                             animationFrame != null
@@ -239,6 +241,7 @@ public final class CompatHumanoidMesh extends HumanoidMesh {
                     RenderFrameContext.publishHeldItemPoints(
                             frame.entity(), this, inputPoses, rightFist, leftFist,
                             rightAuthoredItemPose, leftAuthoredItemPose,
+                            elytraLocatorPose,
                             attachmentPoses,
                             suppressRightItem, suppressLeftItem,
                             mainHandItemSwitchUsesOffArmTool);
@@ -249,6 +252,7 @@ public final class CompatHumanoidMesh extends HumanoidMesh {
                 if (frame != null) {
                     RenderFrameContext.publishHeldItemPoints(
                             frame.entity(), this, inputPoses, null, null, null, null,
+                            null,
                             null,
                             false, false, false);
                 }

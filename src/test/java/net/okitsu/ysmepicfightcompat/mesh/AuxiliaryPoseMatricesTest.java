@@ -354,6 +354,64 @@ class AuxiliaryPoseMatricesTest {
     }
 
     @Test
+    void reconstructsTheAnimatedElytraLocatorFrame() {
+        GeometryDocument geometry = new GeometryDocument();
+        GeometryDocument.Bone upperBody = new GeometryDocument.Bone("UpperBody");
+        upperBody.pivot(0.0F, 1.25F, 0.0F);
+        GeometryDocument.Bone elytra = new GeometryDocument.Bone("Elytra");
+        elytra.parentName("UpperBody");
+        elytra.pivot(0.0F, 1.75F, 0.25F);
+        GeometryDocument.Bone locator = new GeometryDocument.Bone("ElytraLocator");
+        locator.parentName("Elytra");
+        locator.pivot(0.125F, 1.875F, 0.375F);
+        geometry.add(upperBody);
+        geometry.add(elytra);
+        geometry.add(locator);
+        geometry.linkHierarchy();
+        AuxiliaryBoneLayout layout = AuxiliaryBoneLayout.create(geometry, 0.7F, 0.8F);
+        AuxiliaryBoneLayout.Entry entry = layout.elytraLocatorEntry();
+        assertNotNull(entry);
+        OpenMatrix4f[] complete = AuxiliaryPoseMatrices.allocate(layout.totalPoseCount());
+        complete[entry.poseIndex()]
+                .translate(2.0F, 3.0F, -4.0F)
+                .rotateDeg(37.0F, Vec3f.Z_AXIS)
+                .scale(0.75F, 1.25F, 0.5F);
+
+        OpenMatrix4f actual = new AuxiliaryPoseMatrices(layout)
+                .elytraLocatorPose(complete);
+
+        assertNotNull(actual);
+        Matrix4f expectedRaw = OpenMatrix4f.exportToMojangMatrix(
+                        complete[entry.poseIndex()])
+                .mul(new Matrix4f().scaling(0.7F, 0.8F, 0.7F))
+                .mul(entry.bindWorld())
+                .translate(locator.pivotX(), locator.pivotY(), locator.pivotZ());
+        assertMatrixEquals(OpenMatrix4f.importFromMojangMatrix(expectedRaw), actual);
+    }
+
+    @Test
+    void rejectsAnUnavailableElytraLocatorFrame() {
+        GeometryDocument geometry = new GeometryDocument();
+        geometry.add(new GeometryDocument.Bone("Elytra"));
+        geometry.linkHierarchy();
+        AuxiliaryBoneLayout layout = AuxiliaryBoneLayout.create(geometry);
+
+        assertNull(new AuxiliaryPoseMatrices(layout).elytraLocatorPose(
+                AuxiliaryPoseMatrices.allocate(layout.totalPoseCount())));
+
+        GeometryDocument withLocator = new GeometryDocument();
+        withLocator.add(new GeometryDocument.Bone("ElytraLocator"));
+        withLocator.linkHierarchy();
+        AuxiliaryBoneLayout locatorLayout = AuxiliaryBoneLayout.create(withLocator);
+        AuxiliaryPoseMatrices poses = new AuxiliaryPoseMatrices(locatorLayout);
+        assertNull(poses.elytraLocatorPose(new OpenMatrix4f[0]));
+        OpenMatrix4f[] invalid = AuxiliaryPoseMatrices.allocate(
+                locatorLayout.totalPoseCount());
+        invalid[locatorLayout.elytraLocatorEntry().poseIndex()].m00 = Float.NaN;
+        assertNull(poses.elytraLocatorPose(invalid));
+    }
+
+    @Test
     void neutralYsmLocatorBindRotationDoesNotReplaceEpicToolBindBasis() {
         AuxiliaryBoneLayout layout = rightToolLayout(-30.0F);
         OpenMatrix4f epicBind = new OpenMatrix4f()

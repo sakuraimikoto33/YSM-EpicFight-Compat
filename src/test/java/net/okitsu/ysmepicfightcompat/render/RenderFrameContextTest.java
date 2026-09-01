@@ -4,12 +4,14 @@ import net.minecraft.world.InteractionHand;
 import net.minecraft.world.entity.HumanoidArm;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
+import yesman.epicfight.api.utils.math.OpenMatrix4f;
 
 import java.util.HashMap;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -70,5 +72,27 @@ class RenderFrameContextTest {
                 InteractionHand.MAIN_HAND, HumanoidArm.RIGHT, false));
         assertFalse(RenderFrameContext.physicalRightForLogicalHand(
                 InteractionHand.MAIN_HAND, HumanoidArm.LEFT, false));
+    }
+
+    @Test
+    void defensivelyPublishesTheElytraLocatorForTheExactPoseArray() {
+        RenderFrameContext.pushThirdPerson(null);
+        OpenMatrix4f[] inputPoses = {new OpenMatrix4f()};
+        OpenMatrix4f locator = new OpenMatrix4f().translate(2.0F, 3.0F, 4.0F);
+        RenderFrameContext.publishHeldItemPoints(
+                null, null, inputPoses, null, null, null, null,
+                locator, null, false, false, false);
+        locator.m30 = 99.0F;
+
+        OpenMatrix4f published = RenderFrameContext.elytraLocatorPose(
+                null, null, inputPoses);
+
+        assertNotNull(published);
+        assertEquals(2.0F, published.m30, 0.0001F);
+        published.m31 = 99.0F;
+        assertEquals(3.0F, RenderFrameContext.elytraLocatorPose(
+                null, null, inputPoses).m31, 0.0001F);
+        assertNull(RenderFrameContext.elytraLocatorPose(
+                null, null, new OpenMatrix4f[]{new OpenMatrix4f()}));
     }
 }

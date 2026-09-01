@@ -33,6 +33,7 @@ public final class AuxiliaryPoseMatrices {
     private final OpenMatrix4f heldItemOutput = new OpenMatrix4f();
     private final OpenMatrix4f rightAuthoredItemOutput = new OpenMatrix4f();
     private final OpenMatrix4f leftAuthoredItemOutput = new OpenMatrix4f();
+    private final OpenMatrix4f elytraLocatorOutput = new OpenMatrix4f();
     private OpenMatrix4f[] attachmentOutput = allocate(HumanoidRig.EPIC_JOINT_COUNT);
     private final Matrix4f authoredItemScratch = new Matrix4f();
     private final Matrix4f authoredItemScale = new Matrix4f();
@@ -170,6 +171,21 @@ public final class AuxiliaryPoseMatrices {
         OpenMatrix4f destination = joint == HumanoidRig.RIGHT_TOOL
                 ? rightAuthoredItemOutput : joint == HumanoidRig.LEFT_TOOL
                 ? leftAuthoredItemOutput : null;
+        return authoredLocatorPose(complete, locator, destination);
+    }
+
+    /** Reconstructs the animated official-YSM frame ending at {@code ElytraLocator}. */
+    @Nullable
+    public OpenMatrix4f elytraLocatorPose(@Nullable OpenMatrix4f[] complete) {
+        return authoredLocatorPose(
+                complete, layout.elytraLocatorEntry(), elytraLocatorOutput);
+    }
+
+    @Nullable
+    private OpenMatrix4f authoredLocatorPose(
+            @Nullable OpenMatrix4f[] complete,
+            @Nullable AuxiliaryBoneLayout.Entry locator,
+            @Nullable OpenMatrix4f destination) {
         if (complete == null || locator == null || destination == null
                 || locator.poseIndex() < 0 || locator.poseIndex() >= complete.length
                 || complete[locator.poseIndex()] == null) {

@@ -28,6 +28,7 @@ public final class RenderFrameContext {
         private Vector3f leftFist;
         private OpenMatrix4f rightAuthoredItemPose;
         private OpenMatrix4f leftAuthoredItemPose;
+        private OpenMatrix4f elytraLocatorPose;
         private OpenMatrix4f[] attachmentPoses;
         private boolean suppressRightHeldItem;
         private boolean suppressLeftHeldItem;
@@ -167,6 +168,7 @@ public final class RenderFrameContext {
                                              @Nullable Vector3f leftFist,
                                              @Nullable OpenMatrix4f rightAuthoredItemPose,
                                              @Nullable OpenMatrix4f leftAuthoredItemPose,
+                                             @Nullable OpenMatrix4f elytraLocatorPose,
                                              @Nullable OpenMatrix4f[] attachmentPoses,
                                              boolean suppressRightHeldItem,
                                              boolean suppressLeftHeldItem,
@@ -183,6 +185,8 @@ public final class RenderFrameContext {
                 ? new OpenMatrix4f(rightAuthoredItemPose) : null;
         frame.leftAuthoredItemPose = finite(leftAuthoredItemPose)
                 ? new OpenMatrix4f(leftAuthoredItemPose) : null;
+        frame.elytraLocatorPose = finite(elytraLocatorPose)
+                ? new OpenMatrix4f(elytraLocatorPose) : null;
         frame.attachmentPoses = copyMatrices(attachmentPoses, inputPoses.length);
         frame.suppressRightHeldItem = suppressRightHeldItem;
         frame.suppressLeftHeldItem = suppressLeftHeldItem;
@@ -217,6 +221,22 @@ public final class RenderFrameContext {
                 ? frame.rightAuthoredItemPose : toolJoint == HumanoidRig.LEFT_TOOL
                 ? frame.leftAuthoredItemPose : null;
         return pose == null ? null : new OpenMatrix4f(pose);
+    }
+
+    /** Animated official-YSM ElytraLocator frame from this exact converted body draw. */
+    @Nullable
+    public static OpenMatrix4f elytraLocatorPose(
+            LivingEntity entity, CompatHumanoidMesh mesh,
+            OpenMatrix4f[] requestedPoses) {
+        Frame frame = current();
+        if (frame == null || frame.entity != entity || frame.mesh != mesh
+                || requestedPoses == null
+                || (requestedPoses != frame.inputPoses
+                && requestedPoses != frame.attachmentPoses)) {
+            return null;
+        }
+        return frame.elytraLocatorPose == null
+                ? null : new OpenMatrix4f(frame.elytraLocatorPose);
     }
 
     /**
@@ -307,6 +327,7 @@ public final class RenderFrameContext {
         frame.leftFist = null;
         frame.rightAuthoredItemPose = null;
         frame.leftAuthoredItemPose = null;
+        frame.elytraLocatorPose = null;
         frame.attachmentPoses = null;
         frame.suppressRightHeldItem = false;
         frame.suppressLeftHeldItem = false;

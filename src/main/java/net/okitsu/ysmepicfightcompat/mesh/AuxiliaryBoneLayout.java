@@ -38,6 +38,7 @@ public final class AuxiliaryBoneLayout {
     private final Map<Integer, Vector3f> extendedArmatureJointPivots;
     private final Map<Integer, Integer> toolAnchorPoseIndices;
     private final Map<Integer, Entry> toolLocatorEntries;
+    private final Entry elytraLocatorEntry;
     private final Map<Integer, Entry> attachmentEntries;
     private final Map<Integer, Vector3f> attachmentPivots;
     private final float horizontalScale;
@@ -50,6 +51,7 @@ public final class AuxiliaryBoneLayout {
                                 Map<Integer, Vector3f> extendedArmatureJointPivots,
                                 Map<Integer, Integer> toolAnchorPoseIndices,
                                 Map<Integer, Entry> toolLocatorEntries,
+                                Entry elytraLocatorEntry,
                                 Map<Integer, Entry> attachmentEntries,
                                 Map<Integer, Vector3f> attachmentPivots,
                                 float horizontalScale, float verticalScale) {
@@ -60,6 +62,7 @@ public final class AuxiliaryBoneLayout {
         this.extendedArmatureJointPivots = Map.copyOf(extendedArmatureJointPivots);
         this.toolAnchorPoseIndices = Map.copyOf(toolAnchorPoseIndices);
         this.toolLocatorEntries = Map.copyOf(toolLocatorEntries);
+        this.elytraLocatorEntry = elytraLocatorEntry;
         this.attachmentEntries = Map.copyOf(attachmentEntries);
         this.attachmentPivots = Map.copyOf(attachmentPivots);
         this.horizontalScale = positiveScale(horizontalScale);
@@ -123,9 +126,12 @@ public final class AuxiliaryBoneLayout {
                 entries, byBone, estimate.toolSources());
         Map<Integer, Vector3f> attachmentPivots = attachmentPivots(
                 attachmentSources, estimate.pivots(), horizontalScale, verticalScale);
+        Entry elytraLocator = uniqueNamedEntry(
+                geometry, byBone, "ElytraLocator");
         return new AuxiliaryBoneLayout(entries, byBone, byName,
                 estimate.pivots(), estimate.extendedArmaturePivots(),
-                toolSources, toolLocators, attachmentSources, attachmentPivots,
+                toolSources, toolLocators, elytraLocator,
+                attachmentSources, attachmentPivots,
                 horizontalScale, verticalScale);
     }
 
@@ -169,6 +175,10 @@ public final class AuxiliaryBoneLayout {
 
     Entry toolLocatorEntry(int joint) {
         return toolLocatorEntries.get(joint);
+    }
+
+    Entry elytraLocatorEntry() {
+        return elytraLocatorEntry;
     }
 
     Entry attachmentEntry(int joint) {
@@ -313,6 +323,23 @@ public final class AuxiliaryBoneLayout {
             }
         }
         return Selection.MISSING;
+    }
+
+    private static Entry uniqueNamedEntry(
+            GeometryDocument geometry,
+            Map<GeometryDocument.Bone, Entry> byBone,
+            String name) {
+        GeometryDocument.Bone selected = null;
+        for (GeometryDocument.Bone bone : geometry.bones().values()) {
+            if (!bone.name().equalsIgnoreCase(name)) {
+                continue;
+            }
+            if (selected != null) {
+                return null;
+            }
+            selected = bone;
+        }
+        return selected == null ? null : byBone.get(selected);
     }
 
     private static Selection select(List<Entry> entries, int joint, String name) {
