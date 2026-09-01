@@ -36,8 +36,9 @@ import static org.junit.jupiter.api.Assumptions.assumeTrue;
  *
  * <p>The model assets are intentionally not copied into this repository. Set
  * {@code YSM_OFFICIAL_BUILTIN_ROOT} to the directory containing the official
- * {@code wine_fox/05_magical}, {@code wine_fox/21_saint}, and
- * {@code wine_fox/22_elf} model directories to run these checks.</p>
+ * {@code wine_fox/01_taisho_maid}, {@code wine_fox/05_magical},
+ * {@code wine_fox/21_saint}, and {@code wine_fox/22_elf} model directories to
+ * run these checks.</p>
  */
 class OfficialBuiltinHeldItemPolicyIntegrationTest {
     private static final float MODEL_SCALE = 0.7F;
@@ -578,6 +579,31 @@ class OfficialBuiltinHeldItemPolicyIntegrationTest {
             assertFalse(replacement,
                     "the inherited switch animates the body but keeps Epic Fight's item");
         }
+    }
+
+    @Test
+    void taishoMaidHeadEquipmentMaskRemainsVisibleWhileSneaking()
+            throws IOException {
+        Fixture fixture = load("wine_fox/01_taisho_maid");
+        assertNotNull(fixture.animations().get("pre_parallel1"));
+        assertNotNull(fixture.animations().get("head:default"));
+        AuxiliaryBoneLayout layout = AuxiliaryBoneLayout.create(
+                fixture.geometry(), MODEL_SCALE, MODEL_SCALE);
+        assertNotNull(layout.entryForBoneName("Mask"));
+        ParallelAnimationProgram program = program(fixture, layout);
+
+        Map.of(MovementAnimationType.SNEAK_MOVE, "sneak",
+                MovementAnimationType.SNEAK_IDLE, "sneaking").forEach(
+                (movement, main) -> {
+                    assertNotNull(fixture.animations().get(main));
+                    ParallelAnimationProgram.Frame frame = program.sampleMovementAt(
+                            0.25D, List.of(main, "head:default"), main, movement,
+                            new NeutralEnvironment(),
+                            new AnimationControllerProgram.RuntimeState());
+
+                    assertTrue(frame.replaceEpicFightPose(), movement.name());
+                    assertMovementDrawable(frame, layout, "Mask");
+                });
     }
 
     @Test

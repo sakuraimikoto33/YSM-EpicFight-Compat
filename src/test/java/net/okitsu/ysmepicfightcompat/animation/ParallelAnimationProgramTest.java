@@ -337,6 +337,77 @@ class ParallelAnimationProgramTest {
     }
 
     @Test
+    void configuredSneakKeepsHeadEquipmentVisibilityInTheWholeModelHierarchy() {
+        GeometryDocument geometry = equipmentMaskGeometry();
+        AuxiliaryBoneLayout layout = AuxiliaryBoneLayout.create(geometry);
+        AnimationClip pre = new AnimationClip("pre_parallel1");
+        AnimationClip.BoneTracks hidden = new AnimationClip.BoneTracks();
+        hidden.scale(constantTrack(0.0D, 0.0D, 0.0D));
+        pre.boneTracks().put("Mask", hidden);
+        AnimationClip moving = new AnimationClip("sneak");
+        moving.boneTracks().put("RightLeg", rotation(20.0D, 0.0D, 0.0D));
+        AnimationClip stationary = new AnimationClip("sneaking");
+        stationary.boneTracks().put("RightLeg", rotation(30.0D, 0.0D, 0.0D));
+        AnimationClip equipment = new AnimationClip("head:default");
+        AnimationClip.BoneTracks visible = new AnimationClip.BoneTracks();
+        visible.scale(constantTrack(1.0D, 1.0D, 1.0D));
+        equipment.boneTracks().put("Mask", visible);
+        ParallelAnimationProgram program = new ParallelAnimationProgram(
+                geometry, Map.of(pre.name(), pre, moving.name(), moving,
+                stationary.name(), stationary, equipment.name(), equipment),
+                layout, 1.0F, 1.0F);
+        int mask = layout.entryForBoneName("Mask").auxiliaryIndex();
+
+        Map.of(MovementAnimationType.SNEAK_MOVE, moving.name(),
+                MovementAnimationType.SNEAK_IDLE, stationary.name()).forEach(
+                (movement, main) -> {
+                    ParallelAnimationProgram.Frame frame = program.sampleMovementAt(
+                            0.0D, List.of(main, equipment.name()), main, movement,
+                            new NeutralEnvironment(),
+                            new AnimationControllerProgram.RuntimeState());
+
+                    assertTrue(frame.replaceEpicFightPose(), movement.name());
+                    assertFalse(frame.hiddenBones().contains("Mask"), movement.name());
+                    assertIdentity(frame.parallelDeltas()[mask]);
+                    assertIdentity(frame.wholeModelDeltas()[mask]);
+                });
+    }
+
+    @Test
+    void itemSwitchKeepsHeadEquipmentVisibilityInTheWholeModelHierarchy() {
+        GeometryDocument geometry = equipmentMaskGeometry();
+        AuxiliaryBoneLayout layout = AuxiliaryBoneLayout.create(geometry);
+        AnimationClip pre = new AnimationClip("pre_parallel1");
+        AnimationClip.BoneTracks hidden = new AnimationClip.BoneTracks();
+        hidden.scale(constantTrack(0.0D, 0.0D, 0.0D));
+        pre.boneTracks().put("Mask", hidden);
+        AnimationClip idle = new AnimationClip("idle");
+        idle.boneTracks().put("RightLeg", rotation(10.0D, 0.0D, 0.0D));
+        AnimationClip hold = new AnimationClip("hold_mainhand:sword");
+        hold.boneTracks().put("RightLeg", rotation(15.0D, 0.0D, 0.0D));
+        AnimationClip equipment = new AnimationClip("head:default");
+        AnimationClip.BoneTracks visible = new AnimationClip.BoneTracks();
+        visible.scale(constantTrack(1.0D, 1.0D, 1.0D));
+        equipment.boneTracks().put("Mask", visible);
+        ParallelAnimationProgram program = new ParallelAnimationProgram(
+                geometry, Map.of(pre.name(), pre, idle.name(), idle,
+                hold.name(), hold, equipment.name(), equipment),
+                layout, 1.0F, 1.0F);
+
+        ParallelAnimationProgram.Frame frame = program.sampleItemSwitchAt(
+                0.0D, List.of(idle.name(), hold.name(), equipment.name()),
+                idle.name(), null, Set.of(InteractionHand.MAIN_HAND),
+                Set.of(InteractionHand.MAIN_HAND), new NeutralEnvironment(),
+                new AnimationControllerProgram.RuntimeState());
+        int mask = layout.entryForBoneName("Mask").auxiliaryIndex();
+
+        assertTrue(frame.replaceEpicFightPose());
+        assertFalse(frame.hiddenBones().contains("Mask"));
+        assertIdentity(frame.parallelDeltas()[mask]);
+        assertIdentity(frame.wholeModelDeltas()[mask]);
+    }
+
+    @Test
     void ignoresParallelTransformsOnWrappersAboveEpicFightBones() {
         GeometryDocument geometry = wrappedRootAndTail();
         AuxiliaryBoneLayout layout = AuxiliaryBoneLayout.create(geometry);
@@ -2066,6 +2137,20 @@ class ParallelAnimationProgramTest {
         ear.pivot(0.0F, 1.0F, 0.0F);
         geometry.add(head);
         geometry.add(ear);
+        geometry.linkHierarchy();
+        return geometry;
+    }
+
+    private static GeometryDocument equipmentMaskGeometry() {
+        GeometryDocument geometry = new GeometryDocument();
+        GeometryDocument.Bone root = new GeometryDocument.Bone("Root");
+        GeometryDocument.Bone leg = new GeometryDocument.Bone("RightLeg");
+        GeometryDocument.Bone mask = new GeometryDocument.Bone("Mask");
+        leg.parentName("Root");
+        mask.parentName("Root");
+        geometry.add(root);
+        geometry.add(leg);
+        geometry.add(mask);
         geometry.linkHierarchy();
         return geometry;
     }

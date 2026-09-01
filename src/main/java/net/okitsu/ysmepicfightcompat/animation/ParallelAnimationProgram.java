@@ -1426,7 +1426,7 @@ public final class ParallelAnimationProgram {
                     automatic, controlled, fullBodyEnding)) {
                 if (layer.automatic() != null) {
                     evaluateAutomaticLayer(layer.automatic(), true, false, false,
-                            false,
+                            false, false,
                             pausedHoldHands,
                             environment, runtimeState, scratch);
                 } else if (layer.controlled() != null) {
@@ -1452,7 +1452,7 @@ public final class ParallelAnimationProgram {
                             && itemSwitchPose.hands().contains(holdHand);
                     evaluateAutomaticLayer(layer.automatic(), false, movementMain,
                             itemSwitchPose.movement() != null,
-                            switchMain || switchHold,
+                            switchMain || switchHold, true,
                             pausedHoldHands, environment, runtimeState, scratch);
                 } else if (layer.controlled() != null) {
                     boolean movementController = movementPose != null
@@ -1473,7 +1473,7 @@ public final class ParallelAnimationProgram {
                     boolean movementMain = layer.automatic().name()
                             .equals(movementPose.active().name());
                     evaluateAutomaticLayer(layer.automatic(), false, movementMain, true,
-                            false,
+                            false, true,
                             pausedHoldHands, environment, runtimeState, scratch);
                 } else if (layer.controlled() != null) {
                     evaluateControllerLayer(layer.controlled(), false,
@@ -1483,7 +1483,7 @@ public final class ParallelAnimationProgram {
             }
         } else {
             for (AutomaticAnimationSelector.ActiveClip active : automatic) {
-                evaluateAutomaticLayer(active, false, false, false, false,
+                evaluateAutomaticLayer(active, false, false, false, false, false,
                         pausedHoldHands,
                         environment, runtimeState, scratch);
             }
@@ -1530,6 +1530,7 @@ public final class ParallelAnimationProgram {
             AutomaticAnimationSelector.ActiveClip active,
             boolean customFullBodyPose, boolean movementFullBody,
             boolean movementComposition, boolean itemSwitchFullBody,
+            boolean equipmentFullBodyComposition,
             Set<InteractionHand> pausedHoldHands,
             ExpressionEngine.Environment environment, RuntimeState runtimeState,
             EvaluationScratch scratch) {
@@ -1566,8 +1567,14 @@ public final class ParallelAnimationProgram {
                 && customHeldItems.clipAction(active.name())
                 == AnimationConditionMatcher.ItemAction.HOLD
                 && !customHeldItems.replacementRoots(active.name()).isEmpty();
+        // Equipment conditions are authored after pre_parallel in official YSM. When a
+        // movement or item-switch pose owns the complete hierarchy, keep both writes in
+        // that hierarchy as well. Otherwise a pre_parallel scale 0 in whole-model space
+        // survives a later head/chest/legs/feet scale 1 left in parallel space.
+        boolean equipmentComposition = equipmentFullBodyComposition
+                && isEquipmentConditionClip(active.name());
         boolean wholeModel = mounted || customFullBodyPose || movementFullBody
-                || movementReplacement || itemSwitchFullBody;
+                || movementReplacement || itemSwitchFullBody || equipmentComposition;
         PoseScratch target = wholeModel ? scratch.wholeModelPose
                 : selectiveReplacement ? scratch.heldItemPose
                 : scratch.parallelPose;
@@ -1912,10 +1919,29 @@ public final class ParallelAnimationProgram {
         if (name.startsWith("passenger")) {
             return 65;
         }
-        if (name.startsWith("armor_") || name.startsWith("vehicle")) {
+        if (isEquipmentConditionClip(name) || name.startsWith("vehicle")) {
             return 70;
         }
         return 10;
+    }
+
+    private static boolean isEquipmentConditionClip(String clipName) {
+        if (clipName == null || clipName.isEmpty()) {
+            return false;
+        }
+        String name = normalize(clipName);
+        return hasConditionRoot(name, "head")
+                || hasConditionRoot(name, "chest")
+                || hasConditionRoot(name, "legs")
+                || hasConditionRoot(name, "feet");
+    }
+
+    private static boolean hasConditionRoot(String name, String root) {
+        if (!name.startsWith(root) || name.length() <= root.length()) {
+            return false;
+        }
+        char separator = name.charAt(root.length());
+        return separator == ':' || separator == '$' || separator == '#';
     }
 
     private static int controllerStage(String controllerName) {
