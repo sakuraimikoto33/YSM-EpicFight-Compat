@@ -3,6 +3,7 @@ package net.okitsu.ysmepicfightcompat.mesh;
 import com.mojang.blaze3d.platform.NativeImage;
 import com.mojang.blaze3d.systems.RenderSystem;
 import net.minecraft.client.Minecraft;
+import net.minecraft.client.renderer.texture.AbstractTexture;
 import net.minecraft.client.renderer.texture.DynamicTexture;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.world.entity.Entity;
@@ -17,6 +18,8 @@ import net.okitsu.ysmepicfightcompat.assets.ModelBundle;
 import net.okitsu.ysmepicfightcompat.assets.OfficialTextureResolver;
 import net.okitsu.ysmepicfightcompat.cache.ClientLocalModelCache;
 import net.okitsu.ysmepicfightcompat.config.ClientPreferences;
+import net.okitsu.ysmepicfightcompat.integration.oculus.CompatPbrTexture;
+import net.okitsu.ysmepicfightcompat.integration.oculus.OculusPbrBridge;
 import net.okitsu.ysmepicfightcompat.integration.tlm.TouhouMaidAnimationStateAccess;
 import net.okitsu.ysmepicfightcompat.integration.tlm.TouhouMaidRenderBridge;
 import net.okitsu.ysmepicfightcompat.integration.tlm.TouhouMaidSelectionAccess;
@@ -55,8 +58,8 @@ public final class CombatMeshCache {
     private static final LinkedHashMap<String, Boolean> RECENCY =
             new LinkedHashMap<>(64, 0.75F, true);
 
-    private static final Map<String, byte[]> FALLBACK_BYTES = new ConcurrentHashMap<>();
-    private static final Map<String, ModelBundle.TextureInfo> FALLBACK_INFO = new ConcurrentHashMap<>();
+    private static final Map<String, FallbackTexture> FALLBACK_TEXTURES =
+            new ConcurrentHashMap<>();
     private static final Map<String, ResourceLocation> FALLBACK_LOCATIONS = new ConcurrentHashMap<>();
     private static final Set<String> UPLOADED = ConcurrentHashMap.newKeySet();
     private static final Set<String> DECODING = ConcurrentHashMap.newKeySet();
@@ -94,14 +97,22 @@ public final class CombatMeshCache {
     }
 
     private record TextureSource(String name, ResourceLocation location,
-                                 byte[] bytes, ModelBundle.TextureInfo info) {
+                                 byte[] bytes, ModelBundle.TextureInfo info,
+                                 ModelBundle.PbrTextures pbr) {
     }
 
     private record Conversion(String modelId, CompatHumanoidMesh mesh,
                               int faces, List<TextureSource> textures) {
     }
 
-    private record TextureUpload(ResourceLocation location, NativeImage image) {
+    private record FallbackTexture(byte[] bytes, ModelBundle.TextureInfo info,
+                                   ModelBundle.PbrTextures pbr) {
+    }
+
+    private record TextureUpload(ResourceLocation location, FallbackTexture source,
+                                 NativeImage image,
+                                 CompatPbrTexture.ImageData normal,
+                                 CompatPbrTexture.ImageData specular) {
     }
 
     private CombatMeshCache() {
@@ -280,20 +291,32 @@ public final class CombatMeshCache {
             return;
         }
         String key = location.toString();
-        byte[] bytes = FALLBACK_BYTES.get(key);
-        if (bytes == null || UPLOADED.contains(key) || !DECODING.add(key)) {
+        FallbackTexture source = FALLBACK_TEXTURES.get(key);
+        if (source == null || UPLOADED.contains(key) || !DECODING.add(key)) {
             return;
         }
         RELEASE_AFTER_TICKS.remove(key);
         WORKERS.execute(() -> {
+            NativeImage image = null;
+            boolean queued = false;
             try {
-                NativeImage image = decodeTexture(bytes, FALLBACK_INFO.get(key));
-                READY_UPLOADS.add(new TextureUpload(location, image));
+                image = decodeTexture(source.bytes(), source.info());
+                ModelBundle.PbrTextures pbr = source.pbr();
+                CompatPbrTexture.ImageData normal = decodePbrTexture(
+                        location, "normal", pbr == null ? null : pbr.normal());
+                CompatPbrTexture.ImageData specular = decodePbrTexture(
+                        location, "specular", pbr == null ? null : pbr.specular());
+                READY_UPLOADS.add(new TextureUpload(
+                        location, source, image, normal, specular));
+                queued = true;
                 Minecraft.getInstance().execute(CombatMeshCache::uploadReadyTextures);
             } catch (Throwable exception) {
                 CompatMod.LOG.warn(
                         "YSM-EF Compat: failed to decode temporary texture {}", location, exception);
             } finally {
+                if (!queued && image != null) {
+                    image.close();
+                }
                 DECODING.remove(key);
             }
         });
@@ -304,14 +327,22 @@ public final class CombatMeshCache {
         TextureUpload upload;
         while ((upload = READY_UPLOADS.poll()) != null) {
             String key = upload.location().toString();
-            if (!FALLBACK_BYTES.containsKey(key)) {
+            if (FALLBACK_TEXTURES.get(key) != upload.source()) {
                 upload.image().close();
                 continue;
             }
             RELEASE_AFTER_TICKS.remove(key);
-            Minecraft.getInstance().getTextureManager().register(
-                    upload.location(), new DynamicTexture(upload.image()));
-            UPLOADED.add(key);
+            AbstractTexture texture = createUploadedTexture(upload);
+            try {
+                Minecraft.getInstance().getTextureManager().register(
+                        upload.location(), texture);
+                UPLOADED.add(key);
+            } catch (Throwable exception) {
+                texture.close();
+                CompatMod.LOG.warn(
+                        "YSM-EF Compat: failed to register temporary texture {}",
+                        upload.location(), exception);
+            }
             if (System.nanoTime() >= deadline) {
                 Minecraft.getInstance().execute(CombatMeshCache::uploadReadyTextures);
                 return;
@@ -373,8 +404,7 @@ public final class CombatMeshCache {
         MESHES.clear();
         PENDING_MODELS.clear();
         FAILED_STAMPS.clear();
-        FALLBACK_BYTES.clear();
-        FALLBACK_INFO.clear();
+        FALLBACK_TEXTURES.clear();
         FALLBACK_LOCATIONS.clear();
         UPLOADED.clear();
         DECODING.clear();
@@ -456,11 +486,11 @@ public final class CombatMeshCache {
                 source.widthScale(), source.heightScale());
         CompatHumanoidMesh mesh = new CompatHumanoidMesh(source.modelId(), pose, parallel,
                 baked.auxiliaryBones(),
-                baked.arrays(), baked.parts(), null, properties);
+                baked.arrays(), baked.parts(), baked.glowParts(), null, properties);
         List<TextureSource> textures = new ArrayList<>();
         source.textures().forEach((name, bytes) -> textures.add(new TextureSource(
                 name, fallbackLocation(source.modelId(), name), bytes,
-                source.textureInfo().get(name))));
+                source.textureInfo().get(name), source.pbrTextures().get(name))));
         return new Conversion(source.modelId(), mesh, baked.faceCount(), List.copyOf(textures));
     }
 
@@ -469,10 +499,8 @@ public final class CombatMeshCache {
         for (TextureSource texture : conversion.textures()) {
             String resourceKey = texture.location().toString();
             FALLBACK_LOCATIONS.put(conversion.modelId() + '#' + texture.name(), texture.location());
-            FALLBACK_BYTES.put(resourceKey, texture.bytes());
-            if (texture.info() != null) {
-                FALLBACK_INFO.put(resourceKey, texture.info());
-            }
+            FALLBACK_TEXTURES.put(resourceKey, new FallbackTexture(
+                    texture.bytes(), texture.info(), texture.pbr()));
         }
         MeshHandle handle = new MeshHandle(ResourceLocation.fromNamespaceAndPath(
                 NAMESPACE, "memory/entity/" + safePath(conversion.modelId())), conversion.mesh());
@@ -525,8 +553,7 @@ public final class CombatMeshCache {
         });
         for (ResourceLocation location : locations) {
             String key = location.toString();
-            FALLBACK_BYTES.remove(key);
-            FALLBACK_INFO.remove(key);
+            FALLBACK_TEXTURES.remove(key);
             if (UPLOADED.remove(key)) {
                 RELEASE_AFTER_TICKS.put(key, RELEASE_DELAY);
             }
@@ -544,6 +571,37 @@ public final class CombatMeshCache {
                         RELEASE_AFTER_TICKS.put(key, RELEASE_DELAY);
                     }
                 });
+    }
+
+    private static AbstractTexture createUploadedTexture(TextureUpload upload) {
+        boolean hasPbr = upload.normal() != null || upload.specular() != null;
+        if (hasPbr && OculusPbrBridge.ensureRegistered()) {
+            return new CompatPbrTexture(
+                    upload.image(), upload.normal(), upload.specular());
+        }
+        return new DynamicTexture(upload.image());
+    }
+
+    private static CompatPbrTexture.ImageData decodePbrTexture(
+            ResourceLocation location, String kind,
+            ModelBundle.EncodedTexture encoded) {
+        if (encoded == null) {
+            return null;
+        }
+        NativeImage image = null;
+        try {
+            image = decodeTexture(encoded.bytes(), encoded.info());
+            return CompatPbrTexture.ImageData.copyOf(image);
+        } catch (IOException | RuntimeException exception) {
+            CompatMod.LOG.warn(
+                    "YSM-EF Compat: failed to decode fallback {} texture for {}; ignoring that PBR companion",
+                    kind, location, exception);
+            return null;
+        } finally {
+            if (image != null) {
+                image.close();
+            }
+        }
     }
 
     private static NativeImage decodeTexture(byte[] bytes, ModelBundle.TextureInfo info)

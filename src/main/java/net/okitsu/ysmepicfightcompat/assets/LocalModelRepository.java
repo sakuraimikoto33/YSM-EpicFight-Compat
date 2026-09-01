@@ -30,6 +30,8 @@ import java.util.stream.Stream;
 
 /** Reads official YSM model sources while leaving all generated state in YSM's own folders. */
 public final class LocalModelRepository {
+    private static final byte[] MODEL_BUNDLE_SCHEMA =
+            "ysm-ef-model-bundle:pbr-materials-v1".getBytes(StandardCharsets.UTF_8);
     private static final Path DEFAULT_ROOT = Path.of("config", "yes_steve_model");
     private static final List<String> CATALOGS = List.of("builtin", "built", "custom", "auth");
     private static final long MAX_MANIFEST = 4L * 1024 * 1024;
@@ -159,6 +161,9 @@ public final class LocalModelRepository {
             }
             LocatedModel located = source.get();
             MessageDigest digest = MessageDigest.getInstance("SHA-256");
+            // Parsed bundle semantics changed while the unreleased wire/cache version remains 1.
+            // Salt the source digest so old payloads that discarded PBR companions are rebuilt.
+            digest.update(MODEL_BUNDLE_SCHEMA);
             digest.update(modelId.getBytes(StandardCharsets.UTF_8));
             if (located.archive()) {
                 byte[] decrypted = PackageEnvelopeDecoder.open(readBounded(located.path(), MAX_ARCHIVE));
@@ -315,19 +320,46 @@ public final class LocalModelRepository {
                 ? declaration.getAsJsonArray() : List.of(declaration);
         for (JsonElement entry : entries) {
             String relative = null;
+            JsonObject textureObject = null;
             if (entry.isJsonPrimitive()) {
                 relative = entry.getAsString();
             } else if (entry.isJsonObject() && entry.getAsJsonObject().has("uv")) {
-                relative = entry.getAsJsonObject().get("uv").getAsString();
+                textureObject = entry.getAsJsonObject();
+                relative = textureObject.get("uv").getAsString();
             }
             if (relative == null) {
                 continue;
             }
             Path file = confine(directory, relative);
             if (Files.isRegularFile(file, LinkOption.NOFOLLOW_LINKS)) {
-                target.textures().put(stem(relative), readBounded(file, MAX_TEXTURE));
+                String name = stem(relative);
+                // A later declaration with the same selectable name replaces the
+                // complete material, not only its base image.
+                target.pbrTextures().remove(name);
+                target.textures().put(name, readBounded(file, MAX_TEXTURE));
+                if (textureObject != null) {
+                    ModelBundle.PbrTextures pbr = new ModelBundle.PbrTextures(
+                            readPbrTexture(directory, textureObject, "normal"),
+                            readPbrTexture(directory, textureObject, "specular"));
+                    if (!pbr.isEmpty()) {
+                        target.pbrTextures().put(name, pbr);
+                    }
+                }
             }
         }
+    }
+
+    private static ModelBundle.EncodedTexture readPbrTexture(
+            Path directory, JsonObject declaration, String channel) throws IOException {
+        JsonElement location = declaration.get(channel);
+        if (location == null || !location.isJsonPrimitive()) {
+            return null;
+        }
+        Path file = confine(directory, location.getAsString());
+        if (!Files.isRegularFile(file, LinkOption.NOFOLLOW_LINKS)) {
+            return null;
+        }
+        return new ModelBundle.EncodedTexture(readBounded(file, MAX_TEXTURE), null);
     }
 
     private static Optional<LocatedModel> locate(Path root, String modelId) throws IOException {

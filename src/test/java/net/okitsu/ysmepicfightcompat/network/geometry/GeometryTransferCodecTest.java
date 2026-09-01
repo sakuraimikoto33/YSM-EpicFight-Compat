@@ -106,6 +106,10 @@ class GeometryTransferCodecTest {
         source.textures().put("default", new byte[]{1, 2, 3, 4});
         source.textures().put("alternate", new byte[]{5, 6, 7});
         source.textureInfo().put("default", new ModelBundle.TextureInfo(1, 1, -1));
+        source.pbrTextures().put("default", new ModelBundle.PbrTextures(
+                new ModelBundle.EncodedTexture(new byte[]{8, 9, 10, 11},
+                        new ModelBundle.TextureInfo(1, 1, -1)),
+                new ModelBundle.EncodedTexture(new byte[]{12, 13, 14}, null)));
         byte[] payload = GeometryTransferCodec.encode(source);
         ModelBundle decoded = GeometryTransferCodec.decode("server/model", payload);
 
@@ -113,6 +117,12 @@ class GeometryTransferCodecTest {
         assertArrayEquals(new byte[]{5, 6, 7}, decoded.textures().get("alternate"));
         assertEquals(new ModelBundle.TextureInfo(1, 1, -1),
                 decoded.textureInfo().get("default"));
+        assertArrayEquals(new byte[]{8, 9, 10, 11},
+                decoded.pbrTextures().get("default").normal().bytes());
+        assertEquals(new ModelBundle.TextureInfo(1, 1, -1),
+                decoded.pbrTextures().get("default").normal().info());
+        assertArrayEquals(new byte[]{12, 13, 14},
+                decoded.pbrTextures().get("default").specular().bytes());
         assertEquals(0.75F, decoded.widthScale());
         assertEquals(0.8F, decoded.heightScale());
         assertEquals("default", decoded.defaultTexture());
@@ -168,6 +178,19 @@ class GeometryTransferCodecTest {
         assertThrows(IOException.class, () -> GeometryTransferCodec.decode("cycle", payload));
         assertThrows(IOException.class, () -> GeometryTransferCodec.decode(
                 "short", Arrays.copyOf(payload, payload.length / 2)));
+    }
+
+    @Test
+    void rejectsPbrCompanionsWithoutASelectableBaseTexture() {
+        GeometryDocument geometry = new GeometryDocument();
+        geometry.add(bone("root", ""));
+        geometry.linkHierarchy();
+        ModelBundle model = ModelBundle.remote(
+                "orphan-pbr", geometry, Map.of(), 1, 1, "");
+        model.pbrTextures().put("missing", new ModelBundle.PbrTextures(
+                new ModelBundle.EncodedTexture(new byte[]{1}, null), null));
+
+        assertThrows(IOException.class, () -> GeometryTransferCodec.encode(model));
     }
 
     private static GeometryDocument.Bone bone(String name, String parent) {

@@ -12,10 +12,27 @@ public final class ModelBundle {
     public record TextureInfo(int width, int height, int format) {
     }
 
+    /** Encoded auxiliary texture retained until the render thread uploads it. */
+    public record EncodedTexture(byte[] bytes, TextureInfo info) {
+        public EncodedTexture {
+            if (bytes == null) {
+                throw new IllegalArgumentException("Texture bytes must not be null");
+            }
+        }
+    }
+
+    /** Optional LabPBR companions associated with one selectable UV texture. */
+    public record PbrTextures(EncodedTexture normal, EncodedTexture specular) {
+        public boolean isEmpty() {
+            return normal == null && specular == null;
+        }
+    }
+
     private final String modelId;
     private GeometryDocument geometry;
     private final Map<String, byte[]> textures = new LinkedHashMap<>();
     private final Map<String, TextureInfo> textureInfo = new LinkedHashMap<>();
+    private final Map<String, PbrTextures> pbrTextures = new LinkedHashMap<>();
     private final Map<String, AnimationClip> animations = new LinkedHashMap<>();
     private final Map<String, AnimationController> animationControllers = new LinkedHashMap<>();
     private float widthScale = 0.7F;
@@ -76,6 +93,10 @@ public final class ModelBundle {
 
     public Map<String, TextureInfo> textureInfo() {
         return textureInfo;
+    }
+
+    public Map<String, PbrTextures> pbrTextures() {
+        return pbrTextures;
     }
 
     public Map<String, AnimationClip> animations() {

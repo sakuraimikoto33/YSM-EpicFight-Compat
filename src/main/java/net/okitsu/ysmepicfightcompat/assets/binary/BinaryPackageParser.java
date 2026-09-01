@@ -16,6 +16,8 @@ import java.util.Map;
 
 /** Boundary-checked decoder for decrypted YSM binary model payloads. */
 public final class BinaryPackageParser {
+    private static final int SUB_TEXTURE_NORMAL = 1;
+    private static final int SUB_TEXTURE_SPECULAR = 2;
     private static final int MAX_ITEMS = 1_000_000;
     private static final int MAX_TEXT_BYTES = 4 * 1024 * 1024;
     private static final int MAX_BLOB_BYTES = 128 * 1024 * 1024;
@@ -108,13 +110,36 @@ public final class BinaryPackageParser {
             byte[] bytes = input.blob();
             int width = input.varUInt("texture width");
             int height = input.varUInt("texture height");
-            repeat(input.count("legacy sub-texture"), child -> {
-                input.varUInt("sub-texture id");
-                input.skipBlob();
-                input.varUInt("sub-texture width");
-                input.varUInt("sub-texture height");
-            });
+            ModelBundle.EncodedTexture normal = null;
+            ModelBundle.EncodedTexture specular = null;
+            int subTextures = input.count("legacy sub-texture");
+            for (int child = 0; child < subTextures; child++) {
+                int type = input.varUInt("sub-texture id");
+                boolean retained = type == SUB_TEXTURE_NORMAL
+                        || type == SUB_TEXTURE_SPECULAR;
+                if (type == SUB_TEXTURE_NORMAL) {
+                    require(normal == null, "Duplicate normal sub-texture");
+                } else if (type == SUB_TEXTURE_SPECULAR) {
+                    require(specular == null, "Duplicate specular sub-texture");
+                }
+                byte[] subBytes = retained ? input.blob() : null;
+                if (!retained) {
+                    input.skipBlob();
+                }
+                int subWidth = input.varUInt("sub-texture width");
+                int subHeight = input.varUInt("sub-texture height");
+                if (retained) {
+                    ModelBundle.EncodedTexture texture = new ModelBundle.EncodedTexture(
+                            subBytes, new ModelBundle.TextureInfo(subWidth, subHeight, -1));
+                    if (type == SUB_TEXTURE_NORMAL) {
+                        normal = texture;
+                    } else {
+                        specular = texture;
+                    }
+                }
+            }
             storeTexture(result, name, bytes, width, height, -1);
+            storePbrTextures(result, name, normal, specular);
         });
         if (format > 9) {
             skipSounds(input, format);
@@ -187,16 +212,40 @@ public final class BinaryPackageParser {
         int height = input.varUInt("texture height");
         int format = input.varUInt("texture format");
         input.varUInt("texture flags");
-        repeat(input.count("sub-texture"), ignored -> {
-            input.varUInt("sub-texture id");
+        ModelBundle.EncodedTexture normal = null;
+        ModelBundle.EncodedTexture specular = null;
+        int subTextures = input.count("sub-texture");
+        for (int ignored = 0; ignored < subTextures; ignored++) {
+            int type = input.varUInt("sub-texture id");
             input.text();
-            input.skipBlob();
-            input.varUInt("sub-texture width");
-            input.varUInt("sub-texture height");
-            input.varUInt("sub-texture format");
+            boolean retained = type == SUB_TEXTURE_NORMAL
+                    || type == SUB_TEXTURE_SPECULAR;
+            if (type == SUB_TEXTURE_NORMAL) {
+                require(normal == null, "Duplicate normal sub-texture");
+            } else if (type == SUB_TEXTURE_SPECULAR) {
+                require(specular == null, "Duplicate specular sub-texture");
+            }
+            byte[] subBytes = retained ? input.blob() : null;
+            if (!retained) {
+                input.skipBlob();
+            }
+            int subWidth = input.varUInt("sub-texture width");
+            int subHeight = input.varUInt("sub-texture height");
+            int subFormat = input.varUInt("sub-texture format");
             input.varUInt("sub-texture flags");
-        });
+            if (retained) {
+                ModelBundle.EncodedTexture texture = new ModelBundle.EncodedTexture(
+                        subBytes, new ModelBundle.TextureInfo(
+                        subWidth, subHeight, subFormat));
+                if (type == SUB_TEXTURE_NORMAL) {
+                    normal = texture;
+                } else {
+                    specular = texture;
+                }
+            }
+        }
         storeTexture(result, name, bytes, width, height, format);
+        storePbrTextures(result, name, normal, specular);
     }
 
     private static GeometryDocument readGeometry(Cursor input, boolean retain) {
@@ -696,8 +745,19 @@ public final class BinaryPackageParser {
 
     private static void storeTexture(ModelBundle result, String name, byte[] bytes,
                                      int width, int height, int format) {
+        // A later texture record with the same name replaces the entire material.
+        result.pbrTextures().remove(name);
         result.textures().put(name, bytes);
         result.textureInfo().put(name, new ModelBundle.TextureInfo(width, height, format));
+    }
+
+    private static void storePbrTextures(
+            ModelBundle result, String name, ModelBundle.EncodedTexture normal,
+            ModelBundle.EncodedTexture specular) {
+        ModelBundle.PbrTextures textures = new ModelBundle.PbrTextures(normal, specular);
+        if (!textures.isEmpty()) {
+            result.pbrTextures().put(name, textures);
+        }
     }
 
     private static void repeat(int count, java.util.function.IntConsumer action) {

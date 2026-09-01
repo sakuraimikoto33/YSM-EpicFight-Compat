@@ -2,6 +2,7 @@ package net.okitsu.ysmepicfightcompat.mesh;
 
 import com.mojang.blaze3d.vertex.PoseStack;
 import net.minecraft.client.Minecraft;
+import net.minecraft.client.renderer.LightTexture;
 import net.minecraft.client.renderer.MultiBufferSource;
 import net.minecraft.client.renderer.RenderType;
 import net.minecraft.resources.ResourceLocation;
@@ -30,6 +31,7 @@ import yesman.epicfight.client.renderer.shader.compute.ComputeShaderSetup;
 import javax.annotation.Nullable;
 import java.lang.reflect.Field;
 import java.util.Arrays;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -46,6 +48,10 @@ public final class CompatHumanoidMesh extends HumanoidMesh {
     private final ParallelAnimationProgram parallelAnimations;
     private final AuxiliaryPoseMatrices auxiliaryPoses;
     private final MovementPoseTransition movementPoseTransition;
+    @Nullable
+    private final SkinnedMesh glowMesh;
+    private final boolean hasBaseGeometry;
+    private final Set<Map.Entry<String, MeshPart>> allParts;
     private ResourceLocation texture;
 
     public CompatHumanoidMesh(String modelId, DefaultPoseProgram poseProgram,
@@ -53,11 +59,18 @@ public final class CompatHumanoidMesh extends HumanoidMesh {
                               AuxiliaryBoneLayout auxiliaryBones,
                               Map<String, Number[]> arrays,
                               Map<MeshPartDefinition, List<VertexBuilder>> parts,
+                              Map<MeshPartDefinition, List<VertexBuilder>> glowParts,
                               @Nullable SkinnedMesh parent, RenderProperties properties) {
         super(arrays, parts, parent, properties);
         this.modelId = modelId;
         this.poseProgram = poseProgram;
         this.parallelAnimations = parallelAnimations;
+        hasBaseGeometry = hasGeometry(parts);
+        // A parent-backed SkinnedMesh reuses the parent's parts as well as its arrays.
+        // Keep this mesh independent so the glow-only part definitions are retained.
+        glowMesh = glowParts.isEmpty() ? null
+                : new SkinnedMesh(arrays, glowParts, null, properties);
+        allParts = collectParts(this, glowMesh);
         auxiliaryPoses = auxiliaryBones.isEmpty() ? null
                 : new AuxiliaryPoseMatrices(auxiliaryBones);
         movementPoseTransition = auxiliaryPoses == null ? null
@@ -138,7 +151,23 @@ public final class CompatHumanoidMesh extends HumanoidMesh {
 
     @SuppressWarnings("unchecked")
     public Set<Map.Entry<String, MeshPart>> partsView() {
-        return (Set<Map.Entry<String, MeshPart>>) (Set<?>) getPartEntry();
+        return allParts;
+    }
+
+    @Override
+    public void initialize() {
+        super.initialize();
+        if (glowMesh != null) {
+            glowMesh.initialize();
+        }
+    }
+
+    @Override
+    public void destroy() {
+        super.destroy();
+        if (glowMesh != null) {
+            glowMesh.destroy();
+        }
     }
 
     @Override
@@ -273,22 +302,13 @@ public final class CompatHumanoidMesh extends HumanoidMesh {
             matrices.scale(meshScale, meshScale, meshScale);
         }
         try {
-            ComputeShaderSetup compute = computeSetup();
-            if (compute != null) {
-                compute.drawWithShader(this, matrices, buffers, actualType, light,
+            if (hasBaseGeometry) {
+                drawSkinned(this, matrices, buffers, actualType, drawingFunction, light,
                         red, green, blue, alpha, overlay, armature, poses);
-            } else {
-                if (CPU_FALLBACK_LOGGED.compareAndSet(false, true)) {
-                    CompatMod.LOG.warn(
-                            "YSM-EF Compat: compute skinning is unavailable; using Epic Fight's CPU path");
-                }
-                // replaceTexture and getTriangulated share Epic Fight's render-type cache.
-                // A texture replacement can therefore leave the original QUADS mode in that
-                // cache, even though this mesh emits triangle triplets. Use the independent
-                // conversion so CPU skinning never regroups every four vertices into a quad.
-                drawPosed(matrices,
-                        buffers.getBuffer(EpicFightRenderTypes.makeTriangulated(actualType)),
-                        drawingFunction, light, red, green, blue, alpha, overlay,
+            }
+            if (glowMesh != null) {
+                drawSkinned(glowMesh, matrices, buffers, actualType, drawingFunction,
+                        LightTexture.FULL_BRIGHT, red, green, blue, alpha, overlay,
                         armature, poses);
             }
         } finally {
@@ -335,6 +355,47 @@ public final class CompatHumanoidMesh extends HumanoidMesh {
                 && itemSwitchHands.contains(logicalHand);
     }
 
+    private static boolean hasGeometry(
+            Map<MeshPartDefinition, List<VertexBuilder>> parts) {
+        return parts.values().stream().anyMatch(vertices -> !vertices.isEmpty());
+    }
+
+    @SuppressWarnings("unchecked")
+    private static Set<Map.Entry<String, MeshPart>> collectParts(
+            SkinnedMesh base, @Nullable SkinnedMesh glow) {
+        Set<Map.Entry<String, MeshPart>> result = new LinkedHashSet<>();
+        result.addAll((Set<Map.Entry<String, MeshPart>>) (Set<?>) base.getPartEntry());
+        if (glow != null) {
+            result.addAll((Set<Map.Entry<String, MeshPart>>) (Set<?>) glow.getPartEntry());
+        }
+        return Set.copyOf(result);
+    }
+
+    private static void drawSkinned(
+            SkinnedMesh mesh, PoseStack matrices, MultiBufferSource buffers,
+            RenderType type, Mesh.DrawingFunction drawingFunction, int light,
+            float red, float green, float blue, float alpha, int overlay,
+            @Nullable Armature armature, OpenMatrix4f[] poses) {
+        ComputeShaderSetup compute = computeSetup(mesh);
+        if (compute != null) {
+            compute.drawWithShader(mesh, matrices, buffers, type, light,
+                    red, green, blue, alpha, overlay, armature, poses);
+            return;
+        }
+        if (CPU_FALLBACK_LOGGED.compareAndSet(false, true)) {
+            CompatMod.LOG.warn(
+                    "YSM-EF Compat: compute skinning is unavailable; using Epic Fight's CPU path");
+        }
+        // replaceTexture and getTriangulated share Epic Fight's render-type cache.
+        // A texture replacement can therefore leave the original QUADS mode in that
+        // cache, even though this mesh emits triangle triplets. Use the independent
+        // conversion so CPU skinning never regroups every four vertices into a quad.
+        mesh.drawPosed(matrices,
+                buffers.getBuffer(EpicFightRenderTypes.makeTriangulated(type)),
+                drawingFunction, light, red, green, blue, alpha, overlay,
+                armature, poses);
+    }
+
     /** Keeps Epic Fight's action matrices unless YSM owns the complete displayed pose. */
     static boolean projectsDisplayedAttachments(
             boolean epicFightActionActive, boolean ysmReplacesEpicFightPose) {
@@ -361,12 +422,12 @@ public final class CompatHumanoidMesh extends HumanoidMesh {
     }
 
     @Nullable
-    private ComputeShaderSetup computeSetup() {
+    private static ComputeShaderSetup computeSetup(SkinnedMesh mesh) {
         if (COMPUTE_SETUP == null) {
             return null;
         }
         try {
-            return (ComputeShaderSetup) COMPUTE_SETUP.get(this);
+            return (ComputeShaderSetup) COMPUTE_SETUP.get(mesh);
         } catch (IllegalAccessException ignored) {
             return null;
         }

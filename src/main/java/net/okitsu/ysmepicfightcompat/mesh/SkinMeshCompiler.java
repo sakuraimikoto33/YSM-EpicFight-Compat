@@ -24,6 +24,7 @@ public final class SkinMeshCompiler {
 
     public record Result(Map<String, Number[]> arrays,
                          Map<MeshPartDefinition, List<VertexBuilder>> parts,
+                         Map<MeshPartDefinition, List<VertexBuilder>> glowParts,
                          AuxiliaryBoneLayout auxiliaryBones,
                          int faceCount) {
     }
@@ -83,6 +84,7 @@ public final class SkinMeshCompiler {
         private final List<Integer> influences = new ArrayList<>();
         private final Map<VertexFingerprint, Integer> vertices = new HashMap<>();
         private final Map<String, List<Integer>> trianglesByPart = new LinkedHashMap<>();
+        private final Map<String, List<Integer>> glowTrianglesByPart = new LinkedHashMap<>();
         private int faces;
 
         private void append(GeometryDocument.Bone bone, Matrix4f transform,
@@ -92,7 +94,9 @@ public final class SkinMeshCompiler {
                 return;
             }
             int joint = auxiliaryBones.poseIndexFor(bone);
-            List<Integer> triangles = trianglesByPart.computeIfAbsent(
+            Map<String, List<Integer>> target = bone.name().startsWith("ysmGlow")
+                    ? glowTrianglesByPart : trianglesByPart;
+            List<Integer> triangles = target.computeIfAbsent(
                     partName(bone), ignored -> new ArrayList<>());
             for (GeometryDocument.Face face : bone.faces()) {
                 faces++;
@@ -162,7 +166,13 @@ public final class SkinMeshCompiler {
             trianglesByPart.forEach((name, indices) -> parts.put(
                     VanillaMeshPartDefinition.of(name), VertexBuilder.create(
                             indices.stream().mapToInt(Integer::intValue).toArray())));
-            return new Result(Map.copyOf(arrays), Map.copyOf(parts), auxiliaryBones, faces);
+
+            Map<MeshPartDefinition, List<VertexBuilder>> glowParts = new LinkedHashMap<>();
+            glowTrianglesByPart.forEach((name, indices) -> glowParts.put(
+                    VanillaMeshPartDefinition.of(name), VertexBuilder.create(
+                            indices.stream().mapToInt(Integer::intValue).toArray())));
+            return new Result(Map.copyOf(arrays), Map.copyOf(parts),
+                    Map.copyOf(glowParts), auxiliaryBones, faces);
         }
     }
 }

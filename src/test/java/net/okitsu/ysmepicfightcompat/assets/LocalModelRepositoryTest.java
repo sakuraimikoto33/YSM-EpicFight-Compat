@@ -11,11 +11,87 @@ import java.util.Map;
 import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class LocalModelRepositoryTest {
+    @Test
+    void associatesManifestPbrTexturesWithoutExposingThemAsSkins(@TempDir Path root)
+            throws IOException {
+        Path model = root.resolve("custom/pbr/saint");
+        Files.createDirectories(model.resolve("models"));
+        Files.createDirectories(model.resolve("textures/pbr"));
+        Files.writeString(model.resolve("ysm.json"), """
+                {"files":{"player":{
+                  "model":{"main":"models/main.json"},
+                  "texture":[{
+                    "uv":"textures/skin.png",
+                    "normal":"textures/pbr/skin_height.png",
+                    "specular":"textures/pbr/skin_mer.png"
+                  }]
+                }}}
+                """);
+        Files.writeString(model.resolve("models/main.json"), """
+                {"minecraft:geometry":[{
+                  "description":{"texture_width":16,"texture_height":16},
+                  "bones":[{"name":"root"}]
+                }]}
+                """);
+        Files.write(model.resolve("textures/skin.png"), new byte[]{1, 2, 3});
+        Files.write(model.resolve("textures/pbr/skin_height.png"), new byte[]{4, 5});
+        Files.write(model.resolve("textures/pbr/skin_mer.png"), new byte[]{6, 7});
+
+        byte[] digestBefore = LocalModelRepository.contentDigest(root, "pbr/saint");
+        ModelBundle loaded = LocalModelRepository.load(root, "pbr/saint");
+
+        assertNotNull(loaded);
+        assertEquals(Set.of("skin"), loaded.textures().keySet());
+        ModelBundle.PbrTextures pbr = loaded.pbrTextures().get("skin");
+        assertNotNull(pbr);
+        assertArrayEquals(new byte[]{4, 5}, pbr.normal().bytes());
+        assertArrayEquals(new byte[]{6, 7}, pbr.specular().bytes());
+
+        Files.write(model.resolve("textures/pbr/skin_mer.png"), new byte[]{8, 9});
+        assertFalse(Arrays.equals(digestBefore,
+                LocalModelRepository.contentDigest(root, "pbr/saint")));
+    }
+
+    @Test
+    void replacingASelectableTextureAlsoReplacesItsPbrAssociation(@TempDir Path root)
+            throws IOException {
+        Path model = root.resolve("custom/pbr/replaced");
+        Files.createDirectories(model.resolve("models"));
+        Files.createDirectories(model.resolve("textures/first"));
+        Files.createDirectories(model.resolve("textures/second"));
+        Files.writeString(model.resolve("ysm.json"), """
+                {"files":{"player":{
+                  "model":{"main":"models/main.json"},
+                  "texture":[
+                    {"uv":"textures/first/skin.png",
+                     "normal":"textures/first/normal.png"},
+                    "textures/second/skin.png"
+                  ]
+                }}}
+                """);
+        Files.writeString(model.resolve("models/main.json"), """
+                {"minecraft:geometry":[{
+                  "description":{"texture_width":16,"texture_height":16},
+                  "bones":[{"name":"root"}]
+                }]}
+                """);
+        Files.write(model.resolve("textures/first/skin.png"), new byte[]{1});
+        Files.write(model.resolve("textures/first/normal.png"), new byte[]{2});
+        Files.write(model.resolve("textures/second/skin.png"), new byte[]{3});
+
+        ModelBundle loaded = LocalModelRepository.load(root, "pbr/replaced");
+
+        assertNotNull(loaded);
+        assertArrayEquals(new byte[]{3}, loaded.textures().get("skin"));
+        assertFalse(loaded.pbrTextures().containsKey("skin"));
+    }
+
     @Test
     void discoversOnlyModelCatalogsAndIgnoresOfficialCacheHashes(@TempDir Path root)
             throws IOException {

@@ -102,6 +102,7 @@ public final class GeometryTransferCodec {
                     widthScale, heightScale, defaultTexture);
             result.textures().putAll(textures.bytes());
             result.textureInfo().putAll(textures.info());
+            result.pbrTextures().putAll(textures.pbr());
             return result;
         } catch (RuntimeException exception) {
             throw new IOException("Invalid model transfer", exception);
@@ -111,56 +112,107 @@ public final class GeometryTransferCodec {
     private static void writeTextures(DataOutputStream output, ModelBundle model)
             throws IOException {
         bounded(model.textures().size(), MAX_TEXTURES, "texture");
+        if (!model.textures().keySet().containsAll(model.pbrTextures().keySet())) {
+            throw new IOException("PBR texture has no selectable UV texture");
+        }
         output.writeInt(model.textures().size());
         long total = 0;
         for (Map.Entry<String, byte[]> entry : model.textures().entrySet()) {
             string(output, entry.getKey());
-            byte[] bytes = entry.getValue();
-            if (bytes == null || bytes.length > MAX_SINGLE_TEXTURE_BYTES) {
-                throw new IOException("Invalid model texture size");
-            }
-            total += bytes.length;
-            if (total > MAX_TEXTURE_BYTES) {
-                throw new IOException("Model textures exceed their total size limit");
-            }
-            output.writeInt(bytes.length);
-            output.write(bytes);
             ModelBundle.TextureInfo info = model.textureInfo().get(entry.getKey());
-            output.writeBoolean(info != null);
-            if (info != null) {
-                positive(info.width(), 65_536, "texture width");
-                positive(info.height(), 65_536, "texture height");
-                output.writeInt(info.width());
-                output.writeInt(info.height());
-                output.writeInt(info.format());
-            }
+            total = writeEncodedTexture(output,
+                    new ModelBundle.EncodedTexture(entry.getValue(), info), total);
+            ModelBundle.PbrTextures pbr = model.pbrTextures().get(entry.getKey());
+            total = writeOptionalTexture(output, pbr == null ? null : pbr.normal(), total);
+            total = writeOptionalTexture(output, pbr == null ? null : pbr.specular(), total);
         }
+    }
+
+    private static long writeOptionalTexture(
+            DataOutputStream output, ModelBundle.EncodedTexture texture, long total)
+            throws IOException {
+        output.writeBoolean(texture != null);
+        return texture == null ? total : writeEncodedTexture(output, texture, total);
+    }
+
+    private static long writeEncodedTexture(
+            DataOutputStream output, ModelBundle.EncodedTexture texture, long total)
+            throws IOException {
+        byte[] bytes = texture.bytes();
+        if (bytes.length > MAX_SINGLE_TEXTURE_BYTES) {
+            throw new IOException("Invalid model texture size");
+        }
+        long nextTotal = total + bytes.length;
+        if (nextTotal > MAX_TEXTURE_BYTES) {
+            throw new IOException("Model textures exceed their total size limit");
+        }
+        output.writeInt(bytes.length);
+        output.write(bytes);
+        ModelBundle.TextureInfo info = texture.info();
+        output.writeBoolean(info != null);
+        if (info != null) {
+            positive(info.width(), 65_536, "texture width");
+            positive(info.height(), 65_536, "texture height");
+            output.writeInt(info.width());
+            output.writeInt(info.height());
+            output.writeInt(info.format());
+        }
+        return nextTotal;
     }
 
     private static TextureResult readTextures(DataInputStream input) throws IOException {
         int count = bounded(input.readInt(), MAX_TEXTURES, "texture");
         Map<String, byte[]> textures = new LinkedHashMap<>();
         Map<String, ModelBundle.TextureInfo> info = new LinkedHashMap<>();
+        Map<String, ModelBundle.PbrTextures> pbr = new LinkedHashMap<>();
         long total = 0;
         for (int index = 0; index < count; index++) {
             String name = string(input);
-            int length = bounded(input.readInt(), MAX_SINGLE_TEXTURE_BYTES,
-                    "texture byte");
-            total += length;
-            if (total > MAX_TEXTURE_BYTES) {
-                throw new IOException("Model textures exceed their total size limit");
-            }
-            byte[] bytes = input.readNBytes(length);
-            if (bytes.length != length || textures.putIfAbsent(name, bytes) != null) {
+            DecodedTexture base = readEncodedTexture(input, total);
+            total = base.totalBytes();
+            if (textures.putIfAbsent(name, base.texture().bytes()) != null) {
                 throw new IOException("Invalid or duplicate model texture");
             }
-            if (input.readBoolean()) {
-                int width = positive(input.readInt(), 65_536, "texture width");
-                int height = positive(input.readInt(), 65_536, "texture height");
-                info.put(name, new ModelBundle.TextureInfo(width, height, input.readInt()));
+            if (base.texture().info() != null) {
+                info.put(name, base.texture().info());
+            }
+            DecodedTexture normal = readOptionalTexture(input, total);
+            total = normal.totalBytes();
+            DecodedTexture specular = readOptionalTexture(input, total);
+            total = specular.totalBytes();
+            ModelBundle.PbrTextures companions = new ModelBundle.PbrTextures(
+                    normal.texture(), specular.texture());
+            if (!companions.isEmpty()) {
+                pbr.put(name, companions);
             }
         }
-        return new TextureResult(textures, info);
+        return new TextureResult(textures, info, pbr);
+    }
+
+    private static DecodedTexture readOptionalTexture(DataInputStream input, long total)
+            throws IOException {
+        return input.readBoolean() ? readEncodedTexture(input, total)
+                : new DecodedTexture(null, total);
+    }
+
+    private static DecodedTexture readEncodedTexture(DataInputStream input, long total)
+            throws IOException {
+        int length = bounded(input.readInt(), MAX_SINGLE_TEXTURE_BYTES, "texture byte");
+        long nextTotal = total + length;
+        if (nextTotal > MAX_TEXTURE_BYTES) {
+            throw new IOException("Model textures exceed their total size limit");
+        }
+        byte[] bytes = input.readNBytes(length);
+        if (bytes.length != length) {
+            throw new IOException("Truncated model texture");
+        }
+        ModelBundle.TextureInfo info = null;
+        if (input.readBoolean()) {
+            int width = positive(input.readInt(), 65_536, "texture width");
+            int height = positive(input.readInt(), 65_536, "texture height");
+            info = new ModelBundle.TextureInfo(width, height, input.readInt());
+        }
+        return new DecodedTexture(new ModelBundle.EncodedTexture(bytes, info), nextTotal);
     }
 
     private static void writeGeometry(DataOutputStream output, GeometryDocument geometry)
@@ -808,7 +860,11 @@ public final class GeometryTransferCodec {
     }
 
     private record TextureResult(Map<String, byte[]> bytes,
-                                 Map<String, ModelBundle.TextureInfo> info) {
+                                 Map<String, ModelBundle.TextureInfo> info,
+                                 Map<String, ModelBundle.PbrTextures> pbr) {
+    }
+
+    private record DecodedTexture(ModelBundle.EncodedTexture texture, long totalBytes) {
     }
 
     private static final class InputLimit extends FilterInputStream {

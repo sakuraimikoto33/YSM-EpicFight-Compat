@@ -7,6 +7,7 @@ import org.junit.jupiter.api.Test;
 import java.io.ByteArrayOutputStream;
 import java.nio.charset.StandardCharsets;
 
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -107,6 +108,93 @@ class BinaryPackageParserTest {
                 .blendTransition().progress(0.1D), 0.0001F);
     }
 
+    @Test
+    void retainsTypedPbrSubTexturesFromLegacyEncryptedPackages() {
+        ByteArrayOutputStream output = new ByteArrayOutputStream();
+        writeInt(output, 10);
+        writeVarUInt(output, 0); // Header bytes.
+        writeVarUInt(output, 1); // Models.
+        writeVarUInt(output, 1); // Player model.
+        writeVarUInt(output, 1); // Model marker.
+        writeEmptyGeometry(output);
+        writeVarUInt(output, 0); // Animation blocks.
+        writeVarUInt(output, 0); // Controller files.
+        writeVarUInt(output, 0); // Controller lookup.
+
+        writeVarUInt(output, 1); // Textures.
+        writeText(output, "skin");
+        writeBlob(output, new byte[]{1, 2, 3, 4});
+        writeVarUInt(output, 1);
+        writeVarUInt(output, 1);
+        writeVarUInt(output, 2); // Sub-textures.
+        writeVarUInt(output, 1); // Normal.
+        writeBlob(output, new byte[]{5, 6, 7, 8});
+        writeVarUInt(output, 1);
+        writeVarUInt(output, 1);
+        writeVarUInt(output, 2); // Specular.
+        writeBlob(output, new byte[]{9, 10, 11, 12});
+        writeVarUInt(output, 1);
+        writeVarUInt(output, 1);
+
+        writeVarUInt(output, 0); // Sounds.
+        writeVarUInt(output, 0); // Sound lookup.
+        writeVarUInt(output, 0); // Extra textures.
+        writeVarUInt(output, 0); // Model lookup.
+        writeVarUInt(output, 0); // Animation lookup.
+        writeVarUInt(output, 0); // Texture lookup.
+        writeEmptyProperties(output);
+
+        ModelBundle model = BinaryPackageParser.parse("pbr", output.toByteArray());
+        ModelBundle.PbrTextures pbr = model.pbrTextures().get("skin");
+
+        assertArrayEquals(new byte[]{1, 2, 3, 4}, model.textures().get("skin"));
+        assertArrayEquals(new byte[]{5, 6, 7, 8}, pbr.normal().bytes());
+        assertEquals(new ModelBundle.TextureInfo(1, 1, -1), pbr.normal().info());
+        assertArrayEquals(new byte[]{9, 10, 11, 12}, pbr.specular().bytes());
+        assertEquals(new ModelBundle.TextureInfo(1, 1, -1), pbr.specular().info());
+    }
+
+    @Test
+    void retainsTypedPbrSubTexturesFromModernEncryptedPackages() {
+        ByteArrayOutputStream output = new ByteArrayOutputStream();
+        writeInt(output, 32);
+        writeVarUInt(output, 0); // Sounds.
+        writeVarUInt(output, 0); // Functions.
+        writeVarUInt(output, 0); // Languages.
+        writeVarUInt(output, 0); // Vehicles.
+        writeVarUInt(output, 0); // Projectiles.
+        writeVarUInt(output, 1); // Entity marker.
+        writeVarUInt(output, 0); // Animation files.
+        writeVarUInt(output, 0); // Controller files.
+
+        writeVarUInt(output, 1); // Textures.
+        writeText(output, "skin");
+        writeText(output, "textures/skin.png");
+        writeBlob(output, new byte[]{1, 2, 3});
+        writeVarUInt(output, 2);
+        writeVarUInt(output, 2);
+        writeVarUInt(output, 7);
+        writeVarUInt(output, 0);
+        writeVarUInt(output, 3); // Sub-textures, including one unknown type.
+        writeModernSubTexture(output, 1, "normal", new byte[]{4, 5}, 2, 2, 8);
+        writeModernSubTexture(output, 2, "specular", new byte[]{6, 7}, 2, 2, 9);
+        writeModernSubTexture(output, 99, "future", new byte[]{8}, 1, 1, 10);
+
+        writeVarUInt(output, 1); // Models.
+        writeVarUInt(output, 1); // Player model type.
+        writeText(output, "models/main.json");
+        writeEmptyGeometry(output);
+        writeModernEmptyProperties(output);
+
+        ModelBundle model = BinaryPackageParser.parse("modern-pbr", output.toByteArray());
+        ModelBundle.PbrTextures pbr = model.pbrTextures().get("skin");
+
+        assertArrayEquals(new byte[]{4, 5}, pbr.normal().bytes());
+        assertEquals(new ModelBundle.TextureInfo(2, 2, 8), pbr.normal().info());
+        assertArrayEquals(new byte[]{6, 7}, pbr.specular().bytes());
+        assertEquals(new ModelBundle.TextureInfo(2, 2, 9), pbr.specular().info());
+    }
+
     private static void writeEmptyGeometry(ByteArrayOutputStream output) {
         writeVarUInt(output, 0); // Bones.
         writeText(output, ""); // Geometry identifier.
@@ -136,8 +224,37 @@ class BinaryPackageParserTest {
         writeVarUInt(output, 0);
     }
 
+    private static void writeModernEmptyProperties(ByteArrayOutputStream output) {
+        writeEmptyProperties(output);
+        writeVarUInt(output, 0); // Two additional >=15 property flags.
+        writeVarUInt(output, 0);
+        writeVarUInt(output, 0); // >15 property flag.
+        writeVarUInt(output, 0); // >=32 property flag.
+        writeText(output, "");
+        writeText(output, "");
+        writeVarUInt(output, 0); // Avatars.
+        writeVarUInt(output, 0); // Backgrounds.
+    }
+
+    private static void writeModernSubTexture(
+            ByteArrayOutputStream output, int type, String name, byte[] bytes,
+            int width, int height, int format) {
+        writeVarUInt(output, type);
+        writeText(output, name);
+        writeBlob(output, bytes);
+        writeVarUInt(output, width);
+        writeVarUInt(output, height);
+        writeVarUInt(output, format);
+        writeVarUInt(output, 0);
+    }
+
     private static void writeText(ByteArrayOutputStream output, String value) {
         byte[] bytes = value.getBytes(StandardCharsets.UTF_8);
+        writeVarUInt(output, bytes.length);
+        output.writeBytes(bytes);
+    }
+
+    private static void writeBlob(ByteArrayOutputStream output, byte[] bytes) {
         writeVarUInt(output, bytes.length);
         output.writeBytes(bytes);
     }

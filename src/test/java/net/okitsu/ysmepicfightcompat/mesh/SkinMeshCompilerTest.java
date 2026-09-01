@@ -5,8 +5,13 @@ import net.okitsu.ysmepicfightcompat.geometry.GeometryDocument;
 import org.joml.Vector3f;
 import org.junit.jupiter.api.Test;
 
+import java.util.Set;
+import java.util.stream.Collectors;
+
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class SkinMeshCompilerTest {
     @Test
@@ -68,6 +73,65 @@ class SkinMeshCompilerTest {
         assertEquals(HumanoidRig.EPIC_JOINT_COUNT + 1, influences[4 * 2].intValue());
         assertEquals(HumanoidRig.EPIC_JOINT_COUNT + 2, influences[8 * 2].intValue());
         assertEquals(HumanoidRig.EPIC_JOINT_COUNT + 3, influences[12 * 2].intValue());
+    }
+
+    @Test
+    void separatesOnlyCaseSensitiveGlowBonesWithoutInheritingToChildren() {
+        GeometryDocument geometry = new GeometryDocument();
+        GeometryDocument.Bone glow = faceBone("ysmGlowEyes");
+        GeometryDocument.Bone child = faceBone("eyeHighlight");
+        child.parentName("ysmGlowEyes");
+        GeometryDocument.Bone wrongCase = faceBone("YsmGlowHalo");
+        geometry.add(glow);
+        geometry.add(child);
+        geometry.add(wrongCase);
+        geometry.linkHierarchy();
+        ModelBundle model = ModelBundle.remote("test", geometry, null, 1.0F, 1.0F, "");
+
+        SkinMeshCompiler.Result result = SkinMeshCompiler.compile(model);
+
+        assertNotNull(result);
+        Set<String> baseParts = partNames(result.parts());
+        Set<String> glowParts = partNames(result.glowParts());
+        assertTrue(glowParts.contains(SkinMeshCompiler.BONE_PART_PREFIX + "ysmGlowEyes"));
+        assertFalse(glowParts.contains(SkinMeshCompiler.BONE_PART_PREFIX + "eyeHighlight"));
+        assertTrue(baseParts.contains(SkinMeshCompiler.BONE_PART_PREFIX + "eyeHighlight"));
+        assertTrue(baseParts.contains(SkinMeshCompiler.BONE_PART_PREFIX + "YsmGlowHalo"));
+        assertEquals(3, result.faceCount());
+    }
+
+    @Test
+    void supportsModelsWithNoGlowOrOnlyGlowGeometry() {
+        GeometryDocument ordinaryGeometry = new GeometryDocument();
+        ordinaryGeometry.add(faceBone("head"));
+        ordinaryGeometry.linkHierarchy();
+        GeometryDocument glowGeometry = new GeometryDocument();
+        glowGeometry.add(faceBone("ysmGlowBody"));
+        glowGeometry.linkHierarchy();
+
+        SkinMeshCompiler.Result ordinary = SkinMeshCompiler.compile(ModelBundle.remote(
+                "ordinary", ordinaryGeometry, null, 1.0F, 1.0F, ""));
+        SkinMeshCompiler.Result glow = SkinMeshCompiler.compile(ModelBundle.remote(
+                "glow", glowGeometry, null, 1.0F, 1.0F, ""));
+
+        assertNotNull(ordinary);
+        assertNotNull(glow);
+        assertTrue(ordinary.glowParts().isEmpty());
+        assertTrue(partNames(ordinary.parts()).contains(
+                SkinMeshCompiler.BONE_PART_PREFIX + "head"));
+        assertTrue(partNames(glow.parts()).stream().noneMatch(
+                name -> name.startsWith(SkinMeshCompiler.BONE_PART_PREFIX)));
+        assertEquals(Set.of(SkinMeshCompiler.BONE_PART_PREFIX + "ysmGlowBody"),
+                partNames(glow.glowParts()));
+    }
+
+    private static Set<String> partNames(
+            java.util.Map<yesman.epicfight.api.client.model.MeshPartDefinition,
+                    java.util.List<yesman.epicfight.api.client.model.VertexBuilder>> parts) {
+        return parts.keySet().stream()
+                .map(yesman.epicfight.api.client.model.MeshPartDefinition::partName)
+                .filter(name -> name.startsWith(SkinMeshCompiler.BONE_PART_PREFIX))
+                .collect(Collectors.toSet());
     }
 
     private static GeometryDocument.Bone faceBone(String name) {
