@@ -221,7 +221,9 @@ public final class CompatHumanoidMesh extends HumanoidMesh {
                             ? auxiliaryPoses.authoredHeldItemPose(
                             complete, HumanoidRig.LEFT_TOOL) : null;
                     OpenMatrix4f[] attachmentPoses = projectsDisplayedAttachments(
-                            frame.epicFightActionActive())
+                            frame.epicFightActionActive(),
+                            animationFrame != null
+                                    && animationFrame.replaceEpicFightPose())
                             ? auxiliaryPoses.displayedAttachmentPoses(
                             armature, complete, inputPoses, meshScale,
                             rightItemSwitch, leftItemSwitch) : null;
@@ -329,9 +331,10 @@ public final class CompatHumanoidMesh extends HumanoidMesh {
                 && itemSwitchHands.contains(logicalHand);
     }
 
-    /** Epic Fight's own action matrices must remain authoritative for patched layers. */
-    static boolean projectsDisplayedAttachments(boolean epicFightActionActive) {
-        return !epicFightActionActive;
+    /** Keeps Epic Fight's action matrices unless YSM owns the complete displayed pose. */
+    static boolean projectsDisplayedAttachments(
+            boolean epicFightActionActive, boolean ysmReplacesEpicFightPose) {
+        return !epicFightActionActive || ysmReplacesEpicFightPose;
     }
 
     /** Epic Fight deliberately renders its ordinary bow at the off-arm Tool joint. */

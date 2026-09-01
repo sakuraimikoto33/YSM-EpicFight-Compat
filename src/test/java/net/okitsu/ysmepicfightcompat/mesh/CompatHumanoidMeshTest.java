@@ -39,8 +39,9 @@ class CompatHumanoidMeshTest {
     }
 
     @Test
-    void projectsDisplayedAttachmentsOnlyOutsideEpicFightActions() {
-        assertTrue(CompatHumanoidMesh.projectsDisplayedAttachments(false));
-        assertFalse(CompatHumanoidMesh.projectsDisplayedAttachments(true));
+    void projectsDisplayedAttachmentsForYsmOwnedFullBodyActions() {
+        assertTrue(CompatHumanoidMesh.projectsDisplayedAttachments(false, false));
+        assertFalse(CompatHumanoidMesh.projectsDisplayedAttachments(true, false));
+        assertTrue(CompatHumanoidMesh.projectsDisplayedAttachments(true, true));
     }
 }
