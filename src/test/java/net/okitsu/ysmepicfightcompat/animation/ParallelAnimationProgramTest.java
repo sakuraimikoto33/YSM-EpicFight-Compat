@@ -1128,6 +1128,45 @@ class ParallelAnimationProgramTest {
     }
 
     @Test
+    void configuredSneakAddsOfficialCameraTrackingAfterTheAuthoredHeadPose() {
+        GeometryDocument geometry = officialHeadAndEar();
+        AuxiliaryBoneLayout layout = AuxiliaryBoneLayout.create(geometry);
+        AnimationClip sneak = new AnimationClip("sneak");
+        sneak.boneTracks().put("Head", rotation(12.0D, 5.0D, 3.0D));
+        ParallelAnimationProgram program = new ParallelAnimationProgram(
+                geometry, Map.of(sneak.name(), sneak), layout, 1.0F, 1.0F);
+        NeutralEnvironment looking = new NeutralEnvironment()
+                .query("ysm.head_pitch", -25.0D)
+                .query("ysm.head_yaw", 40.0D);
+        int head = layout.entryForBoneName("Head").auxiliaryIndex();
+        int ear = layout.entryForBoneName("ear").auxiliaryIndex();
+        Matrix4f expectedTracked = new Matrix4f()
+                .rotateZ((float) Math.toRadians(3.0D))
+                .rotateY((float) Math.toRadians(35.0D))
+                .rotateX((float) Math.toRadians(-37.0D));
+
+        for (MovementAnimationType movement : List.of(
+                MovementAnimationType.SNEAK_IDLE,
+                MovementAnimationType.SNEAK_MOVE)) {
+            ParallelAnimationProgram.Frame frame = program.sampleMovementAt(
+                    0.0D, List.of(sneak.name()), sneak.name(), movement,
+                    looking, new AnimationControllerProgram.RuntimeState());
+
+            assertMatrix(expectedTracked, frame.wholeModelDeltas()[head]);
+            assertMatrix(expectedTracked, frame.wholeModelDeltas()[ear]);
+        }
+
+        ParallelAnimationProgram.Frame run = program.sampleMovementAt(
+                0.0D, List.of(sneak.name()), sneak.name(), MovementAnimationType.RUN,
+                looking, new AnimationControllerProgram.RuntimeState());
+        Matrix4f expectedAuthoredOnly = new Matrix4f()
+                .rotateZ((float) Math.toRadians(3.0D))
+                .rotateY((float) Math.toRadians(-5.0D))
+                .rotateX((float) Math.toRadians(-12.0D));
+        assertMatrix(expectedAuthoredOnly, run.wholeModelDeltas()[head]);
+    }
+
+    @Test
     void itemSwitchKeepsAStationaryOnceMainCyclingAsItsBodyBase() {
         GeometryDocument geometry = handPropGeometry();
         AuxiliaryBoneLayout layout = AuxiliaryBoneLayout.create(geometry);
@@ -2141,6 +2180,18 @@ class ParallelAnimationProgramTest {
         return geometry;
     }
 
+    private static GeometryDocument officialHeadAndEar() {
+        GeometryDocument geometry = new GeometryDocument();
+        GeometryDocument.Bone head = new GeometryDocument.Bone("Head");
+        GeometryDocument.Bone ear = new GeometryDocument.Bone("ear");
+        ear.parentName("Head");
+        ear.pivot(0.0F, 1.0F, 0.0F);
+        geometry.add(head);
+        geometry.add(ear);
+        geometry.linkHierarchy();
+        return geometry;
+    }
+
     private static GeometryDocument equipmentMaskGeometry() {
         GeometryDocument geometry = new GeometryDocument();
         GeometryDocument.Bone root = new GeometryDocument.Bone("Root");
@@ -2411,6 +2462,7 @@ class ParallelAnimationProgramTest {
 
     private static final class NeutralEnvironment implements ExpressionEngine.Environment {
         private final Map<Integer, Double> variables = new HashMap<>();
+        private final Map<Integer, Double> queries = new HashMap<>();
         private final double animationTime;
 
         private NeutralEnvironment() {
@@ -2440,10 +2492,15 @@ class ParallelAnimationProgramTest {
             return variables.getOrDefault(ExpressionEngine.slot(name), 0.0D);
         }
 
+        private NeutralEnvironment query(String name, double value) {
+            queries.put(ExpressionEngine.querySlot(name), value);
+            return this;
+        }
+
         @Override
         public double readQuery(int slot) {
             return "query.anim_time".equals(ExpressionEngine.slotName(slot))
-                    ? animationTime : 0.0D;
+                    ? animationTime : queries.getOrDefault(slot, 0.0D);
         }
 
         @Override

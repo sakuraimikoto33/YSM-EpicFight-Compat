@@ -603,6 +603,17 @@ class OfficialBuiltinHeldItemPolicyIntegrationTest {
 
                     assertTrue(frame.replaceEpicFightPose(), movement.name());
                     assertMovementDrawable(frame, layout, "Mask");
+                    int head = layout.entryForBoneName("Head").auxiliaryIndex();
+                    OpenMatrix4f authoredHead = new OpenMatrix4f().load(
+                            frame.wholeModelDeltas()[head]);
+                    ParallelAnimationProgram.Frame looking = program.sampleMovementAt(
+                            0.25D, List.of(main, "head:default"), main, movement,
+                            new NeutralEnvironment().headYaw(35.0D),
+                            new AnimationControllerProgram.RuntimeState());
+                    assertTrue(matrixDiffers(
+                                    authoredHead, looking.wholeModelDeltas()[head]),
+                            () -> movement.name()
+                                    + " must add official camera yaw after its Head pose");
                 });
     }
 

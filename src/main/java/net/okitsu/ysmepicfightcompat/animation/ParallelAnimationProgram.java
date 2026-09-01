@@ -41,6 +41,8 @@ import java.util.concurrent.Executors;
 public final class ParallelAnimationProgram {
     private static final float HIDDEN_SCALE = 0.01F;
     private static final float EPSILON = 0.0001F;
+    private static final int HEAD_YAW_QUERY = ExpressionEngine.querySlot("ysm.head_yaw");
+    private static final int HEAD_PITCH_QUERY = ExpressionEngine.querySlot("ysm.head_pitch");
     /** Official YSM controller ending transition: three Minecraft ticks. */
     private static final double FULL_BODY_END_TRANSITION_SECONDS = 3.0D / 20.0D;
     /** Lets a held-item edge survive the controller's initialize-only render frame. */
@@ -351,6 +353,7 @@ public final class ParallelAnimationProgram {
     private final Map<LivingEntity, RuntimeState> states = new WeakHashMap<>();
 
     private final int auxiliaryCount;
+    private final int headAuxiliaryIndex;
     private final EvaluationScratch testScratch;
 
     public ParallelAnimationProgram(GeometryDocument geometry,
@@ -414,6 +417,10 @@ public final class ParallelAnimationProgram {
                 controllers, controllerInfo, heldItemControllers);
 
         auxiliaryCount = layout.entries().size();
+        AuxiliaryBoneLayout.Entry head = layout.entries().stream()
+                .filter(entry -> "Head".equals(entry.bone().name()))
+                .findFirst().orElse(null);
+        headAuxiliaryIndex = head == null ? -1 : head.auxiliaryIndex();
         testScratch = new EvaluationScratch(visibilityBones.size(), auxiliaryCount);
     }
 
@@ -1509,6 +1516,8 @@ public final class ParallelAnimationProgram {
                         runtimeState, authoredTarget, ApplyMode.PARALLEL, scratch);
             }
         }
+        applyOfficialSneakHeadTracking(movementPose, environment,
+                scratch.replaceEpicFightPose, scratch.wholeModelPose);
         composeVisibility(scratch);
         composeAuxiliaryMatrices(scratch.parallelPose, scratch);
         composeAuxiliaryMatrices(scratch.wholeModelPose, scratch);
@@ -1923,6 +1932,31 @@ public final class ParallelAnimationProgram {
             return 70;
         }
         return 10;
+    }
+
+    /**
+     * Official YSM adds camera tracking to the final animated {@code Head} Euler
+     * channels after every animation layer has run. A configured sneak movement owns
+     * the complete converted hierarchy, so Epic Fight's head joint can no longer
+     * provide that final look rotation. Reproduce the official post-animation step on
+     * the exact Head bone; its descendants then inherit the result without discarding
+     * the authored crouch tilt.
+     */
+    private void applyOfficialSneakHeadTracking(
+            @Nullable MovementPose movementPose,
+            ExpressionEngine.Environment environment,
+            boolean replaceEpicFightPose,
+            PoseScratch pose) {
+        if (!replaceEpicFightPose || headAuxiliaryIndex < 0 || movementPose == null
+                || movementPose.movement() != MovementAnimationType.SNEAK_IDLE
+                && movementPose.movement() != MovementAnimationType.SNEAK_MOVE) {
+            return;
+        }
+        pose.rotations[headAuxiliaryIndex][0] += radians(finite(
+                environment.readQuery(HEAD_PITCH_QUERY), 0.0F));
+        pose.rotations[headAuxiliaryIndex][1] += radians(finite(
+                environment.readQuery(HEAD_YAW_QUERY), 0.0F));
+        pose.hasRotation[headAuxiliaryIndex] = true;
     }
 
     private static boolean isEquipmentConditionClip(String clipName) {
@@ -3720,7 +3754,7 @@ public final class ParallelAnimationProgram {
                             entity instanceof net.minecraft.client.player.LocalPlayer,
                             epicModelYaw),
                     Mth.rotLerp(partialTick, entity.yBodyRotO, entity.yBodyRot),
-                    Mth.lerp(partialTick, entity.yHeadRotO, entity.yHeadRot),
+                    Mth.rotLerp(partialTick, entity.yHeadRotO, entity.yHeadRot),
                     entity.getViewYRot(partialTick));
         }
 

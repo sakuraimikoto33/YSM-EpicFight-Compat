@@ -227,11 +227,11 @@ final class EntityAnimationEnvironment implements ExpressionEngine.Environment {
         String name = ExpressionEngine.slotName(slot);
         double horizontalSpeed = Math.sqrt(entity.getDeltaMovement().x * entity.getDeltaMovement().x
                 + entity.getDeltaMovement().z * entity.getDeltaMovement().z) * 20.0D;
-        float headYaw = Mth.lerp(partialTick, entity.yHeadRotO, entity.yHeadRot);
         float bodyYaw = Mth.rotLerp(partialTick, entity.yBodyRotO, entity.yBodyRot);
         float modelBodyYaw = fullBodyModelYaw == null ? bodyYaw : fullBodyModelYaw;
         float relativeHeadYaw = customBowRelativeHeadYaw == null
-                ? officialHeadYaw(headYaw, modelBodyYaw)
+                ? officialInterpolatedHeadYaw(entity.yHeadRotO, entity.yHeadRot,
+                partialTick, modelBodyYaw)
                 : customBowRelativeHeadYaw;
         float headPitch = officialHeadPitch(entity.getViewXRot(partialTick));
         return switch (name) {
@@ -853,6 +853,13 @@ final class EntityAnimationEnvironment implements ExpressionEngine.Environment {
 
     static float officialHeadYaw(float headYaw, float bodyYaw) {
         return -Mth.clamp(Mth.wrapDegrees(headYaw - bodyYaw), -85.0F, 85.0F);
+    }
+
+    static float officialInterpolatedHeadYaw(
+            float previousHeadYaw, float headYaw,
+            float partialTick, float modelBodyYaw) {
+        return officialHeadYaw(
+                Mth.rotLerp(partialTick, previousHeadYaw, headYaw), modelBodyYaw);
     }
 
     static float customBowAimYaw(float projectileYaw, float interpolatedViewYaw,

@@ -37,6 +37,9 @@ class EntityAnimationEnvironmentTest {
                 EntityAnimationEnvironment.officialHeadYaw(65.0F, 20.0F));
         assertEquals(-85.0F,
                 EntityAnimationEnvironment.officialHeadYaw(170.0F, 0.0F));
+        assertEquals(-10.0F,
+                EntityAnimationEnvironment.officialInterpolatedHeadYaw(
+                        170.0F, -170.0F, 0.5F, 170.0F));
     }
 
     @Test
