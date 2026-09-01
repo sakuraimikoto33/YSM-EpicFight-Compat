@@ -27,6 +27,10 @@ public final class AuxiliaryBoneLayout {
                          Matrix4f parentBindWorld) {
     }
 
+    private record Selection(Entry entry, boolean present) {
+        private static final Selection MISSING = new Selection(null, false);
+    }
+
     private final List<Entry> entries;
     private final Map<GeometryDocument.Bone, Entry> byBone;
     private final Map<String, Entry> byName;
@@ -34,6 +38,8 @@ public final class AuxiliaryBoneLayout {
     private final Map<Integer, Vector3f> extendedArmatureJointPivots;
     private final Map<Integer, Integer> toolAnchorPoseIndices;
     private final Map<Integer, Entry> toolLocatorEntries;
+    private final Map<Integer, Entry> attachmentEntries;
+    private final Map<Integer, Vector3f> attachmentPivots;
     private final float horizontalScale;
     private final float verticalScale;
 
@@ -44,6 +50,8 @@ public final class AuxiliaryBoneLayout {
                                 Map<Integer, Vector3f> extendedArmatureJointPivots,
                                 Map<Integer, Integer> toolAnchorPoseIndices,
                                 Map<Integer, Entry> toolLocatorEntries,
+                                Map<Integer, Entry> attachmentEntries,
+                                Map<Integer, Vector3f> attachmentPivots,
                                 float horizontalScale, float verticalScale) {
         this.entries = List.copyOf(entries);
         this.byBone = Map.copyOf(byBone);
@@ -52,6 +60,8 @@ public final class AuxiliaryBoneLayout {
         this.extendedArmatureJointPivots = Map.copyOf(extendedArmatureJointPivots);
         this.toolAnchorPoseIndices = Map.copyOf(toolAnchorPoseIndices);
         this.toolLocatorEntries = Map.copyOf(toolLocatorEntries);
+        this.attachmentEntries = Map.copyOf(attachmentEntries);
+        this.attachmentPivots = Map.copyOf(attachmentPivots);
         this.horizontalScale = positiveScale(horizontalScale);
         this.verticalScale = positiveScale(verticalScale);
     }
@@ -109,9 +119,13 @@ public final class AuxiliaryBoneLayout {
                 toolLocators.putIfAbsent(joint, entry);
             }
         }
+        Map<Integer, Entry> attachmentSources = attachmentSources(
+                entries, byBone, estimate.toolSources());
+        Map<Integer, Vector3f> attachmentPivots = attachmentPivots(
+                attachmentSources, estimate.pivots(), horizontalScale, verticalScale);
         return new AuxiliaryBoneLayout(entries, byBone, byName,
                 estimate.pivots(), estimate.extendedArmaturePivots(),
-                toolSources, toolLocators,
+                toolSources, toolLocators, attachmentSources, attachmentPivots,
                 horizontalScale, verticalScale);
     }
 
@@ -157,6 +171,15 @@ public final class AuxiliaryBoneLayout {
         return toolLocatorEntries.get(joint);
     }
 
+    Entry attachmentEntry(int joint) {
+        return attachmentEntries.get(joint);
+    }
+
+    Vector3f attachmentPivot(int joint) {
+        Vector3f pivot = attachmentPivots.get(joint);
+        return pivot == null ? null : new Vector3f(pivot);
+    }
+
     boolean hasJointPivots() {
         return !jointPivots.isEmpty();
     }
@@ -167,6 +190,188 @@ public final class AuxiliaryBoneLayout {
 
     float verticalScale() {
         return verticalScale;
+    }
+
+    private static Map<Integer, Entry> attachmentSources(
+            List<Entry> entries, Map<GeometryDocument.Bone, Entry> byBone,
+            Map<Integer, GeometryDocument.Bone> toolSources) {
+        Map<Integer, Entry> result = new java.util.HashMap<>();
+        Entry root = preferred(entries, HumanoidRig.ROOT, "root", "center").entry();
+        Selection torsoSelection = preferred(entries, HumanoidRig.TORSO,
+                "allbody", "torso", "waist", "hips", "hip", "pelvis");
+        Entry torso = torsoSelection.entry();
+        if (!torsoSelection.present()) {
+            torso = preferred(entries, HumanoidRig.TORSO, "downbody").entry();
+        }
+        Selection chestSelection = preferred(
+                entries, HumanoidRig.CHEST, "upperbody", "chest");
+        Entry chest = chestSelection.entry();
+        if (!chestSelection.present()) {
+            chest = preferred(entries, HumanoidRig.CHEST, "upbody").entry();
+        }
+        Entry head = preferred(entries, HumanoidRig.HEAD, "head", "allhead").entry();
+        Entry rightArm = preferred(entries, HumanoidRig.RIGHT_ARM,
+                "rightarm", "armright").entry();
+        Entry leftArm = preferred(entries, HumanoidRig.LEFT_ARM,
+                "leftarm", "armleft").entry();
+        Selection rightForearmSelection = preferred(entries, HumanoidRig.RIGHT_HAND,
+                "rightforearm", "forearmright");
+        Selection leftForearmSelection = preferred(entries, HumanoidRig.LEFT_HAND,
+                "leftforearm", "forearmleft");
+        Entry rightForearm = rightForearmSelection.entry();
+        Entry leftForearm = leftForearmSelection.entry();
+        Entry rightHand = preferred(entries, HumanoidRig.RIGHT_HAND,
+                "righthand", "handright").entry();
+        Entry leftHand = preferred(entries, HumanoidRig.LEFT_HAND,
+                "lefthand", "handleft").entry();
+        Entry rightThigh = preferred(entries, HumanoidRig.RIGHT_THIGH,
+                "rightleg", "legright").entry();
+        Entry leftThigh = preferred(entries, HumanoidRig.LEFT_THIGH,
+                "leftleg", "legleft").entry();
+        Selection rightLowerLegSelection = preferred(entries, HumanoidRig.RIGHT_LEG,
+                "rightlowerleg", "lowerlegright",
+                "rightcalf");
+        Selection leftLowerLegSelection = preferred(entries, HumanoidRig.LEFT_LEG,
+                "leftlowerleg", "lowerlegleft",
+                "leftcalf");
+        Entry rightLowerLeg = rightLowerLegSelection.entry();
+        Entry leftLowerLeg = leftLowerLegSelection.entry();
+        Entry rightHandSource = rightForearmSelection.present()
+                ? rightForearm : rightHand;
+        Entry leftHandSource = leftForearmSelection.present()
+                ? leftForearm : leftHand;
+        Entry rightLegSource = rightLowerLegSelection.present()
+                ? rightLowerLeg : rightThigh;
+        Entry leftLegSource = leftLowerLegSelection.present()
+                ? leftLowerLeg : leftThigh;
+
+        put(result, HumanoidRig.ROOT, root);
+        put(result, HumanoidRig.TORSO, torso);
+        put(result, HumanoidRig.CHEST, chest);
+        put(result, HumanoidRig.HEAD, head);
+        put(result, HumanoidRig.RIGHT_SHOULDER, rightArm);
+        put(result, HumanoidRig.RIGHT_ARM, rightArm);
+        put(result, HumanoidRig.RIGHT_HAND, rightHandSource);
+        put(result, HumanoidRig.RIGHT_ELBOW, rightHandSource);
+        put(result, HumanoidRig.LEFT_SHOULDER, leftArm);
+        put(result, HumanoidRig.LEFT_ARM, leftArm);
+        put(result, HumanoidRig.LEFT_HAND, leftHandSource);
+        put(result, HumanoidRig.LEFT_ELBOW, leftHandSource);
+        put(result, HumanoidRig.RIGHT_THIGH, rightThigh);
+        put(result, HumanoidRig.RIGHT_LEG, rightLegSource);
+        put(result, HumanoidRig.RIGHT_KNEE, rightLegSource);
+        put(result, HumanoidRig.LEFT_THIGH, leftThigh);
+        put(result, HumanoidRig.LEFT_LEG, leftLegSource);
+        put(result, HumanoidRig.LEFT_KNEE, leftLegSource);
+
+        Entry rightTool = byBone.get(toolSources.get(HumanoidRig.RIGHT_TOOL));
+        Entry leftTool = byBone.get(toolSources.get(HumanoidRig.LEFT_TOOL));
+        put(result, HumanoidRig.RIGHT_TOOL, rightTool);
+        put(result, HumanoidRig.LEFT_TOOL, leftTool);
+        return result;
+    }
+
+    private static Map<Integer, Vector3f> attachmentPivots(
+            Map<Integer, Entry> sources, Map<Integer, Vector3f> estimated,
+            float horizontalScale, float verticalScale) {
+        Map<Integer, Vector3f> result = new java.util.HashMap<>();
+        sources.forEach((joint, source) -> {
+            int pivotJoint = switch (joint) {
+                case HumanoidRig.ROOT -> HumanoidRig.TORSO;
+                case HumanoidRig.RIGHT_KNEE -> HumanoidRig.RIGHT_LEG;
+                case HumanoidRig.LEFT_KNEE -> HumanoidRig.LEFT_LEG;
+                default -> joint;
+            };
+            Vector3f pivot = estimated.get(pivotJoint);
+            if (pivot == null) {
+                pivot = new Vector3f(source.bone().pivotX(), source.bone().pivotY(),
+                        source.bone().pivotZ());
+                source.bindWorld().transformPosition(pivot);
+                pivot.set(pivot.x() * horizontalScale, pivot.y() * verticalScale,
+                        pivot.z() * horizontalScale);
+            } else {
+                pivot = new Vector3f(pivot);
+            }
+            if (Float.isFinite(pivot.x()) && Float.isFinite(pivot.y())
+                    && Float.isFinite(pivot.z())) {
+                result.put(joint, pivot);
+            }
+        });
+        return result;
+    }
+
+    private static Selection preferred(List<Entry> entries, int joint, String... names) {
+        for (String name : names) {
+            Selection selected = select(entries, joint, name);
+            if (selected.present()) {
+                return selected;
+            }
+            String defaultName = name + "default";
+            selected = select(entries, joint, defaultName);
+            if (selected.present()) {
+                return selected;
+            }
+        }
+        return Selection.MISSING;
+    }
+
+    private static Selection select(List<Entry> entries, int joint, String name) {
+        Entry selected = null;
+        for (Entry entry : entries) {
+            if (!rawName(entry.bone().name()).equals(name)
+                    || !compatibleBranch(entry.bone(), joint)) {
+                continue;
+            }
+            if (selected != null) {
+                return new Selection(null, true);
+            }
+            selected = entry;
+        }
+        return selected == null ? Selection.MISSING : new Selection(selected, true);
+    }
+
+    private static boolean compatibleBranch(GeometryDocument.Bone bone, int joint) {
+        boolean right = joint == HumanoidRig.RIGHT_THIGH
+                || joint == HumanoidRig.RIGHT_LEG || joint == HumanoidRig.RIGHT_KNEE
+                || joint == HumanoidRig.RIGHT_SHOULDER || joint == HumanoidRig.RIGHT_ARM
+                || joint == HumanoidRig.RIGHT_HAND || joint == HumanoidRig.RIGHT_TOOL
+                || joint == HumanoidRig.RIGHT_ELBOW;
+        boolean left = joint == HumanoidRig.LEFT_THIGH
+                || joint == HumanoidRig.LEFT_LEG || joint == HumanoidRig.LEFT_KNEE
+                || joint == HumanoidRig.LEFT_SHOULDER || joint == HumanoidRig.LEFT_ARM
+                || joint == HumanoidRig.LEFT_HAND || joint == HumanoidRig.LEFT_TOOL
+                || joint == HumanoidRig.LEFT_ELBOW;
+        if (!right && !left) {
+            return true;
+        }
+        for (GeometryDocument.Bone parent = bone.parent(); parent != null;
+             parent = parent.parent()) {
+            int direct = HumanoidRig.directJointFor(parent);
+            if (right && (direct == HumanoidRig.LEFT_THIGH
+                    || direct == HumanoidRig.LEFT_LEG
+                    || direct == HumanoidRig.LEFT_ARM
+                    || direct == HumanoidRig.LEFT_HAND
+                    || direct == HumanoidRig.LEFT_TOOL)
+                    || left && (direct == HumanoidRig.RIGHT_THIGH
+                    || direct == HumanoidRig.RIGHT_LEG
+                    || direct == HumanoidRig.RIGHT_ARM
+                    || direct == HumanoidRig.RIGHT_HAND
+                    || direct == HumanoidRig.RIGHT_TOOL)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private static String rawName(String name) {
+        return name == null ? "" : name.toLowerCase(Locale.ROOT)
+                .replace("_", "").replace(" ", "");
+    }
+
+    private static void put(Map<Integer, Entry> target, int joint, Entry entry) {
+        if (entry != null) {
+            target.put(joint, entry);
+        }
     }
 
     private static float positiveScale(float value) {

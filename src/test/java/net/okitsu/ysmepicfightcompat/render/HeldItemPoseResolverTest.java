@@ -10,27 +10,32 @@ import static org.junit.jupiter.api.Assertions.assertSame;
 
 class HeldItemPoseResolverTest {
     @Test
-    void identifiesOnlyTheExactRightAndLeftToolPoseEntries() {
+    void identifiesAnyExactEpicFightAttachmentPoseEntry() {
         OpenMatrix4f[] poses = matrices();
 
         assertEquals(HumanoidRig.RIGHT_TOOL,
-                HeldItemPoseResolver.selectedToolJoint(
+                HeldItemPoseResolver.selectedJoint(
                         poses, poses[HumanoidRig.RIGHT_TOOL]));
         assertEquals(HumanoidRig.LEFT_TOOL,
-                HeldItemPoseResolver.selectedToolJoint(
+                HeldItemPoseResolver.selectedJoint(
                         poses, poses[HumanoidRig.LEFT_TOOL]));
+        assertEquals(HumanoidRig.RIGHT_HAND,
+                HeldItemPoseResolver.selectedJoint(
+                        poses, poses[HumanoidRig.RIGHT_HAND]));
+        assertEquals(HumanoidRig.CHEST,
+                HeldItemPoseResolver.selectedJoint(
+                        poses, poses[HumanoidRig.CHEST]));
     }
 
     @Test
-    void leavesHandsBackAttachmentsAndCopiedMatricesUnderEpicFightOwnership() {
+    void rejectsCopiedAndAmbiguousPoseEntries() {
         OpenMatrix4f[] poses = matrices();
 
-        assertEquals(-1, HeldItemPoseResolver.selectedToolJoint(
-                poses, poses[HumanoidRig.RIGHT_HAND]));
-        assertEquals(-1, HeldItemPoseResolver.selectedToolJoint(
-                poses, poses[HumanoidRig.CHEST]));
-        assertEquals(-1, HeldItemPoseResolver.selectedToolJoint(
+        assertEquals(-1, HeldItemPoseResolver.selectedJoint(
                 poses, new OpenMatrix4f(poses[HumanoidRig.RIGHT_TOOL])));
+        poses[HumanoidRig.LEFT_TOOL] = poses[HumanoidRig.RIGHT_TOOL];
+        assertEquals(-1, HeldItemPoseResolver.selectedJoint(
+                poses, poses[HumanoidRig.RIGHT_TOOL]));
     }
 
     @Test

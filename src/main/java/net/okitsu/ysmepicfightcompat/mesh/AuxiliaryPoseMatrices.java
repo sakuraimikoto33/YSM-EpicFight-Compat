@@ -23,20 +23,34 @@ public final class AuxiliaryPoseMatrices {
     private final BlendScratch blendScratch;
     private final OpenMatrix4f[] completeBlendSource;
     private final OpenMatrix4f[] toOrigin = new OpenMatrix4f[HumanoidRig.EPIC_JOINT_COUNT];
+    private final OpenMatrix4f[] referenceBindWorlds =
+            allocate(HumanoidRig.EPIC_JOINT_COUNT);
+    private final Quaternionf[] referenceBindRotations =
+            quaternions(HumanoidRig.EPIC_JOINT_COUNT);
     private final Vector3f[] referenceBindOrigins = new Vector3f[HumanoidRig.EPIC_JOINT_COUNT];
     private final OpenMatrix4f heldItemHandSkin = new OpenMatrix4f();
     private final OpenMatrix4f heldItemToolSkin = new OpenMatrix4f();
     private final OpenMatrix4f heldItemOutput = new OpenMatrix4f();
     private final OpenMatrix4f rightAuthoredItemOutput = new OpenMatrix4f();
     private final OpenMatrix4f leftAuthoredItemOutput = new OpenMatrix4f();
-    private final OpenMatrix4f bindWorldScratch = new OpenMatrix4f();
+    private OpenMatrix4f[] attachmentOutput = allocate(HumanoidRig.EPIC_JOINT_COUNT);
     private final Matrix4f authoredItemScratch = new Matrix4f();
     private final Matrix4f authoredItemScale = new Matrix4f();
+    private final Matrix4f attachmentModelScale = new Matrix4f();
+    private final Matrix4f attachmentModelScaleInverse = new Matrix4f();
+    private final Matrix4f attachmentDeltaFrame = new Matrix4f();
+    private final Matrix4f attachmentSourceFrame = new Matrix4f();
+    private final Matrix4f attachmentOriginalFrame = new Matrix4f();
+    private final Matrix4f attachmentResultFrame = new Matrix4f();
+    private final LocalTransform attachmentSourceTransform = new LocalTransform();
+    private final LocalTransform attachmentOriginalTransform = new LocalTransform();
+    private final LocalTransform attachmentBindTransform = new LocalTransform();
     private final Vec4f heldItemReferencePoint = new Vec4f();
     private final Vec4f heldItemHandPoint = new Vec4f();
     private final Vec4f heldItemToolPoint = new Vec4f();
     private final Vec4f rightDisplayedPoint = new Vec4f();
     private final Vec4f leftDisplayedPoint = new Vec4f();
+    private final Vec4f attachmentPoint = new Vec4f();
     private Armature preparedArmature;
 
     public AuxiliaryPoseMatrices(AuxiliaryBoneLayout layout) {
@@ -173,6 +187,125 @@ public final class AuxiliaryPoseMatrices {
     }
 
     /**
+     * Projects the final rendered YSM skeleton back to Epic Fight's fixed joint order.
+     *
+     * <p>Epic Fight renders patched layers after the converted body and otherwise gives
+     * those layers its original pose array. Each projected entry keeps Epic Fight's
+     * scale/shear contract, but takes its position and proper rotation from the exact
+     * YSM bone that was just drawn. Missing or ambiguous model controls fail open to the
+     * original Epic Fight pose.</p>
+     */
+    @Nullable
+    public OpenMatrix4f[] displayedAttachmentPoses(
+            @Nullable Armature armature,
+            @Nullable OpenMatrix4f[] complete,
+            @Nullable OpenMatrix4f[] originalPoses,
+            float translationScale,
+            boolean rightItemSwitch,
+            boolean leftItemSwitch) {
+        if (complete == null || originalPoses == null
+                || originalPoses.length < HumanoidRig.EPIC_JOINT_COUNT
+                || armature == null || !prepareArmature(armature)) {
+            return null;
+        }
+        float safeTranslationScale = Float.isFinite(translationScale)
+                && translationScale > 1.0E-7F ? translationScale : 1.0F;
+        if (attachmentOutput.length != originalPoses.length) {
+            attachmentOutput = allocate(originalPoses.length);
+        }
+        attachmentModelScale.scaling(layout.horizontalScale(), layout.verticalScale(),
+                layout.horizontalScale());
+        attachmentModelScaleInverse.scaling(1.0F / layout.horizontalScale(),
+                1.0F / layout.verticalScale(), 1.0F / layout.horizontalScale());
+        for (int joint = 0; joint < originalPoses.length; joint++) {
+            OpenMatrix4f original = originalPoses[joint];
+            if (original == null || !finite(original)) {
+                return null;
+            }
+            OpenMatrix4f destination = attachmentOutput[joint].load(original);
+            if (joint >= HumanoidRig.EPIC_JOINT_COUNT) {
+                continue;
+            }
+
+            boolean locatorOwned = joint == HumanoidRig.RIGHT_TOOL && rightItemSwitch
+                    || joint == HumanoidRig.LEFT_TOOL && leftItemSwitch;
+            AuxiliaryBoneLayout.Entry source = locatorOwned
+                    ? layout.toolLocatorEntry(joint) : layout.attachmentEntry(joint);
+            if (source == null && locatorOwned) {
+                locatorOwned = false;
+                source = layout.attachmentEntry(joint);
+            }
+            Vector3f pivot = layout.attachmentPivot(joint);
+            if (source == null || pivot == null
+                    || source.poseIndex() < 0 || source.poseIndex() >= complete.length
+                    || complete[source.poseIndex()] == null
+                    || !finite(complete[source.poseIndex()])) {
+                continue;
+            }
+            attachmentPoint.set(pivot.x(), pivot.y(), pivot.z(), 1.0F);
+            OpenMatrix4f.transform(complete[source.poseIndex()], attachmentPoint,
+                    attachmentPoint);
+            if (!finite(attachmentPoint)) {
+                continue;
+            }
+
+            boolean originalAffine = decomposeAffine(
+                    load(attachmentOriginalFrame, original),
+                    attachmentOriginalTransform);
+            if (!originalAffine || !attachmentOriginalTransform.rotationValid) {
+                continue;
+            }
+            attachmentOriginalTransform.updateResidual();
+            if (locatorOwned) {
+                if (!displayedLocatorLinear(complete[source.poseIndex()])) {
+                    continue;
+                }
+                attachmentSourceFrame.rotation(referenceBindRotations[joint])
+                        .mul(attachmentOriginalTransform.residual);
+                attachmentResultFrame.set(attachmentDeltaFrame)
+                        .mul(attachmentSourceFrame);
+            } else {
+                Quaternionf sourceRotation = displayedAttachmentRotation(
+                        complete[source.poseIndex()], joint);
+                if (sourceRotation == null) {
+                    attachmentResultFrame.rotation(referenceBindRotations[joint])
+                            .mul(attachmentOriginalTransform.residual);
+                } else {
+                    attachmentResultFrame.rotation(sourceRotation)
+                            .mul(attachmentOriginalTransform.residual);
+                }
+            }
+            attachmentResultFrame.m30(attachmentPoint.x * safeTranslationScale);
+            attachmentResultFrame.m31(attachmentPoint.y * safeTranslationScale);
+            attachmentResultFrame.m32(attachmentPoint.z * safeTranslationScale);
+            store(destination, attachmentResultFrame);
+        }
+        return attachmentOutput;
+    }
+
+    @Nullable
+    private Quaternionf displayedAttachmentRotation(OpenMatrix4f complete, int joint) {
+        attachmentSourceFrame.set(attachmentModelScaleInverse)
+                .mul(load(authoredItemScratch, complete))
+                .mul(attachmentModelScale)
+                .mul(load(attachmentOriginalFrame, referenceBindWorlds[joint]));
+        if (decomposeAffine(attachmentSourceFrame, attachmentSourceTransform)
+                && attachmentSourceTransform.rotationValid) {
+            return attachmentSourceTransform.rotation;
+        }
+        return null;
+    }
+
+    private boolean displayedLocatorLinear(OpenMatrix4f complete) {
+        attachmentDeltaFrame.set(attachmentModelScaleInverse)
+                .mul(load(authoredItemScratch, complete))
+                .mul(attachmentModelScale);
+        attachmentDeltaFrame.m03(0.0F).m13(0.0F).m23(0.0F)
+                .m30(0.0F).m31(0.0F).m32(0.0F).m33(1.0F);
+        return finite(attachmentDeltaFrame);
+    }
+
+    /**
      * Blends a completed pose from an earlier render into the current completed pose.
      *
      * <p>Only the private pose slots used by this YSM mesh are changed. Epic Fight's
@@ -208,9 +341,19 @@ public final class AuxiliaryPoseMatrices {
                 return false;
             }
             toOrigin[index] = joint.getToOrigin();
-            OpenMatrix4f.invert(toOrigin[index], bindWorldScratch);
+            OpenMatrix4f.invert(toOrigin[index], referenceBindWorlds[index]);
+            if (!finite(referenceBindWorlds[index])
+                    || !decomposeAffine(
+                    load(attachmentSourceFrame, referenceBindWorlds[index]),
+                    attachmentBindTransform)
+                    || !attachmentBindTransform.rotationValid) {
+                preparedArmature = null;
+                return false;
+            }
+            referenceBindRotations[index].set(attachmentBindTransform.rotation);
             Vector3f bindOrigin = new Vector3f(
-                    bindWorldScratch.m30, bindWorldScratch.m31, bindWorldScratch.m32);
+                    referenceBindWorlds[index].m30, referenceBindWorlds[index].m31,
+                    referenceBindWorlds[index].m32);
             if (!finite(bindOrigin)) {
                 preparedArmature = null;
                 return false;
@@ -779,5 +922,13 @@ public final class AuxiliaryPoseMatrices {
             matrices[index] = new OpenMatrix4f();
         }
         return matrices;
+    }
+
+    private static Quaternionf[] quaternions(int count) {
+        Quaternionf[] values = new Quaternionf[count];
+        for (int index = 0; index < count; index++) {
+            values[index] = new Quaternionf();
+        }
+        return values;
     }
 }

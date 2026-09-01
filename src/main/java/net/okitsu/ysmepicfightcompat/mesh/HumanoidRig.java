@@ -13,8 +13,10 @@ public final class HumanoidRig {
     public static final int ROOT = 0;
     public static final int RIGHT_THIGH = 1;
     public static final int RIGHT_LEG = 2;
+    public static final int RIGHT_KNEE = 3;
     public static final int LEFT_THIGH = 4;
     public static final int LEFT_LEG = 5;
+    public static final int LEFT_KNEE = 6;
     public static final int TORSO = 7;
     public static final int CHEST = 8;
     public static final int HEAD = 9;

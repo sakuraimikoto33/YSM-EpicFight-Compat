@@ -37,4 +37,10 @@ class CompatHumanoidMeshTest {
         assertTrue(CompatHumanoidMesh.ownsItemSwitchTool(
                 main, HumanoidRig.LEFT_TOOL, HumanoidArm.LEFT, false));
     }
+
+    @Test
+    void projectsDisplayedAttachmentsOnlyOutsideEpicFightActions() {
+        assertTrue(CompatHumanoidMesh.projectsDisplayedAttachments(false));
+        assertFalse(CompatHumanoidMesh.projectsDisplayedAttachments(true));
+    }
 }

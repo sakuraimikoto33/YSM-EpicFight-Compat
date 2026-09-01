@@ -160,6 +160,7 @@ public final class CompatHumanoidMesh extends HumanoidMesh {
         poseProgram.apply(this, frame == null ? Map.of() : frame.visibleParts(),
                 frame == null || frame.showUnlistedParts(), frame != null && frame.firstPerson(),
                 animationFrame == null ? null : animationFrame.hiddenBones());
+        float meshScale = TouhouMaidRenderBridge.meshDrawScale(this);
         if (auxiliaryPoses != null) {
             OpenMatrix4f[] inputPoses = poses;
             OpenMatrix4f[] complete = auxiliaryPoses.compose(armature, poses,
@@ -219,6 +220,11 @@ public final class CompatHumanoidMesh extends HumanoidMesh {
                     OpenMatrix4f leftAuthoredItemPose = leftItemSwitch
                             ? auxiliaryPoses.authoredHeldItemPose(
                             complete, HumanoidRig.LEFT_TOOL) : null;
+                    OpenMatrix4f[] attachmentPoses = projectsDisplayedAttachments(
+                            frame.epicFightActionActive())
+                            ? auxiliaryPoses.displayedAttachmentPoses(
+                            armature, complete, inputPoses, meshScale,
+                            rightItemSwitch, leftItemSwitch) : null;
                     boolean suppressRightItem = rightItemSwitch
                             && (rawRightItemSwitch ? rawSuppressRightItem
                             : collapsed(rightAuthoredItemPose));
@@ -231,6 +237,7 @@ public final class CompatHumanoidMesh extends HumanoidMesh {
                     RenderFrameContext.publishHeldItemPoints(
                             frame.entity(), this, inputPoses, rightFist, leftFist,
                             rightAuthoredItemPose, leftAuthoredItemPose,
+                            attachmentPoses,
                             suppressRightItem, suppressLeftItem,
                             mainHandItemSwitchUsesOffArmTool);
                 }
@@ -240,6 +247,7 @@ public final class CompatHumanoidMesh extends HumanoidMesh {
                 if (frame != null) {
                     RenderFrameContext.publishHeldItemPoints(
                             frame.entity(), this, inputPoses, null, null, null, null,
+                            null,
                             false, false, false);
                 }
                 if (AUXILIARY_FALLBACK_LOGGED.compareAndSet(false, true)) {
@@ -253,7 +261,6 @@ public final class CompatHumanoidMesh extends HumanoidMesh {
                 : getRenderProperties() == null ? null : getRenderProperties().customTexturePath();
         RenderType actualType = selectedTexture == null ? requestedType
                 : EpicFightRenderTypes.replaceTexture(selectedTexture, requestedType);
-        float meshScale = TouhouMaidRenderBridge.meshDrawScale(this);
         boolean restoreScale = meshScale != 1.0F;
         if (restoreScale) {
             matrices.pushPose();
@@ -320,6 +327,11 @@ public final class CompatHumanoidMesh extends HumanoidMesh {
                 ? InteractionHand.MAIN_HAND : InteractionHand.OFF_HAND;
         return !(mirroredMainhandBow && logicalHand == InteractionHand.MAIN_HAND)
                 && itemSwitchHands.contains(logicalHand);
+    }
+
+    /** Epic Fight's own action matrices must remain authoritative for patched layers. */
+    static boolean projectsDisplayedAttachments(boolean epicFightActionActive) {
+        return !epicFightActionActive;
     }
 
     /** Epic Fight deliberately renders its ordinary bow at the off-arm Tool joint. */

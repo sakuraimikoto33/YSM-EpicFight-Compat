@@ -4,9 +4,14 @@ import net.okitsu.ysmepicfightcompat.geometry.GeometryDocument;
 import org.joml.Matrix4f;
 import org.joml.Vector3f;
 import org.junit.jupiter.api.Test;
+import yesman.epicfight.api.animation.Joint;
+import yesman.epicfight.api.model.Armature;
 import yesman.epicfight.api.utils.math.OpenMatrix4f;
 import yesman.epicfight.api.utils.math.Vec3f;
 import yesman.epicfight.api.utils.math.Vec4f;
+
+import java.util.LinkedHashMap;
+import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
@@ -346,6 +351,177 @@ class AuxiliaryPoseMatricesTest {
         assertMatrixEquals(expected, actual);
         assertEquals(0.0F, linearDeterminant(actual), 0.00001F,
                 "an authored locator scale of zero must hide the ordinary Epic item");
+    }
+
+    @Test
+    void neutralYsmLocatorBindRotationDoesNotReplaceEpicToolBindBasis() {
+        AuxiliaryBoneLayout layout = rightToolLayout(-30.0F);
+        OpenMatrix4f epicBind = new OpenMatrix4f()
+                .translate(2.0F, 3.0F, 4.0F)
+                .rotateDeg(25.0F, Vec3f.Y_AXIS);
+        Armature armature = humanoidArmature(
+                HumanoidRig.EPIC_JOINT_COUNT, epicBind);
+        OpenMatrix4f[] poses = bindPoses(armature);
+        OpenMatrix4f[] complete = AuxiliaryPoseMatrices.allocate(
+                layout.totalPoseCount());
+
+        OpenMatrix4f[] projected = new AuxiliaryPoseMatrices(layout)
+                .displayedAttachmentPoses(armature, complete, poses,
+                        1.0F, false, false);
+
+        assertNotNull(projected);
+        assertMatrixEquals(epicBind, projected[HumanoidRig.RIGHT_TOOL]);
+    }
+
+    @Test
+    void projectsTheFinalYsmHandDeltaOntoEpicFightsToolBindBasis() {
+        float horizontalScale = 0.7F;
+        float verticalScale = 0.8F;
+        AuxiliaryBoneLayout layout = rightToolLayout(
+                -30.0F, horizontalScale, verticalScale);
+        OpenMatrix4f epicBind = new OpenMatrix4f()
+                .translate(2.0F * horizontalScale, 3.0F * verticalScale,
+                        4.0F * horizontalScale)
+                .rotateDeg(25.0F, Vec3f.Y_AXIS);
+        Armature armature = humanoidArmature(
+                HumanoidRig.EPIC_JOINT_COUNT, epicBind);
+        OpenMatrix4f[] poses = bindPoses(armature);
+        OpenMatrix4f[] complete = AuxiliaryPoseMatrices.allocate(
+                layout.totalPoseCount());
+        AuxiliaryBoneLayout.Entry handSource = layout.attachmentEntry(
+                HumanoidRig.RIGHT_TOOL);
+        assertNotNull(handSource);
+        Matrix4f rawDelta = new Matrix4f()
+                .translate(1.5F, -2.0F, 0.75F)
+                .rotateZ((float) Math.toRadians(70.0F));
+        OpenMatrix4f delta = scaledSkin(
+                rawDelta, horizontalScale, verticalScale);
+        complete[handSource.poseIndex()].load(delta);
+
+        OpenMatrix4f[] projected = new AuxiliaryPoseMatrices(layout)
+                .displayedAttachmentPoses(armature, complete, poses,
+                        1.0F, false, false);
+
+        assertNotNull(projected);
+        OpenMatrix4f expected = OpenMatrix4f.mul(
+                OpenMatrix4f.importFromMojangMatrix(rawDelta), epicBind,
+                new OpenMatrix4f());
+        Vector3f pivot = layout.attachmentPivot(HumanoidRig.RIGHT_TOOL);
+        assertNotNull(pivot);
+        Vec4f displayedPoint = OpenMatrix4f.transform(delta,
+                new Vec4f(pivot.x(), pivot.y(), pivot.z(), 1.0F), new Vec4f());
+        expected.m30 = displayedPoint.x;
+        expected.m31 = displayedPoint.y;
+        expected.m32 = displayedPoint.z;
+        assertMatrixEquals(expected, projected[HumanoidRig.RIGHT_TOOL]);
+    }
+
+    @Test
+    void preservesLocatorZeroScaleOnlyWhileAnItemSwitchOwnsTheTool() {
+        AuxiliaryBoneLayout layout = rightToolLayout(-30.0F);
+        OpenMatrix4f epicBind = new OpenMatrix4f()
+                .translate(2.0F, 3.0F, 4.0F)
+                .rotateDeg(25.0F, Vec3f.Y_AXIS);
+        Armature armature = humanoidArmature(
+                HumanoidRig.EPIC_JOINT_COUNT, epicBind);
+        OpenMatrix4f[] poses = bindPoses(armature);
+        OpenMatrix4f[] complete = AuxiliaryPoseMatrices.allocate(
+                layout.totalPoseCount());
+        AuxiliaryBoneLayout.Entry handSource = layout.attachmentEntry(
+                HumanoidRig.RIGHT_TOOL);
+        AuxiliaryBoneLayout.Entry locator = layout.toolLocatorEntry(
+                HumanoidRig.RIGHT_TOOL);
+        assertNotNull(handSource);
+        assertNotNull(locator);
+        OpenMatrix4f handDelta = new OpenMatrix4f()
+                .rotateDeg(40.0F, Vec3f.Z_AXIS);
+        complete[handSource.poseIndex()].load(handDelta);
+        complete[locator.poseIndex()].load(handDelta)
+                .translate(2.0F, 3.0F, 4.0F)
+                .scale(0.0F, 0.0F, 0.0F)
+                .translate(-2.0F, -3.0F, -4.0F);
+        AuxiliaryPoseMatrices matrices = new AuxiliaryPoseMatrices(layout);
+
+        OpenMatrix4f normal = new OpenMatrix4f(
+                matrices.displayedAttachmentPoses(armature, complete, poses,
+                        1.0F, false, false)[HumanoidRig.RIGHT_TOOL]);
+        OpenMatrix4f switched = new OpenMatrix4f(
+                matrices.displayedAttachmentPoses(armature, complete, poses,
+                        1.0F, true, false)[HumanoidRig.RIGHT_TOOL]);
+
+        assertMatrixEquals(OpenMatrix4f.mul(
+                handDelta, epicBind, new OpenMatrix4f()), normal);
+        assertEquals(0.0F, linearDeterminant(switched), 0.00001F);
+        Vec4f expectedPoint = OpenMatrix4f.transform(handDelta,
+                new Vec4f(2.0F, 3.0F, 4.0F, 1.0F), new Vec4f());
+        assertEquals(expectedPoint.x, switched.m30, 0.00001F);
+        assertEquals(expectedPoint.y, switched.m31, 0.00001F);
+        assertEquals(expectedPoint.z, switched.m32, 0.00001F);
+    }
+
+    @Test
+    void projectsChestAttachmentsFromTheFinalUpperBodyPose() {
+        GeometryDocument geometry = new GeometryDocument();
+        GeometryDocument.Bone upperBody = new GeometryDocument.Bone("UpperBody");
+        upperBody.pivot(0.0F, 12.0F, 0.0F);
+        geometry.add(upperBody);
+        geometry.linkHierarchy();
+        AuxiliaryBoneLayout layout = AuxiliaryBoneLayout.create(geometry);
+        OpenMatrix4f chestBind = new OpenMatrix4f()
+                .translate(0.0F, 12.0F, 0.0F)
+                .rotateDeg(15.0F, Vec3f.X_AXIS);
+        Armature armature = humanoidArmature(
+                HumanoidRig.EPIC_JOINT_COUNT, new OpenMatrix4f(),
+                HumanoidRig.CHEST, chestBind);
+        OpenMatrix4f[] poses = bindPoses(armature);
+        OpenMatrix4f[] complete = AuxiliaryPoseMatrices.allocate(
+                layout.totalPoseCount());
+        AuxiliaryBoneLayout.Entry source = layout.attachmentEntry(HumanoidRig.CHEST);
+        assertNotNull(source);
+        OpenMatrix4f delta = new OpenMatrix4f()
+                .translate(1.0F, -3.0F, 2.0F)
+                .rotateDeg(-55.0F, Vec3f.Y_AXIS);
+        complete[source.poseIndex()].load(delta);
+
+        OpenMatrix4f[] projected = new AuxiliaryPoseMatrices(layout)
+                .displayedAttachmentPoses(armature, complete, poses,
+                        1.0F, false, false);
+
+        assertNotNull(projected);
+        assertMatrixEquals(OpenMatrix4f.mul(delta, chestBind, new OpenMatrix4f()),
+                projected[HumanoidRig.CHEST]);
+    }
+
+    @Test
+    void preservesExtendedArmatureSlotsAndEveryInputMatrix() {
+        AuxiliaryBoneLayout layout = rightToolLayout(0.0F);
+        Armature armature = humanoidArmature(
+                HumanoidRig.EPIC_JOINT_COUNT + 2, new OpenMatrix4f());
+        OpenMatrix4f[] poses = bindPoses(armature);
+        poses[HumanoidRig.EPIC_JOINT_COUNT]
+                .translate(8.0F, -2.0F, 5.0F)
+                .rotateDeg(37.0F, Vec3f.X_AXIS)
+                .scale(0.5F, 2.0F, -1.0F);
+        poses[HumanoidRig.EPIC_JOINT_COUNT + 1]
+                .translate(-4.0F, 7.0F, 9.0F)
+                .rotateDeg(-23.0F, Vec3f.Z_AXIS);
+        OpenMatrix4f[] snapshot = copy(poses);
+        OpenMatrix4f[] complete = AuxiliaryPoseMatrices.allocate(
+                layout.totalPoseCount());
+
+        OpenMatrix4f[] projected = new AuxiliaryPoseMatrices(layout)
+                .displayedAttachmentPoses(armature, complete, poses,
+                        1.25F, false, false);
+
+        assertNotNull(projected);
+        assertEquals(poses.length, projected.length);
+        assertMatrixEquals(snapshot[HumanoidRig.EPIC_JOINT_COUNT],
+                projected[HumanoidRig.EPIC_JOINT_COUNT]);
+        assertMatrixEquals(snapshot[HumanoidRig.EPIC_JOINT_COUNT + 1],
+                projected[HumanoidRig.EPIC_JOINT_COUNT + 1]);
+        for (int joint = 0; joint < poses.length; joint++) {
+            assertMatrixEquals(snapshot[joint], poses[joint]);
+        }
     }
 
     @Test
@@ -733,6 +909,78 @@ class AuxiliaryPoseMatricesTest {
                 new OpenMatrix4f[]{invalid}, 0.5F);
 
         assertMatrixEquals(expected[entry.poseIndex()], output[entry.poseIndex()]);
+    }
+
+    private static AuxiliaryBoneLayout rightToolLayout(float locatorBindZDegrees) {
+        return rightToolLayout(locatorBindZDegrees, 1.0F, 1.0F);
+    }
+
+    private static AuxiliaryBoneLayout rightToolLayout(
+            float locatorBindZDegrees, float horizontalScale, float verticalScale) {
+        GeometryDocument geometry = new GeometryDocument();
+        GeometryDocument.Bone hand = faceBone(
+                "RightHand", -1.0F, 1.0F, -1.0F, 1.0F);
+        GeometryDocument.Bone locator = new GeometryDocument.Bone("RightHandLocator");
+        locator.parentName("RightHand");
+        locator.pivot(2.0F, 3.0F, 4.0F);
+        locator.rotation(0.0F, 0.0F,
+                (float) Math.toRadians(locatorBindZDegrees));
+        geometry.add(hand);
+        geometry.add(locator);
+        geometry.linkHierarchy();
+        return AuxiliaryBoneLayout.create(geometry, horizontalScale, verticalScale);
+    }
+
+    private static Armature humanoidArmature(
+            int jointCount, OpenMatrix4f rightToolLocal) {
+        return humanoidArmature(jointCount, rightToolLocal, -1, null);
+    }
+
+    private static Armature humanoidArmature(
+            int jointCount, OpenMatrix4f rightToolLocal,
+            int overriddenJoint, OpenMatrix4f overriddenLocal) {
+        String[] names = {
+                "Root", "Thigh_R", "Leg_R", "Knee_R", "Thigh_L", "Leg_L",
+                "Knee_L", "Torso", "Chest", "Head", "Shoulder_R", "Arm_R",
+                "Hand_R", "Tool_R", "Elbow_R", "Shoulder_L", "Arm_L",
+                "Hand_L", "Tool_L", "Elbow_L"
+        };
+        Map<String, Joint> joints = new LinkedHashMap<>();
+        Joint root = new Joint(names[HumanoidRig.ROOT], HumanoidRig.ROOT,
+                new OpenMatrix4f());
+        joints.put(root.getName(), root);
+        for (int joint = 1; joint < jointCount; joint++) {
+            String name = joint < names.length ? names[joint] : "Extension_" + joint;
+            OpenMatrix4f local = joint == overriddenJoint && overriddenLocal != null
+                    ? new OpenMatrix4f(overriddenLocal)
+                    : joint == HumanoidRig.RIGHT_TOOL
+                    ? new OpenMatrix4f(rightToolLocal) : new OpenMatrix4f();
+            Joint child = new Joint(name, joint, local);
+            joints.put(name, child);
+            root.addSubJoints(child);
+        }
+        Armature armature = new Armature(
+                "attachment_test", jointCount, root, joints);
+        armature.bakeOriginMatrices();
+        return armature;
+    }
+
+    private static OpenMatrix4f[] bindPoses(Armature armature) {
+        OpenMatrix4f[] poses = AuxiliaryPoseMatrices.allocate(
+                armature.getJointNumber());
+        for (int joint = 0; joint < poses.length; joint++) {
+            OpenMatrix4f.invert(
+                    armature.searchJointById(joint).getToOrigin(), poses[joint]);
+        }
+        return poses;
+    }
+
+    private static OpenMatrix4f[] copy(OpenMatrix4f[] source) {
+        OpenMatrix4f[] result = new OpenMatrix4f[source.length];
+        for (int index = 0; index < source.length; index++) {
+            result[index] = new OpenMatrix4f(source[index]);
+        }
+        return result;
     }
 
     private static OpenMatrix4f[] translatedMatrices(int count, float multiplier) {

@@ -28,6 +28,7 @@ public final class RenderFrameContext {
         private Vector3f leftFist;
         private OpenMatrix4f rightAuthoredItemPose;
         private OpenMatrix4f leftAuthoredItemPose;
+        private OpenMatrix4f[] attachmentPoses;
         private boolean suppressRightHeldItem;
         private boolean suppressLeftHeldItem;
         private boolean mainHandItemSwitchUsesOffArmTool;
@@ -159,13 +160,14 @@ public final class RenderFrameContext {
         return true;
     }
 
-    /** Publishes copies of points produced by the exact matrices used for this body draw. */
+    /** Publishes copies of the final attachment state produced by this exact body draw. */
     public static void publishHeldItemPoints(LivingEntity entity, CompatHumanoidMesh mesh,
                                              OpenMatrix4f[] inputPoses,
                                              @Nullable Vector3f rightFist,
                                              @Nullable Vector3f leftFist,
                                              @Nullable OpenMatrix4f rightAuthoredItemPose,
                                              @Nullable OpenMatrix4f leftAuthoredItemPose,
+                                             @Nullable OpenMatrix4f[] attachmentPoses,
                                              boolean suppressRightHeldItem,
                                              boolean suppressLeftHeldItem,
                                              boolean mainHandItemSwitchUsesOffArmTool) {
@@ -181,6 +183,7 @@ public final class RenderFrameContext {
                 ? new OpenMatrix4f(rightAuthoredItemPose) : null;
         frame.leftAuthoredItemPose = finite(leftAuthoredItemPose)
                 ? new OpenMatrix4f(leftAuthoredItemPose) : null;
+        frame.attachmentPoses = copyMatrices(attachmentPoses, inputPoses.length);
         frame.suppressRightHeldItem = suppressRightHeldItem;
         frame.suppressLeftHeldItem = suppressLeftHeldItem;
         frame.mainHandItemSwitchUsesOffArmTool =
@@ -214,6 +217,36 @@ public final class RenderFrameContext {
                 ? frame.rightAuthoredItemPose : toolJoint == HumanoidRig.LEFT_TOOL
                 ? frame.leftAuthoredItemPose : null;
         return pose == null ? null : new OpenMatrix4f(pose);
+    }
+
+    /**
+     * Returns the projected final YSM pose for one Epic Fight attachment joint.
+     * Both the body input and the already-projected layer array identify this frame.
+     */
+    @Nullable
+    public static OpenMatrix4f displayedAttachmentPose(
+            LivingEntity entity, CompatHumanoidMesh mesh,
+            OpenMatrix4f[] requestedPoses, int joint) {
+        Frame frame = current();
+        if (frame == null || frame.entity != entity || frame.mesh != mesh
+                || requestedPoses == null
+                || (requestedPoses != frame.inputPoses
+                && requestedPoses != frame.attachmentPoses)
+                || frame.attachmentPoses == null
+                || joint < 0 || joint >= frame.attachmentPoses.length) {
+            return null;
+        }
+        OpenMatrix4f pose = frame.attachmentPoses[joint];
+        return pose == null ? null : new OpenMatrix4f(pose);
+    }
+
+    /** Replaces only the exact pose array passed from this converted body to patched layers. */
+    public static OpenMatrix4f[] resolvePatchedLayerPoses(OpenMatrix4f[] requestedPoses) {
+        Frame frame = current();
+        return frame != null && requestedPoses != null
+                && frame.mesh != null && frame.inputPoses == requestedPoses
+                && frame.attachmentPoses != null
+                ? frame.attachmentPoses : requestedPoses;
     }
 
     @Nullable
@@ -274,6 +307,7 @@ public final class RenderFrameContext {
         frame.leftFist = null;
         frame.rightAuthoredItemPose = null;
         frame.leftAuthoredItemPose = null;
+        frame.attachmentPoses = null;
         frame.suppressRightHeldItem = false;
         frame.suppressLeftHeldItem = false;
         frame.mainHandItemSwitchUsesOffArmTool = false;
@@ -294,5 +328,21 @@ public final class RenderFrameContext {
                 && Float.isFinite(value.m22) && Float.isFinite(value.m23)
                 && Float.isFinite(value.m30) && Float.isFinite(value.m31)
                 && Float.isFinite(value.m32) && Float.isFinite(value.m33);
+    }
+
+    @Nullable
+    private static OpenMatrix4f[] copyMatrices(
+            @Nullable OpenMatrix4f[] source, int expectedLength) {
+        if (source == null || source.length != expectedLength) {
+            return null;
+        }
+        OpenMatrix4f[] copy = new OpenMatrix4f[source.length];
+        for (int index = 0; index < source.length; index++) {
+            if (!finite(source[index])) {
+                return null;
+            }
+            copy[index] = new OpenMatrix4f(source[index]);
+        }
+        return copy;
     }
 }

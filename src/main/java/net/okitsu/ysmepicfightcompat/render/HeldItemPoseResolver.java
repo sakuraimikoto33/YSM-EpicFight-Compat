@@ -26,13 +26,21 @@ public final class HeldItemPoseResolver {
     public static OpenMatrix4f resolveCorrection(
             LivingEntityPatch<?> patch, OpenMatrix4f[] poses,
             OpenMatrix4f itemCorrection, OpenMatrix4f originalPose) {
-        int joint = selectedToolJoint(poses, originalPose);
+        int joint = selectedJoint(poses, originalPose);
         if (patch == null || joint < 0) {
             return applyItemCorrection(itemCorrection, originalPose);
         }
         LivingEntity entity = patch.getOriginal();
         CompatHumanoidMesh mesh = RenderFrameContext.currentMeshFor(entity);
         if (mesh == null) {
+            return applyItemCorrection(itemCorrection, originalPose);
+        }
+        OpenMatrix4f displayed = RenderFrameContext.displayedAttachmentPose(
+                entity, mesh, poses, joint);
+        if (displayed != null) {
+            return applyItemCorrection(itemCorrection, displayed);
+        }
+        if (joint != HumanoidRig.RIGHT_TOOL && joint != HumanoidRig.LEFT_TOOL) {
             return applyItemCorrection(itemCorrection, originalPose);
         }
         float translationScale = TouhouMaidRenderBridge
@@ -80,18 +88,20 @@ public final class HeldItemPoseResolver {
         return adjusted;
     }
 
-    static int selectedToolJoint(OpenMatrix4f[] poses, OpenMatrix4f selectedPose) {
+    static int selectedJoint(OpenMatrix4f[] poses, OpenMatrix4f selectedPose) {
         if (poses == null || selectedPose == null) {
             return -1;
         }
-        if (poses.length > HumanoidRig.RIGHT_TOOL
-                && poses[HumanoidRig.RIGHT_TOOL] == selectedPose) {
-            return HumanoidRig.RIGHT_TOOL;
+        int selected = -1;
+        for (int joint = 0; joint < poses.length; joint++) {
+            if (poses[joint] != selectedPose) {
+                continue;
+            }
+            if (selected >= 0) {
+                return -1;
+            }
+            selected = joint;
         }
-        if (poses.length > HumanoidRig.LEFT_TOOL
-                && poses[HumanoidRig.LEFT_TOOL] == selectedPose) {
-            return HumanoidRig.LEFT_TOOL;
-        }
-        return -1;
+        return selected;
     }
 }
