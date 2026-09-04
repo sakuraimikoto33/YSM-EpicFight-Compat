@@ -1,5 +1,6 @@
 package net.okitsu.ysmepicfightcompat.render;
 
+import net.minecraft.core.Direction;
 import net.okitsu.ysmepicfightcompat.animation.MovementAnimationType;
 import org.junit.jupiter.api.Test;
 
@@ -40,25 +41,66 @@ final class CombatPlayerRendererTest {
     }
 
     @Test
-    void itemSwitchOwnershipUsesOfficialCreativeFlightYawIndependently() {
-        assertTrue(CombatPlayerRenderer.shouldUseOfficialCreativeFlightYaw(
+    void itemSwitchOwnershipUsesOfficialMovementTransformIndependently() {
+        assertTrue(CombatPlayerRenderer.shouldUseOfficialMovementTransform(
                 MovementAnimationType.CREATIVE_FLIGHT,
                 false, true, false, true));
-        assertTrue(CombatPlayerRenderer.shouldUseOfficialCreativeFlightYaw(
-                MovementAnimationType.CREATIVE_FLIGHT,
+        assertTrue(CombatPlayerRenderer.shouldUseOfficialMovementTransform(
+                MovementAnimationType.SWIM,
                 true, false, false, true));
-        assertFalse(CombatPlayerRenderer.shouldUseOfficialCreativeFlightYaw(
-                MovementAnimationType.CREATIVE_FLIGHT,
-                false, false, false, true));
-        assertFalse(CombatPlayerRenderer.shouldUseOfficialCreativeFlightYaw(
-                MovementAnimationType.CREATIVE_FLIGHT,
-                false, true, true, true));
-        assertFalse(CombatPlayerRenderer.shouldUseOfficialCreativeFlightYaw(
-                MovementAnimationType.ELYTRA_FLIGHT,
+        assertTrue(CombatPlayerRenderer.shouldUseOfficialMovementTransform(
+                MovementAnimationType.LADDER_DOWN,
                 false, true, false, true));
-        assertFalse(CombatPlayerRenderer.shouldUseOfficialCreativeFlightYaw(
+        assertFalse(CombatPlayerRenderer.shouldUseOfficialMovementTransform(
+                MovementAnimationType.SWIM,
+                false, false, false, true));
+        assertFalse(CombatPlayerRenderer.shouldUseOfficialMovementTransform(
+                MovementAnimationType.LADDER_UP,
+                false, true, true, true));
+        assertFalse(CombatPlayerRenderer.shouldUseOfficialMovementTransform(
                 MovementAnimationType.CREATIVE_FLIGHT,
                 false, true, false, false));
+        assertFalse(CombatPlayerRenderer.shouldUseOfficialMovementTransform(
+                null, true, true, false, true));
+    }
+
+    @Test
+    void crawlUsesOfficialBodyYawWithoutChangingSwimOrLadderOrientation() {
+        assertTrue(CombatPlayerRenderer.usesOfficialBodyYaw(
+                MovementAnimationType.CRAWL_IDLE));
+        assertTrue(CombatPlayerRenderer.usesOfficialBodyYaw(
+                MovementAnimationType.CRAWL_MOVE));
+        assertTrue(CombatPlayerRenderer.usesOfficialBodyYaw(
+                MovementAnimationType.CREATIVE_FLIGHT));
+        assertFalse(CombatPlayerRenderer.usesOfficialBodyYaw(
+                MovementAnimationType.SWIM));
+        assertFalse(CombatPlayerRenderer.usesOfficialBodyYaw(
+                MovementAnimationType.LADDER_UP));
+        assertFalse(CombatPlayerRenderer.usesOfficialBodyYaw(null));
+    }
+
+    @Test
+    void officialLadderYawFacesTheContactedWall() {
+        assertEquals(0.0F,
+                CombatPlayerRenderer.officialLadderYaw(Direction.NORTH), 0.0001F);
+        assertEquals(180.0F,
+                CombatPlayerRenderer.officialLadderYaw(Direction.SOUTH), 0.0001F);
+        assertEquals(270.0F,
+                CombatPlayerRenderer.officialLadderYaw(Direction.WEST), 0.0001F);
+        assertEquals(90.0F,
+                CombatPlayerRenderer.officialLadderYaw(Direction.EAST), 0.0001F);
+    }
+
+    @Test
+    void swimCorrectionCancelsOnlyEpicFightsWaterPitch() {
+        assertEquals(0.0F,
+                CombatPlayerRenderer.epicSwimPitch(0.0F, 30.0F, true), 0.0001F);
+        assertEquals(15.0F,
+                CombatPlayerRenderer.epicSwimPitch(0.5F, 30.0F, true), 0.0001F);
+        assertEquals(30.0F,
+                CombatPlayerRenderer.epicSwimPitch(1.0F, 30.0F, true), 0.0001F);
+        assertEquals(0.0F,
+                CombatPlayerRenderer.epicSwimPitch(1.0F, 30.0F, false), 0.0001F);
     }
 
     private static void assertFinalModelYaw(float epicYaw, float officialYaw) {

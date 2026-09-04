@@ -167,18 +167,26 @@ final class CustomHeldItemPolicy {
      * replacement.
      */
     boolean replacesHeldItemAtRest(LivingEntity entity, InteractionHand hand) {
+        return !heldItemReplacementRoots(entity, hand).isEmpty();
+    }
+
+    /** Renderable subtree roots for the matching steady HOLD replacement only. */
+    Set<String> heldItemReplacementRoots(LivingEntity entity, InteractionHand hand) {
         if (entity == null || hand == null) {
-            return false;
+            return Set.of();
         }
         ItemStack stack = AnimationConditionMatcher.item(entity, hand);
         if (stack.isEmpty()) {
-            return false;
+            return Set.of();
         }
-        return rules.getOrDefault(hand, List.of()).stream()
+        LinkedHashSet<String> result = new LinkedHashSet<>();
+        rules.getOrDefault(hand, List.of()).stream()
                 .filter(rule -> rule.action()
                         == AnimationConditionMatcher.ItemAction.HOLD)
-                .anyMatch(rule -> AnimationConditionMatcher.matchesItem(
-                        entity, stack, rule.selector(), rule.action(), hand));
+                .filter(rule -> AnimationConditionMatcher.matchesItem(
+                        entity, stack, rule.selector(), rule.action(), hand))
+                .forEach(rule -> result.addAll(rule.roots()));
+        return result.isEmpty() ? Set.of() : Set.copyOf(result);
     }
 
     /**

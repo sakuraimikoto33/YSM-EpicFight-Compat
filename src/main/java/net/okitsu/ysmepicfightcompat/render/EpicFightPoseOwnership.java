@@ -43,12 +43,16 @@ public final class EpicFightPoseOwnership {
         if (state == null || animator == null) {
             return true;
         }
+        LivingMotion currentMotion = animator.currentMotion();
+        LivingMotion currentCompositeMotion = animator.currentCompositeMotion();
+        boolean ordinaryClimb = isOrdinaryClimbMotion(
+                entity.onClimbable(), currentMotion, currentCompositeMotion);
         return actionFlagsRequireEpicPose(
                 state.inaction(), state.attacking(), state.hurt(), state.knockDown(),
                 state.movementLocked(), entity.isUsingItem(), entity.swinging,
-                animator.isAiming())
-                || isActionMotion(animator.currentMotion())
-                || isActionMotion(animator.currentCompositeMotion())
+                animator.isAiming(), ordinaryClimb)
+                || isActionMotion(currentMotion)
+                || isActionMotion(currentCompositeMotion)
                 || visibleActionAnimation(animator);
     }
 
@@ -56,8 +60,28 @@ public final class EpicFightPoseOwnership {
             boolean inaction, boolean attacking, boolean hurt, boolean knockDown,
             boolean movementLocked, boolean usingItem, boolean swinging,
             boolean aiming) {
-        return inaction || attacking || hurt || knockDown || movementLocked
+        return actionFlagsRequireEpicPose(inaction, attacking, hurt, knockDown,
+                movementLocked, usingItem, swinging, aiming, false);
+    }
+
+    static boolean actionFlagsRequireEpicPose(
+            boolean inaction, boolean attacking, boolean hurt, boolean knockDown,
+            boolean movementLocked, boolean usingItem, boolean swinging,
+            boolean aiming, boolean ordinaryClimb) {
+        return (!ordinaryClimb && (inaction || movementLocked))
+                || attacking || hurt || knockDown
                 || usingItem || swinging || aiming;
+    }
+
+    /**
+     * Epic Fight's ordinary BIPED_CLIMBING movement intentionally sets both INACTION
+     * and MOVEMENT_LOCKED. Those flags describe its locomotion constraints, not an
+     * attack/action pose, and must not revoke a configured complete YSM ladder pose.
+     */
+    static boolean isOrdinaryClimbMotion(
+            boolean onClimbable, LivingMotion current, LivingMotion composite) {
+        return onClimbable && (current == LivingMotions.CLIMB
+                || composite == LivingMotions.CLIMB);
     }
 
     /**

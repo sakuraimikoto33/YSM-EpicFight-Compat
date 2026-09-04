@@ -71,7 +71,8 @@ class ModelTransferMessageTest {
     void movementPreferenceMessagesContainOnlyCurrentResolvedState() {
         UUID playerId = UUID.randomUUID();
         MovementAnimationDisplayState state = new MovementAnimationDisplayState(
-                "wine_fox/21_saint", MovementAnimationType.CREATIVE_FLIGHT, true);
+                "wine_fox/21_saint", MovementAnimationType.LADDER_UP,
+                true, true);
         MovementAnimationPreferenceUpdateMessage update =
                 new MovementAnimationPreferenceUpdateMessage(state);
         MovementAnimationPreferenceSnapshotMessage snapshot =

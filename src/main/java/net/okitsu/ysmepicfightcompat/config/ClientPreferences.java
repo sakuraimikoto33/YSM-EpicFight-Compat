@@ -39,6 +39,8 @@ public final class ClientPreferences {
             HELD_ITEM_SWITCH_ANIMATION_EXCLUSIONS;
     public static final ForgeConfigSpec.BooleanValue
             USE_YSM_MOVEMENT_ANIMATIONS;
+    public static final ForgeConfigSpec.BooleanValue
+            USE_NATURAL_LADDER_ANIMATIONS;
     public static final ForgeConfigSpec.ConfigValue<Config>
             MOVEMENT_ANIMATION_EXCLUSIONS;
     public static final ForgeConfigSpec.BooleanValue YSM_WARNING_ACKNOWLEDGED;
@@ -147,6 +149,13 @@ public final class ClientPreferences {
                         "Default: true")
                 .translation("config.ysm_epicfight_compat.use_ysm_movement_animations")
                 .define("useYsmMovementAnimations", true);
+        USE_NATURAL_LADDER_ANIMATIONS = config
+                .comment("Use a natural two-handed ladder pose when the selected YSM ladder animation authors arm motion.",
+                        "The authored pose is kept on both arms. Ordinary Epic Fight items are stowed, while items replaced by a YSM model are hidden. Models without dedicated ladder arm motion keep their original behavior.",
+                        "Only the resolved pose state is synchronized; this setting remains local.",
+                        "Default: true")
+                .translation("config.ysm_epicfight_compat.use_natural_ladder_animations")
+                .define("useNaturalLadderAnimations", true);
         MOVEMENT_ANIMATION_EXCLUSIONS = config
                 .comment("Model-specific movement states that disable YSM movement animations.",
                         "The list never enables YSM movement animations when the main setting is disabled.",

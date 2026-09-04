@@ -14,9 +14,13 @@ import net.minecraft.client.renderer.entity.layers.CustomHeadLayer;
 import net.minecraft.client.renderer.entity.layers.ElytraLayer;
 import net.minecraft.client.renderer.entity.layers.HumanoidArmorLayer;
 import net.minecraft.client.renderer.entity.layers.PlayerItemInHandLayer;
+import net.minecraft.core.Direction;
 import net.minecraft.world.entity.EntityType;
+import net.minecraft.world.entity.Pose;
 import net.minecraft.world.entity.player.PlayerModelPart;
 import net.minecraft.util.Mth;
+import net.minecraft.world.level.block.HorizontalDirectionalBlock;
+import net.minecraft.world.level.block.state.BlockState;
 import net.minecraftforge.api.distmarker.Dist;
 import net.minecraftforge.api.distmarker.OnlyIn;
 import net.okitsu.ysmepicfightcompat.animation.MovementAnimationType;
@@ -36,6 +40,8 @@ import yesman.epicfight.client.renderer.patched.layer.PatchedBeeStingerLayer;
 import yesman.epicfight.client.renderer.patched.layer.PatchedCapeLayer;
 import yesman.epicfight.client.renderer.patched.layer.PatchedItemInHandLayer;
 import yesman.epicfight.client.world.capabilites.entitypatch.player.AbstractClientPlayerPatch;
+
+import javax.annotation.Nullable;
 
 /** Epic Fight player renderer that accepts official YSM's non-PlayerRenderer delegate. */
 @OnlyIn(Dist.CLIENT)
@@ -79,12 +85,15 @@ public final class CombatPlayerRenderer extends PHumanoidRenderer<
         boolean epicFightActionActive =
                 EpicFightPoseOwnership.actionOwnsPose(entity, patch);
         float epicModelYaw = patch.getAccurateYRot(partialTick);
-        float renderedModelYaw = usesOfficialCreativeFlightYaw(
-                entity, epicFightActionActive)
+        MovementAnimationType ysmMovement = configuredFullBodyMovement(
+                entity, epicFightActionActive);
+        Float ladderYaw = isLadderMovement(ysmMovement)
+                ? officialLadderYaw(entity) : null;
+        float renderedModelYaw = usesOfficialBodyYaw(ysmMovement)
                 ? officialBodyYaw(entity.yBodyRotO, entity.yBodyRot, partialTick)
-                : epicModelYaw;
+                : ladderYaw == null ? epicModelYaw : ladderYaw;
         RenderFrameContext.Frame scope = RenderFrameContext.pushThirdPerson(
-                entity, renderedModelYaw, epicFightActionActive);
+                entity, renderedModelYaw, epicFightActionActive, ysmMovement);
         try {
             super.render(entity, patch, renderer, buffers, matrices, light, partialTick);
         } finally {
@@ -94,11 +103,12 @@ public final class CombatPlayerRenderer extends PHumanoidRenderer<
 
     /**
      * Epic Fight owns the outer model transform even when a configured official-YSM
-     * movement clip owns every model bone. Creative-flight clips such as 05_magical's
-     * {@code fly} intentionally contain no head-yaw query: official YSM turns them with
-     * vanilla's interpolated body yaw. Apply only that missing outer-yaw delta while the
-     * converted mesh really owns creative flight. Elytra retains Epic Fight's dedicated
-     * flight transform, and actions retain Epic Fight's orientation unchanged.
+     * movement clip owns every model bone. Reproduce only the outer transforms that
+     * official YSM owns: creative-flight and crawl body yaw, ladder-facing yaw, and
+     * removal of Epic Fight's extra swimming pitch. Crawl clips use the difference
+     * between that body yaw and the head yaw to bend the upper body while leaving the
+     * lower body on the movement heading. The model-authored Root and Head tracks
+     * remain untouched, and actions retain Epic Fight's orientation unchanged.
      */
     @Override
     public void mulPoseStack(
@@ -107,10 +117,17 @@ public final class CombatPlayerRenderer extends PHumanoidRenderer<
         super.mulPoseStack(matrices, armature, entity, patch, partialTick);
         RenderFrameContext.Frame frame = RenderFrameContext.current();
         if (frame == null || frame.entity() != entity
-                || frame.epicModelYaw() == null
-                || !usesOfficialCreativeFlightYaw(
-                entity, frame.epicFightActionActive())) {
+                || frame.epicModelYaw() == null || frame.ysmMovement() == null) {
             return;
+        }
+        if (entity.getPose() == Pose.SWIMMING) {
+            float pitch = epicSwimPitch(entity.getSwimAmount(partialTick),
+                    entity.getXRot(), entity.isInWater());
+            if (Math.abs(pitch) > 1.0E-4F) {
+                // Epic Fight appends -pitch after outer yaw. Cancel it before applying
+                // any official yaw correction so the rotations remain adjacent.
+                matrices.mulPose(Axis.XP.rotationDegrees(pitch));
+            }
         }
         float correction = outerYawCorrection(
                 patch.getAccurateYRot(partialTick), frame.epicModelYaw());
@@ -119,15 +136,16 @@ public final class CombatPlayerRenderer extends PHumanoidRenderer<
         }
     }
 
-    private static boolean usesOfficialCreativeFlightYaw(
+    @Nullable
+    private static MovementAnimationType configuredFullBodyMovement(
             AbstractClientPlayer entity, boolean epicFightActionActive) {
         if (epicFightActionActive || !CombatMeshResolver.hasReadyMesh(entity)) {
-            return false;
+            return null;
         }
         PlayerSelectionResolver.Selection selection =
                 PlayerSelectionResolver.current(entity);
         if (selection == null) {
-            return false;
+            return null;
         }
         MovementAnimationType movement =
                 ClientMovementAnimationPreferences.remoteMovementOverride(
@@ -138,20 +156,58 @@ public final class CombatPlayerRenderer extends PHumanoidRenderer<
         CompatHumanoidMesh mesh = CombatMeshCache.readyMesh(selection.modelId());
         boolean itemSwitchOwnsPose = mesh != null
                 && mesh.itemSwitchOwnsPose(entity);
-        return shouldUseOfficialCreativeFlightYaw(
-                movement,
-                ClientMovementAnimationPreferences.usesYsm(
-                        entity, selection.modelId(), movement),
-                itemSwitchOwnsPose, epicFightActionActive, true);
+        boolean movementOwnsPose = movement != null
+                && ClientMovementAnimationPreferences.usesYsm(
+                entity, selection.modelId(), movement);
+        return shouldUseOfficialMovementTransform(
+                movement, movementOwnsPose, itemSwitchOwnsPose,
+                epicFightActionActive, true) ? movement : null;
     }
 
-    static boolean shouldUseOfficialCreativeFlightYaw(
-            MovementAnimationType movement, boolean movementOwnsPose,
+    static boolean shouldUseOfficialMovementTransform(
+            @Nullable MovementAnimationType movement, boolean movementOwnsPose,
             boolean itemSwitchOwnsPose, boolean epicFightActionActive,
             boolean readyMesh) {
         return readyMesh && !epicFightActionActive
-                && movement == MovementAnimationType.CREATIVE_FLIGHT
+                && movement != null
                 && (movementOwnsPose || itemSwitchOwnsPose);
+    }
+
+    private static boolean isLadderMovement(
+            @Nullable MovementAnimationType movement) {
+        return movement == MovementAnimationType.LADDER_IDLE
+                || movement == MovementAnimationType.LADDER_UP
+                || movement == MovementAnimationType.LADDER_DOWN;
+    }
+
+    static boolean usesOfficialBodyYaw(
+            @Nullable MovementAnimationType movement) {
+        return movement == MovementAnimationType.CREATIVE_FLIGHT
+                || movement == MovementAnimationType.CRAWL_IDLE
+                || movement == MovementAnimationType.CRAWL_MOVE;
+    }
+
+    @Nullable
+    private static Float officialLadderYaw(AbstractClientPlayer entity) {
+        if (!entity.onClimbable()) {
+            return null;
+        }
+        return entity.getLastClimbablePos().map(position -> {
+            BlockState state = entity.level().getBlockState(position);
+            return state.hasProperty(HorizontalDirectionalBlock.FACING)
+                    ? officialLadderYaw(
+                    state.getValue(HorizontalDirectionalBlock.FACING)) : null;
+        }).orElse(null);
+    }
+
+    /** Official YSM faces the wall behind the horizontal-facing climbable block. */
+    static float officialLadderYaw(Direction facing) {
+        return facing.getOpposite().get2DDataValue() * 90.0F;
+    }
+
+    /** Exact X rotation that Epic Fight adds for a swimming-pose player in water. */
+    static float epicSwimPitch(float swimAmount, float viewPitch, boolean inWater) {
+        return Mth.lerp(swimAmount, 0.0F, inWater ? viewPitch : 0.0F);
     }
 
     static float officialBodyYaw(float previousBodyYaw, float bodyYaw,

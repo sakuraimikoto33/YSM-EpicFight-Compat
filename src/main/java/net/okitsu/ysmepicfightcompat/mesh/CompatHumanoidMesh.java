@@ -185,7 +185,7 @@ public final class CompatHumanoidMesh extends HumanoidMesh {
                 || parallelAnimations.isEmpty() ? null
                 : parallelAnimations.sample(frame.entity(),
                 partialTick, frame.firstPerson(), frame.epicModelYaw(),
-                frame.epicFightActionActive());
+                frame.epicFightActionActive(), frame.ysmMovement());
         poseProgram.apply(this, frame == null ? Map.of() : frame.visibleParts(),
                 frame == null || frame.showUnlistedParts(), frame != null && frame.firstPerson(),
                 animationFrame == null ? null : animationFrame.hiddenBones());
@@ -273,7 +273,11 @@ public final class CompatHumanoidMesh extends HumanoidMesh {
                             elytraLocatorPose,
                             attachmentPoses,
                             suppressRightItem, suppressLeftItem,
-                            mainHandItemSwitchUsesOffArmTool);
+                            mainHandItemSwitchUsesOffArmTool,
+                            animationFrame != null
+                                    && animationFrame.naturalLadderPose(),
+                            animationFrame == null ? Set.of()
+                                    : animationFrame.ladderItemsInHand());
                 }
                 poses = complete;
                 armature = null;
@@ -283,7 +287,7 @@ public final class CompatHumanoidMesh extends HumanoidMesh {
                             frame.entity(), this, inputPoses, null, null, null, null,
                             null,
                             null,
-                            false, false, false);
+                            false, false, false, false, Set.of());
                 }
                 if (AUXILIARY_FALLBACK_LOGGED.compareAndSet(false, true)) {
                     CompatMod.LOG.warn("YSM-EF Compat: auxiliary pose matrices are unavailable");

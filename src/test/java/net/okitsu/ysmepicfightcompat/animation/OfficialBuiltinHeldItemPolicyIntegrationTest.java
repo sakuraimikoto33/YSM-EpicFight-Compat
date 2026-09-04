@@ -618,6 +618,40 @@ class OfficialBuiltinHeldItemPolicyIntegrationTest {
     }
 
     @Test
+    void taishoMaidTracksCameraDuringGroundJumpAndFlightMovement()
+            throws IOException {
+        Fixture fixture = load("wine_fox/01_taisho_maid");
+        AuxiliaryBoneLayout layout = AuxiliaryBoneLayout.create(
+                fixture.geometry(), MODEL_SCALE, MODEL_SCALE);
+        ParallelAnimationProgram program = program(fixture, layout);
+        int head = layout.entryForBoneName("Head").auxiliaryIndex();
+
+        Map.of(MovementAnimationType.WALK, "walk",
+                MovementAnimationType.RUN, "run",
+                MovementAnimationType.JUMP, "jump",
+                MovementAnimationType.CREATIVE_FLIGHT, "fly",
+                MovementAnimationType.ELYTRA_FLIGHT, "elytra_fly")
+                .forEach((movement, main) -> {
+            assertNotNull(fixture.animations().get(main));
+            ParallelAnimationProgram.Frame forward = program.sampleMovementAt(
+                    0.25D, List.of(main), main, movement,
+                    new NeutralEnvironment(),
+                    new AnimationControllerProgram.RuntimeState());
+            ParallelAnimationProgram.Frame looking = program.sampleMovementAt(
+                    0.25D, List.of(main), main, movement,
+                    new NeutralEnvironment().headYaw(35.0D),
+                    new AnimationControllerProgram.RuntimeState());
+
+            assertTrue(forward.replaceEpicFightPose(), movement.name());
+            assertTrue(matrixDiffers(
+                            forward.wholeModelDeltas()[head],
+                            looking.wholeModelDeltas()[head]),
+                    () -> movement.name()
+                            + " must add official camera yaw after its Head pose");
+        });
+    }
+
+    @Test
     void taishoMaidMainhandBowSwitchMatchesTheOfficialOffhandMirror()
             throws IOException {
         Fixture fixture = load("wine_fox/01_taisho_maid");

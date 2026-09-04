@@ -877,6 +877,311 @@ class ParallelAnimationProgramTest {
     }
 
     @Test
+    void movementComposesOrdinaryHoldBodyWithoutReplacingTheEpicFightItem() {
+        GeometryDocument geometry = handPropGeometry();
+        AuxiliaryBoneLayout layout = AuxiliaryBoneLayout.create(geometry);
+        AnimationClip crawl = new AnimationClip("climb");
+        crawl.playback(AnimationClip.Playback.REPEAT);
+        crawl.boneTracks().put("RightArm", rotation(0.0D, 0.0D, 20.0D));
+        AnimationClip hold = new AnimationClip("hold_mainhand:sword");
+        hold.boneTracks().put("RightArm", rotation(0.0D, 0.0D, 75.0D));
+        CustomHeldItemPolicy policy = CustomHeldItemPolicy.create(
+                geometry, Map.of(crawl.name(), crawl, hold.name(), hold));
+        assertTrue(policy.replacementRoots(hold.name()).isEmpty());
+        ParallelAnimationProgram program = new ParallelAnimationProgram(
+                geometry, Map.of(crawl.name(), crawl, hold.name(), hold),
+                layout, 1.0F, 1.0F);
+        int arm = layout.entryForBoneName("RightArm").auxiliaryIndex();
+
+        ParallelAnimationProgram.Frame movementOnly = program.sampleMovementAt(
+                0.0D, List.of(crawl.name()), crawl.name(),
+                MovementAnimationType.CRAWL_MOVE, new NeutralEnvironment(),
+                new AnimationControllerProgram.RuntimeState());
+        OpenMatrix4f movementArm = new OpenMatrix4f().load(
+                movementOnly.wholeModelDeltas()[arm]);
+        ParallelAnimationProgram.Frame withHold = program.sampleMovementAt(
+                0.0D, List.of(crawl.name(), hold.name()), crawl.name(),
+                MovementAnimationType.CRAWL_MOVE, new NeutralEnvironment(),
+                new AnimationControllerProgram.RuntimeState());
+
+        assertTrue(withHold.replaceEpicFightPose());
+        assertFalse(matrixEquals(
+                movementArm, withHold.wholeModelDeltas()[arm]),
+                "official HOLD must override the crawl arm after its movement main");
+        assertIdentity(withHold.parallelDeltas()[arm]);
+        for (boolean replacement : withHold.replaceEpicFightAnchors()) {
+            assertFalse(replacement,
+                    "ordinary HOLD body animation must retain Epic Fight item rendering");
+        }
+    }
+
+    @Test
+    void naturalLadderKeepsBothAuthoredArmsInsteadOfTheHeldItemPose() {
+        GeometryDocument geometry = bowUpperBodyGeometry();
+        AuxiliaryBoneLayout layout = AuxiliaryBoneLayout.create(geometry);
+        AnimationClip ladder = new AnimationClip("ladder_up");
+        ladder.boneTracks().put("LeftArm", rotation(0.0D, 0.0D, 30.0D));
+        ladder.boneTracks().put("RightArm", rotation(0.0D, 0.0D, -35.0D));
+        AnimationClip hold = new AnimationClip("hold_mainhand:sword");
+        hold.boneTracks().put("RightArm", rotation(0.0D, 0.0D, 80.0D));
+        ParallelAnimationProgram program = new ParallelAnimationProgram(
+                geometry, Map.of(ladder.name(), ladder, hold.name(), hold),
+                layout, 1.0F, 1.0F);
+        int left = layout.entryForBoneName("LeftArm").auxiliaryIndex();
+        int right = layout.entryForBoneName("RightArm").auxiliaryIndex();
+
+        ParallelAnimationProgram.Frame ordinary = program.sampleMovementAt(
+                0.0D, List.of(ladder.name(), hold.name()), ladder.name(),
+                MovementAnimationType.LADDER_UP, false,
+                new NeutralEnvironment(),
+                new AnimationControllerProgram.RuntimeState());
+        boolean ordinaryNaturalLadderPose = ordinary.naturalLadderPose();
+        OpenMatrix4f ordinaryRightArm = new OpenMatrix4f().load(
+                ordinary.wholeModelDeltas()[right]);
+        ParallelAnimationProgram.Frame natural = program.sampleMovementAt(
+                0.0D, List.of(ladder.name(), hold.name()), ladder.name(),
+                MovementAnimationType.LADDER_UP, true,
+                new NeutralEnvironment(),
+                new AnimationControllerProgram.RuntimeState());
+
+        assertTrue(program.supportsNaturalLadderPose(
+                ladder.name(), MovementAnimationType.LADDER_UP));
+        assertFalse(ordinaryNaturalLadderPose);
+        assertTrue(natural.naturalLadderPose());
+        assertMatrix(new Matrix4f().rotateZ((float) Math.toRadians(30.0D)),
+                natural.wholeModelDeltas()[left]);
+        assertMatrix(new Matrix4f().rotateZ((float) Math.toRadians(-35.0D)),
+                natural.wholeModelDeltas()[right]);
+        assertFalse(matrixEquals(ordinaryRightArm,
+                natural.wholeModelDeltas()[right]));
+    }
+
+    @Test
+    void ordinaryBowOnANonNaturalLadderMovesTheHoldPoseToTheLeftArm() {
+        GeometryDocument geometry = bowUpperBodyGeometry();
+        AuxiliaryBoneLayout layout = AuxiliaryBoneLayout.create(geometry);
+        AnimationClip ladder = new AnimationClip("ladder_up");
+        ladder.boneTracks().put("LeftArm", rotation(0.0D, 0.0D, 30.0D));
+        ladder.boneTracks().put("RightArm", rotation(0.0D, 0.0D, -35.0D));
+        AnimationClip hold = new AnimationClip("hold_mainhand:bow");
+        hold.boneTracks().put("RightArm", rotation(0.0D, 0.0D, 80.0D));
+        ParallelAnimationProgram program = new ParallelAnimationProgram(
+                geometry, Map.of(ladder.name(), ladder, hold.name(), hold),
+                layout, 1.0F, 1.0F);
+
+        ParallelAnimationProgram.Frame frame = program.sampleMovementAt(
+                0.0D, List.of(ladder.name(), hold.name()), ladder.name(),
+                MovementAnimationType.LADDER_UP, false,
+                Set.of(InteractionHand.MAIN_HAND), new NeutralEnvironment(),
+                new AnimationControllerProgram.RuntimeState());
+
+        assertEquals(Set.of(InteractionHand.MAIN_HAND),
+                frame.ladderItemsInHand());
+        assertMatrix(new Matrix4f().rotateZ((float) Math.toRadians(-80.0D)),
+                frame.wholeModelDeltas()[
+                        layout.entryForBoneName("LeftArm").auxiliaryIndex()]);
+        assertMatrix(new Matrix4f().rotateZ((float) Math.toRadians(-35.0D)),
+                frame.wholeModelDeltas()[
+                        layout.entryForBoneName("RightArm").auxiliaryIndex()]);
+    }
+
+    @Test
+    void ordinaryBowMirrorsAMissingRightClimbingArmWhenNaturalModeIsDisabled() {
+        GeometryDocument geometry = bowUpperBodyGeometry();
+        AuxiliaryBoneLayout layout = AuxiliaryBoneLayout.create(geometry);
+        AnimationClip ladder = new AnimationClip("ladder_down");
+        ladder.boneTracks().put("LeftArm", rotation(0.0D, 0.0D, 30.0D));
+        AnimationClip hold = new AnimationClip("hold_mainhand:bow");
+        hold.boneTracks().put("RightArm", rotation(0.0D, 0.0D, 80.0D));
+        ParallelAnimationProgram program = new ParallelAnimationProgram(
+                geometry, Map.of(ladder.name(), ladder, hold.name(), hold),
+                layout, 1.0F, 1.0F);
+
+        ParallelAnimationProgram.Frame frame = program.sampleMovementAt(
+                0.0D, List.of(ladder.name(), hold.name()), ladder.name(),
+                MovementAnimationType.LADDER_DOWN, false,
+                Set.of(InteractionHand.MAIN_HAND), new NeutralEnvironment(),
+                new AnimationControllerProgram.RuntimeState());
+
+        assertMatrix(new Matrix4f().rotateZ((float) Math.toRadians(-80.0D)),
+                frame.wholeModelDeltas()[
+                        layout.entryForBoneName("LeftArm").auxiliaryIndex()]);
+        assertMatrix(new Matrix4f().rotateZ((float) Math.toRadians(-30.0D)),
+                frame.wholeModelDeltas()[
+                        layout.entryForBoneName("RightArm").auxiliaryIndex()]);
+    }
+
+    @Test
+    void naturalLadderMirrorsOnlyAMissingRightArmFromTheLeftControls() {
+        GeometryDocument geometry = bowUpperBodyGeometry();
+        AuxiliaryBoneLayout layout = AuxiliaryBoneLayout.create(geometry);
+        AnimationClip ladder = new AnimationClip("ladder_down");
+        ladder.boneTracks().put("Root", rotation(0.0D, 0.0D, 12.0D));
+        ladder.boneTracks().put("LeftArm", rotation(0.0D, 0.0D, 30.0D));
+        ladder.boneTracks().put("LeftForeArm", rotation(0.0D, 15.0D, 20.0D));
+        ParallelAnimationProgram program = new ParallelAnimationProgram(
+                geometry, Map.of(ladder.name(), ladder), layout, 1.0F, 1.0F);
+
+        ParallelAnimationProgram.Frame natural = program.sampleMovementAt(
+                0.0D, List.of(ladder.name()), ladder.name(),
+                MovementAnimationType.LADDER_DOWN, true,
+                new NeutralEnvironment(),
+                new AnimationControllerProgram.RuntimeState());
+
+        assertMatrix(new Matrix4f().rotateZ((float) Math.toRadians(12.0D)),
+                natural.wholeModelDeltas()[
+                        layout.entryForBoneName("Root").auxiliaryIndex()]);
+        assertMatrix(new Matrix4f()
+                        .rotateZ((float) Math.toRadians(12.0D))
+                        .rotateZ((float) Math.toRadians(-30.0D)),
+                natural.wholeModelDeltas()[
+                        layout.entryForBoneName("RightArm").auxiliaryIndex()]);
+        Matrix4f expectedRightForeArm = new Matrix4f()
+                        .rotateZ((float) Math.toRadians(12.0D))
+                        .rotateZ((float) Math.toRadians(-30.0D))
+                        .rotateZ((float) Math.toRadians(-20.0D))
+                        .rotateY((float) Math.toRadians(15.0D));
+        assertMatrix(expectedRightForeArm,
+                natural.wholeModelDeltas()[
+                        layout.entryForBoneName("RightForeArm").auxiliaryIndex()]);
+        assertMatrix(expectedRightForeArm, natural.wholeModelDeltas()[
+                layout.entryForBoneName("RightHandLocator").auxiliaryIndex()]);
+    }
+
+    @Test
+    void naturalLadderFallsBackWhenTheMainClipAuthorsNoArmMotion() {
+        GeometryDocument geometry = bowUpperBodyGeometry();
+        AuxiliaryBoneLayout layout = AuxiliaryBoneLayout.create(geometry);
+        AnimationClip ladder = new AnimationClip("ladder_stillness");
+        ladder.boneTracks().put("Root", rotation(0.0D, 0.0D, 12.0D));
+        AnimationClip hold = new AnimationClip("hold_mainhand:sword");
+        hold.boneTracks().put("RightArm", rotation(0.0D, 0.0D, 75.0D));
+        ParallelAnimationProgram program = new ParallelAnimationProgram(
+                geometry, Map.of(ladder.name(), ladder, hold.name(), hold),
+                layout, 1.0F, 1.0F);
+
+        ParallelAnimationProgram.Frame frame = program.sampleMovementAt(
+                0.0D, List.of(ladder.name(), hold.name()), ladder.name(),
+                MovementAnimationType.LADDER_IDLE, true,
+                new NeutralEnvironment(),
+                new AnimationControllerProgram.RuntimeState());
+
+        assertFalse(program.supportsNaturalLadderPose(
+                ladder.name(), MovementAnimationType.LADDER_IDLE));
+        assertFalse(frame.naturalLadderPose());
+        assertMatrix(new Matrix4f()
+                        .rotateZ((float) Math.toRadians(12.0D))
+                        .rotateZ((float) Math.toRadians(75.0D)),
+                frame.wholeModelDeltas()[
+                        layout.entryForBoneName("RightArm").auxiliaryIndex()]);
+    }
+
+    @Test
+    void naturalLadderKeepsTheEstablishedCustomWeaponPoseWithoutArmMotion() {
+        GeometryDocument geometry = bowUpperBodyGeometry();
+        AuxiliaryBoneLayout layout = AuxiliaryBoneLayout.create(geometry);
+        AnimationClip pre = new AnimationClip("pre_parallel0");
+        AnimationClip.BoneTracks hidden = new AnimationClip.BoneTracks();
+        hidden.scale(constantTrack(0.0D, 0.0D, 0.0D));
+        pre.boneTracks().put("custom_bow", hidden);
+        AnimationClip ladder = new AnimationClip("ladder_stillness");
+        ladder.boneTracks().put("Root", rotation(0.0D, 0.0D, 12.0D));
+        AnimationClip hold = customBowHold();
+        ParallelAnimationProgram program = new ParallelAnimationProgram(
+                geometry, Map.of(pre.name(), pre, ladder.name(), ladder,
+                hold.name(), hold), layout, 1.0F, 1.0F);
+
+        ParallelAnimationProgram.Frame frame = program.sampleMovementAt(
+                0.0D, List.of(ladder.name(), hold.name()), ladder.name(),
+                MovementAnimationType.LADDER_IDLE, true,
+                new NeutralEnvironment(),
+                new AnimationControllerProgram.RuntimeState());
+
+        assertFalse(frame.naturalLadderPose());
+        assertFalse(frame.hiddenBones().contains("custom_bow"));
+    }
+
+    @Test
+    void naturalLadderRejectsAnArmAuthoredIdleFallback() {
+        GeometryDocument geometry = bowUpperBodyGeometry();
+        AuxiliaryBoneLayout layout = AuxiliaryBoneLayout.create(geometry);
+        AnimationClip pre = new AnimationClip("pre_parallel0");
+        AnimationClip.BoneTracks hidden = new AnimationClip.BoneTracks();
+        hidden.scale(constantTrack(0.0D, 0.0D, 0.0D));
+        pre.boneTracks().put("custom_bow", hidden);
+        AnimationClip idle = new AnimationClip("idle");
+        idle.boneTracks().put("LeftArm", rotation(0.0D, 0.0D, 25.0D));
+        AnimationClip hold = customBowHold();
+        ParallelAnimationProgram program = new ParallelAnimationProgram(
+                geometry, Map.of(pre.name(), pre, idle.name(), idle,
+                hold.name(), hold), layout, 1.0F, 1.0F);
+
+        ParallelAnimationProgram.Frame frame = program.sampleMovementAt(
+                0.0D, List.of(idle.name(), hold.name()), idle.name(),
+                MovementAnimationType.LADDER_IDLE, true,
+                new NeutralEnvironment(),
+                new AnimationControllerProgram.RuntimeState());
+
+        assertFalse(program.supportsNaturalLadderPose(
+                idle.name(), MovementAnimationType.LADDER_IDLE));
+        assertFalse(frame.naturalLadderPose());
+        assertFalse(frame.hiddenBones().contains("custom_bow"));
+    }
+
+    @Test
+    void naturalLadderHidesTheCustomHeldPropWithItsOfficialPreParallelPose() {
+        GeometryDocument geometry = bowUpperBodyGeometry();
+        AuxiliaryBoneLayout layout = AuxiliaryBoneLayout.create(geometry);
+        AnimationClip pre = new AnimationClip("pre_parallel0");
+        AnimationClip.BoneTracks hidden = new AnimationClip.BoneTracks();
+        hidden.scale(constantTrack(0.0D, 0.0D, 0.0D));
+        pre.boneTracks().put("custom_bow", hidden);
+        AnimationClip ladder = new AnimationClip("ladder_up");
+        ladder.boneTracks().put("LeftArm", rotation(0.0D, 0.0D, 25.0D));
+        ladder.boneTracks().put("RightArm", rotation(0.0D, 0.0D, -25.0D));
+        AnimationClip hold = customBowHold();
+        ParallelAnimationProgram program = new ParallelAnimationProgram(
+                geometry, Map.of(pre.name(), pre, ladder.name(), ladder,
+                hold.name(), hold), layout, 1.0F, 1.0F);
+
+        ParallelAnimationProgram.Frame natural = program.sampleMovementAt(
+                0.0D, List.of(ladder.name(), hold.name()), ladder.name(),
+                MovementAnimationType.LADDER_UP, true,
+                new NeutralEnvironment(),
+                new AnimationControllerProgram.RuntimeState());
+        boolean naturalHidesCustomProp =
+                natural.hiddenBones().contains("custom_bow");
+        ParallelAnimationProgram.Frame established = program.sampleMovementAt(
+                0.0D, List.of(ladder.name(), hold.name()), ladder.name(),
+                MovementAnimationType.LADDER_UP, false,
+                new NeutralEnvironment(),
+                new AnimationControllerProgram.RuntimeState());
+
+        assertTrue(naturalHidesCustomProp);
+        assertFalse(established.hiddenBones().contains("custom_bow"));
+    }
+
+    @Test
+    void naturalLadderForcesADefaultVisibleCustomPropSubtreeHidden() {
+        GeometryDocument geometry = bowUpperBodyGeometry();
+        AuxiliaryBoneLayout layout = AuxiliaryBoneLayout.create(geometry);
+        AnimationClip ladder = new AnimationClip("ladder_up");
+        ladder.boneTracks().put("LeftArm", rotation(0.0D, 0.0D, 25.0D));
+        ladder.boneTracks().put("RightArm", rotation(0.0D, 0.0D, -25.0D));
+        ParallelAnimationProgram program = new ParallelAnimationProgram(
+                geometry, Map.of(ladder.name(), ladder), layout, 1.0F, 1.0F);
+
+        ParallelAnimationProgram.Frame natural = program.sampleMovementAt(
+                0.0D, List.of(ladder.name()), ladder.name(),
+                MovementAnimationType.LADDER_UP, true, Set.of(),
+                Set.of("custom_bow"), new NeutralEnvironment(),
+                new AnimationControllerProgram.RuntimeState());
+
+        assertTrue(natural.hiddenBones().contains("custom_bow"));
+        assertTrue(natural.hiddenBones().contains("magic_circle"));
+    }
+
+    @Test
     void itemSwitchComposesMainHoldAndCustomPropInOneFullBodyHierarchy() {
         GeometryDocument geometry = handPropGeometry();
         AuxiliaryBoneLayout layout = AuxiliaryBoneLayout.create(geometry);
@@ -1001,6 +1306,12 @@ class ParallelAnimationProgramTest {
                 Set.of(InteractionHand.MAIN_HAND),
                 Set.of(InteractionHand.MAIN_HAND), new NeutralEnvironment(),
                 new AnimationControllerProgram.RuntimeState());
+        OpenMatrix4f[] mirroredDeltas = new OpenMatrix4f[
+                mirrored.wholeModelDeltas().length];
+        for (int index = 0; index < mirroredDeltas.length; index++) {
+            mirroredDeltas[index] = new OpenMatrix4f().load(
+                    mirrored.wholeModelDeltas()[index]);
+        }
         ParallelAnimationProgram.Frame authoredOffhand = program.sampleItemSwitchAt(
                 0.25D, List.of(idle.name(), offhand.name()), idle.name(), null,
                 Set.of(InteractionHand.OFF_HAND),
@@ -1010,11 +1321,11 @@ class ParallelAnimationProgramTest {
         for (String bone : List.of("LeftArm", "LeftForeArm", "LeftHandLocator")) {
             int index = layout.entryForBoneName(bone).auxiliaryIndex();
             assertMatrixEquals(authoredOffhand.wholeModelDeltas()[index],
-                    mirrored.wholeModelDeltas()[index]);
-            assertFalse(isIdentity(mirrored.wholeModelDeltas()[index]), bone);
+                    mirroredDeltas[index]);
+            assertFalse(isIdentity(mirroredDeltas[index]), bone);
         }
         for (String bone : List.of("RightArm", "RightForeArm", "RightHandLocator")) {
-            assertIdentity(mirrored.wholeModelDeltas()[
+            assertIdentity(mirroredDeltas[
                     layout.entryForBoneName(bone).auxiliaryIndex()]);
         }
         assertEquals(Set.of(InteractionHand.MAIN_HAND), mirrored.itemSwitchHands());
@@ -1128,13 +1439,50 @@ class ParallelAnimationProgramTest {
     }
 
     @Test
-    void configuredSneakAddsOfficialCameraTrackingAfterTheAuthoredHeadPose() {
+    void configuredCrawlSwimAndLadderMainsOwnTheWholePose() {
+        GeometryDocument geometry = handPropGeometry();
+        AuxiliaryBoneLayout layout = AuxiliaryBoneLayout.create(geometry);
+        Map<MovementAnimationType, String> movements = Map.ofEntries(
+                Map.entry(MovementAnimationType.SWIM, "swim"),
+                Map.entry(MovementAnimationType.WATER_IDLE, "swim_stand"),
+                Map.entry(MovementAnimationType.CRAWL_IDLE, "climbing"),
+                Map.entry(MovementAnimationType.CRAWL_MOVE, "climb"),
+                Map.entry(MovementAnimationType.LADDER_IDLE, "ladder_stillness"),
+                Map.entry(MovementAnimationType.LADDER_UP, "ladder_up"),
+                Map.entry(MovementAnimationType.LADDER_DOWN, "ladder_down"));
+        Map<String, AnimationClip> clips = new HashMap<>();
+        movements.values().forEach(name -> {
+            AnimationClip clip = new AnimationClip(name);
+            clip.duration(1.0F);
+            clip.playback(AnimationClip.Playback.REPEAT);
+            clip.boneTracks().put("Root", rotation(0.0D, 0.0D, 35.0D));
+            clips.put(name, clip);
+        });
+        ParallelAnimationProgram program = new ParallelAnimationProgram(
+                geometry, clips, layout, 1.0F, 1.0F);
+        int root = layout.entryForBoneName("Root").auxiliaryIndex();
+
+        movements.forEach((movement, mainName) -> {
+            ParallelAnimationProgram.Frame frame = program.sampleMovementAt(
+                    0.25D, List.of(mainName), mainName, movement,
+                    new NeutralEnvironment(),
+                    new AnimationControllerProgram.RuntimeState());
+
+            assertTrue(frame.replaceEpicFightPose(), movement.name());
+            assertFalse(isIdentity(frame.wholeModelDeltas()[root]), movement.name());
+            assertTrue(frame.movementPoseKey().contains(movement.configKey()),
+                    movement.name());
+        });
+    }
+
+    @Test
+    void configuredMovementAddsOfficialCameraTrackingAfterTheAuthoredHeadPose() {
         GeometryDocument geometry = officialHeadAndEar();
         AuxiliaryBoneLayout layout = AuxiliaryBoneLayout.create(geometry);
-        AnimationClip sneak = new AnimationClip("sneak");
-        sneak.boneTracks().put("Head", rotation(12.0D, 5.0D, 3.0D));
+        AnimationClip locomotion = new AnimationClip("walk");
+        locomotion.boneTracks().put("Head", rotation(12.0D, 5.0D, 3.0D));
         ParallelAnimationProgram program = new ParallelAnimationProgram(
-                geometry, Map.of(sneak.name(), sneak), layout, 1.0F, 1.0F);
+                geometry, Map.of(locomotion.name(), locomotion), layout, 1.0F, 1.0F);
         NeutralEnvironment looking = new NeutralEnvironment()
                 .query("ysm.head_pitch", -25.0D)
                 .query("ysm.head_yaw", 40.0D);
@@ -1146,24 +1494,264 @@ class ParallelAnimationProgramTest {
                 .rotateX((float) Math.toRadians(-37.0D));
 
         for (MovementAnimationType movement : List.of(
+                MovementAnimationType.WALK,
+                MovementAnimationType.RUN,
                 MovementAnimationType.SNEAK_IDLE,
-                MovementAnimationType.SNEAK_MOVE)) {
+                MovementAnimationType.SNEAK_MOVE,
+                MovementAnimationType.JUMP,
+                MovementAnimationType.CREATIVE_FLIGHT,
+                MovementAnimationType.ELYTRA_FLIGHT,
+                MovementAnimationType.CRAWL_IDLE,
+                MovementAnimationType.CRAWL_MOVE)) {
             ParallelAnimationProgram.Frame frame = program.sampleMovementAt(
-                    0.0D, List.of(sneak.name()), sneak.name(), movement,
+                    0.0D, List.of(locomotion.name()), locomotion.name(), movement,
                     looking, new AnimationControllerProgram.RuntimeState());
 
+            assertTrue(frame.replaceEpicFightPose(), movement.name());
             assertMatrix(expectedTracked, frame.wholeModelDeltas()[head]);
             assertMatrix(expectedTracked, frame.wholeModelDeltas()[ear]);
         }
 
-        ParallelAnimationProgram.Frame run = program.sampleMovementAt(
-                0.0D, List.of(sneak.name()), sneak.name(), MovementAnimationType.RUN,
-                looking, new AnimationControllerProgram.RuntimeState());
         Matrix4f expectedAuthoredOnly = new Matrix4f()
                 .rotateZ((float) Math.toRadians(3.0D))
                 .rotateY((float) Math.toRadians(-5.0D))
                 .rotateX((float) Math.toRadians(-12.0D));
-        assertMatrix(expectedAuthoredOnly, run.wholeModelDeltas()[head]);
+        for (MovementAnimationType movement : List.of(
+                MovementAnimationType.SWIM,
+                MovementAnimationType.WATER_IDLE)) {
+            ParallelAnimationProgram.Frame frame = program.sampleMovementAt(
+                    0.0D, List.of(locomotion.name()), locomotion.name(), movement,
+                    looking, new AnimationControllerProgram.RuntimeState());
+            assertMatrix(expectedAuthoredOnly, frame.wholeModelDeltas()[head]);
+        }
+
+        Matrix4f expectedLadderPitchOnly = new Matrix4f()
+                .rotateZ((float) Math.toRadians(3.0D))
+                .rotateY((float) Math.toRadians(-5.0D))
+                .rotateX((float) Math.toRadians(-37.0D));
+        for (MovementAnimationType movement : List.of(
+                MovementAnimationType.LADDER_IDLE,
+                MovementAnimationType.LADDER_UP,
+                MovementAnimationType.LADDER_DOWN)) {
+            ParallelAnimationProgram.Frame frame = program.sampleMovementAt(
+                    0.0D, List.of(locomotion.name()), locomotion.name(), movement,
+                    looking, new AnimationControllerProgram.RuntimeState());
+            assertMatrix(expectedLadderPitchOnly, frame.wholeModelDeltas()[head]);
+            assertMatrix(expectedLadderPitchOnly, frame.wholeModelDeltas()[ear]);
+        }
+    }
+
+    @Test
+    void configuredMovementDoesNotDoubleCameraTrackingAuthoredByYsm() {
+        GeometryDocument geometry = officialHeadAndEar();
+        AuxiliaryBoneLayout layout = AuxiliaryBoneLayout.create(geometry);
+        AnimationClip locomotion = new AnimationClip("walk");
+        AnimationClip.BoneTracks headTracks = new AnimationClip.BoneTracks();
+        headTracks.rotation(expressionTrack(
+                "ysm.head_pitch", "ysm.head_yaw", "3"));
+        locomotion.boneTracks().put("Head", headTracks);
+        ParallelAnimationProgram program = new ParallelAnimationProgram(
+                geometry, Map.of(locomotion.name(), locomotion), layout, 1.0F, 1.0F);
+        NeutralEnvironment looking = new NeutralEnvironment()
+                .query("ysm.head_pitch", -25.0D)
+                .query("ysm.head_yaw", 40.0D);
+        int head = layout.entryForBoneName("Head").auxiliaryIndex();
+        Matrix4f expectedAuthored = new Matrix4f()
+                .rotateZ((float) Math.toRadians(3.0D))
+                .rotateY((float) Math.toRadians(-40.0D))
+                .rotateX((float) Math.toRadians(25.0D));
+
+        ParallelAnimationProgram.Frame frame = program.sampleMovementAt(
+                0.0D, List.of(locomotion.name()), locomotion.name(),
+                MovementAnimationType.WALK, looking,
+                new AnimationControllerProgram.RuntimeState());
+
+        assertTrue(frame.replaceEpicFightPose());
+        assertMatrix(expectedAuthored, frame.wholeModelDeltas()[head]);
+    }
+
+    @Test
+    void ladderDoesNotDoublePitchAuthoredByAParentHeadControl() {
+        GeometryDocument geometry = wrappedRootAndTail();
+        AuxiliaryBoneLayout layout = AuxiliaryBoneLayout.create(geometry);
+        AnimationClip ladder = new AnimationClip("ladder_up");
+        AnimationClip.BoneTracks wrapperTracks = new AnimationClip.BoneTracks();
+        wrapperTracks.rotation(expressionTrack("ysm.head_pitch", "0", "0"));
+        ladder.boneTracks().put("MHead", wrapperTracks);
+        ladder.boneTracks().put("Head", rotation(0.0D, 0.0D, 0.0D));
+        ParallelAnimationProgram program = new ParallelAnimationProgram(
+                geometry, Map.of(ladder.name(), ladder), layout, 1.0F, 1.0F);
+        NeutralEnvironment looking = new NeutralEnvironment()
+                .query("ysm.head_pitch", -25.0D);
+        int headWrapper = layout.entryForBoneName("MHead").auxiliaryIndex();
+        int head = layout.entryForBoneName("Head").auxiliaryIndex();
+        Matrix4f expectedAuthored = new Matrix4f()
+                .rotateX((float) Math.toRadians(25.0D));
+
+        ParallelAnimationProgram.Frame frame = program.sampleMovementAt(
+                0.0D, List.of(ladder.name()), ladder.name(),
+                MovementAnimationType.LADDER_UP, looking,
+                new AnimationControllerProgram.RuntimeState());
+
+        assertMatrix(expectedAuthored, frame.wholeModelDeltas()[headWrapper]);
+        assertMatrix(expectedAuthored, frame.wholeModelDeltas()[head]);
+    }
+
+    @Test
+    void ladderHeadAuthorshipDoesNotTreatRootQueryAsAHeadControl() {
+        GeometryDocument geometry = wrappedRootAndTail();
+        AuxiliaryBoneLayout layout = AuxiliaryBoneLayout.create(geometry);
+        AnimationClip ladder = new AnimationClip("ladder_up");
+        AnimationClip.BoneTracks rootTracks = new AnimationClip.BoneTracks();
+        rootTracks.rotation(expressionTrack("ysm.head_pitch", "0", "0"));
+        ladder.boneTracks().put("Root", rootTracks);
+        ladder.boneTracks().put("Head", rotation(0.0D, 0.0D, 0.0D));
+        ParallelAnimationProgram program = new ParallelAnimationProgram(
+                geometry, Map.of(ladder.name(), ladder), layout, 1.0F, 1.0F);
+        NeutralEnvironment looking = new NeutralEnvironment()
+                .query("ysm.head_pitch", -25.0D);
+        int root = layout.entryForBoneName("Root").auxiliaryIndex();
+        int head = layout.entryForBoneName("Head").auxiliaryIndex();
+
+        ParallelAnimationProgram.Frame frame = program.sampleMovementAt(
+                0.0D, List.of(ladder.name()), ladder.name(),
+                MovementAnimationType.LADDER_UP, looking,
+                new AnimationControllerProgram.RuntimeState());
+
+        assertMatrix(new Matrix4f().rotateX((float) Math.toRadians(25.0D)),
+                frame.wholeModelDeltas()[root]);
+        assertIdentity(frame.wholeModelDeltas()[head]);
+    }
+
+    @Test
+    void crawlAppliesTheOfficialTerminalHeadPostLayerWithoutQueryRoll() {
+        GeometryDocument geometry = officialCrawlHeadHierarchy();
+        AuxiliaryBoneLayout layout = AuxiliaryBoneLayout.create(geometry);
+        AnimationClip crawl = new AnimationClip("climbing");
+        crawl.boneTracks().put("Root", rotation(90.0D, 0.0D, 0.0D));
+        crawl.boneTracks().put("UpBody",
+                rotationExpression("0", "0", "ysm.head_yaw"));
+        crawl.boneTracks().put("MHead",
+                rotationExpression("ysm.head_pitch", "0", "0"));
+        crawl.boneTracks().put("Head",
+                rotationExpression("-90", "ysm.head_yaw", "0"));
+        ParallelAnimationProgram program = new ParallelAnimationProgram(
+                geometry, Map.of(crawl.name(), crawl), layout, 1.0F, 1.0F);
+        NeutralEnvironment looking = new NeutralEnvironment()
+                .query("ysm.head_pitch", -30.0D)
+                .query("ysm.head_yaw", 45.0D);
+        int headWrapper = layout.entryForBoneName("MHead").auxiliaryIndex();
+        int head = layout.entryForBoneName("Head").auxiliaryIndex();
+        int face = layout.entryForBoneName("face").auxiliaryIndex();
+        int upBody = layout.entryForBoneName("UpBody").auxiliaryIndex();
+
+        ParallelAnimationProgram.Frame frame = program.sampleMovementAt(
+                0.0D, List.of(crawl.name()), crawl.name(),
+                MovementAnimationType.CRAWL_IDLE, looking,
+                new AnimationControllerProgram.RuntimeState());
+
+        assertTrue(frame.replaceEpicFightPose());
+        Matrix4f expectedWrapper = new Matrix4f()
+                .rotateX((float) Math.toRadians(-90.0D))
+                .rotateZ((float) Math.toRadians(45.0D))
+                .rotateX((float) Math.toRadians(30.0D));
+        Matrix4f expectedUpBody = new Matrix4f()
+                .rotateX((float) Math.toRadians(-90.0D))
+                .rotateZ((float) Math.toRadians(45.0D));
+        Matrix4f expectedHead = new Matrix4f()
+                .rotateY((float) Math.toRadians(45.0D));
+        assertMatrix(expectedUpBody, frame.wholeModelDeltas()[upBody]);
+        assertMatrix(expectedWrapper, frame.wholeModelDeltas()[headWrapper]);
+        assertMatrix(expectedHead, frame.wholeModelDeltas()[head]);
+        assertMatrix(expectedHead, frame.wholeModelDeltas()[face]);
+    }
+
+    @Test
+    void crawlMoveKeepsTheAuthoredHeadZSwayAfterTheOfficialPostLayer() {
+        GeometryDocument geometry = officialCrawlHeadHierarchy();
+        AuxiliaryBoneLayout layout = AuxiliaryBoneLayout.create(geometry);
+        AnimationClip crawl = new AnimationClip("climb");
+        crawl.boneTracks().put("Root", rotation(90.0D, 0.0D, 0.0D));
+        crawl.boneTracks().put("MHead",
+                rotationExpression("ysm.head_pitch", "0", "0"));
+        crawl.boneTracks().put("Head",
+                rotationExpression("-90", "ysm.head_yaw", "5"));
+        ParallelAnimationProgram program = new ParallelAnimationProgram(
+                geometry, Map.of(crawl.name(), crawl), layout, 1.0F, 1.0F);
+        NeutralEnvironment straightAhead = new NeutralEnvironment()
+                .query("ysm.head_pitch", 0.0D)
+                .query("ysm.head_yaw", 0.0D);
+        int head = layout.entryForBoneName("Head").auxiliaryIndex();
+
+        ParallelAnimationProgram.Frame frame = program.sampleMovementAt(
+                0.0D, List.of(crawl.name()), crawl.name(),
+                MovementAnimationType.CRAWL_MOVE, straightAhead,
+                new AnimationControllerProgram.RuntimeState());
+
+        assertMatrix(new Matrix4f().rotateY((float) Math.toRadians(5.0D)),
+                frame.wholeModelDeltas()[head]);
+    }
+
+    @Test
+    void crawlPostLayerRetainsPitchWhenALaterHoldResetsMHead() {
+        GeometryDocument geometry = officialCrawlHeadHierarchy();
+        AuxiliaryBoneLayout layout = AuxiliaryBoneLayout.create(geometry);
+        AnimationClip crawl = new AnimationClip("climbing");
+        crawl.boneTracks().put("Root", rotation(90.0D, 0.0D, 0.0D));
+        crawl.boneTracks().put("UpBody",
+                rotationExpression("0", "0", "ysm.head_yaw"));
+        crawl.boneTracks().put("MHead",
+                rotationExpression("ysm.head_pitch", "0", "0"));
+        crawl.boneTracks().put("Head",
+                rotationExpression("-90", "ysm.head_yaw", "0"));
+        AnimationClip hold = new AnimationClip("hold_mainhand:sword");
+        hold.boneTracks().put("MHead", rotation(0.0D, 0.0D, 0.0D));
+        ParallelAnimationProgram program = new ParallelAnimationProgram(
+                geometry, Map.of(crawl.name(), crawl, hold.name(), hold),
+                layout, 1.0F, 1.0F);
+        NeutralEnvironment looking = new NeutralEnvironment()
+                .query("ysm.head_pitch", -30.0D)
+                .query("ysm.head_yaw", 0.0D);
+        int headWrapper = layout.entryForBoneName("MHead").auxiliaryIndex();
+        int head = layout.entryForBoneName("Head").auxiliaryIndex();
+
+        ParallelAnimationProgram.Frame frame = program.sampleMovementAt(
+                0.0D, List.of(crawl.name(), hold.name()), crawl.name(),
+                MovementAnimationType.CRAWL_IDLE, looking,
+                new AnimationControllerProgram.RuntimeState());
+
+        Matrix4f expectedWrapper = new Matrix4f()
+                .rotateX((float) Math.toRadians(-90.0D));
+        Matrix4f expectedHead = new Matrix4f()
+                .rotateX((float) Math.toRadians(-30.0D));
+        assertMatrix(expectedWrapper, frame.wholeModelDeltas()[headWrapper]);
+        assertMatrix(expectedHead, frame.wholeModelDeltas()[head]);
+    }
+
+    @Test
+    void configuredMovementAddsOnlyTheCameraAxisMissingFromYsm() {
+        GeometryDocument geometry = officialHeadAndEar();
+        AuxiliaryBoneLayout layout = AuxiliaryBoneLayout.create(geometry);
+        AnimationClip locomotion = new AnimationClip("walk");
+        AnimationClip.BoneTracks headTracks = new AnimationClip.BoneTracks();
+        headTracks.rotation(expressionTrack("ysm.head_pitch", "5", "0"));
+        locomotion.boneTracks().put("Head", headTracks);
+        ParallelAnimationProgram program = new ParallelAnimationProgram(
+                geometry, Map.of(locomotion.name(), locomotion), layout, 1.0F, 1.0F);
+        NeutralEnvironment looking = new NeutralEnvironment()
+                .query("ysm.head_pitch", -25.0D)
+                .query("ysm.head_yaw", 40.0D);
+        int head = layout.entryForBoneName("Head").auxiliaryIndex();
+        Matrix4f expected = new Matrix4f()
+                .rotateY((float) Math.toRadians(35.0D))
+                .rotateX((float) Math.toRadians(25.0D));
+
+        ParallelAnimationProgram.Frame frame = program.sampleMovementAt(
+                0.0D, List.of(locomotion.name()), locomotion.name(),
+                MovementAnimationType.WALK, looking,
+                new AnimationControllerProgram.RuntimeState());
+
+        assertMatrix(expected, frame.wholeModelDeltas()[head]);
     }
 
     @Test
@@ -1477,6 +2065,9 @@ class ParallelAnimationProgramTest {
                 "an ordinary item's HOLD layer is evaluated during its equip window");
         assertFalse(ParallelAnimationProgram.keepsHeldItemHoldClip(false, false),
                 "an ordinary HOLD layer must not leak pose or effect output outside that window");
+        assertTrue(ParallelAnimationProgram.keepsHeldItemHoldClip(
+                        false, false, true),
+                "configured YSM movement keeps the official ordinary HOLD body layer");
     }
 
     @Test
@@ -2226,6 +2817,33 @@ class ParallelAnimationProgramTest {
         return geometry;
     }
 
+    private static GeometryDocument officialCrawlHeadHierarchy() {
+        GeometryDocument geometry = new GeometryDocument();
+        GeometryDocument.Bone modelRoot = new GeometryDocument.Bone("MRoot");
+        GeometryDocument.Bone root = new GeometryDocument.Bone("Root");
+        GeometryDocument.Bone allBody = new GeometryDocument.Bone("AllBody");
+        GeometryDocument.Bone upBody = new GeometryDocument.Bone("UpBody");
+        GeometryDocument.Bone upperBody = new GeometryDocument.Bone("UpperBody");
+        GeometryDocument.Bone allHead = new GeometryDocument.Bone("AllHead");
+        GeometryDocument.Bone headWrapper = new GeometryDocument.Bone("MHead");
+        GeometryDocument.Bone head = new GeometryDocument.Bone("Head");
+        GeometryDocument.Bone face = new GeometryDocument.Bone("face");
+        root.parentName("MRoot");
+        allBody.parentName("Root");
+        upBody.parentName("AllBody");
+        upperBody.parentName("UpBody");
+        allHead.parentName("UpperBody");
+        headWrapper.parentName("AllHead");
+        head.parentName("MHead");
+        face.parentName("Head");
+        for (GeometryDocument.Bone bone : List.of(modelRoot, root, allBody,
+                upBody, upperBody, allHead, headWrapper, head, face)) {
+            geometry.add(bone);
+        }
+        geometry.linkHierarchy();
+        return geometry;
+    }
+
     private static GeometryDocument heldAndBackProps() {
         GeometryDocument geometry = new GeometryDocument();
         GeometryDocument.Bone root = new GeometryDocument.Bone("Root");
@@ -2346,6 +2964,13 @@ class ParallelAnimationProgramTest {
     private static AnimationClip.BoneTracks rotation(double x, double y, double z) {
         AnimationClip.BoneTracks tracks = new AnimationClip.BoneTracks();
         tracks.rotation(constantTrack(x, y, z));
+        return tracks;
+    }
+
+    private static AnimationClip.BoneTracks rotationExpression(
+            String x, String y, String z) {
+        AnimationClip.BoneTracks tracks = new AnimationClip.BoneTracks();
+        tracks.rotation(expressionTrack(x, y, z));
         return tracks;
     }
 

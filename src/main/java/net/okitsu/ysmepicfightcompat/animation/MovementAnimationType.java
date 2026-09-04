@@ -7,6 +7,7 @@ import net.minecraft.world.entity.player.Player;
 import javax.annotation.Nullable;
 import java.util.Arrays;
 import java.util.Locale;
+import java.util.Map;
 
 /** Stable, user-facing movement states that may hand full-body pose ownership to YSM. */
 public enum MovementAnimationType {
@@ -27,6 +28,22 @@ public enum MovementAnimationType {
 
     private static final double MOVING_SPEED_SQUARED = 0.0001D;
     private static final double VERTICAL_EPSILON = 0.01D;
+    private static final float CRAWL_MOVING_THRESHOLD = 0.05F;
+    private static final Map<String, MovementAnimationType> CONTROL_QUERIES = Map.ofEntries(
+            Map.entry("ctrl.walk", WALK),
+            Map.entry("ctrl.run", RUN),
+            Map.entry("ctrl.sneaking", SNEAK_IDLE),
+            Map.entry("ctrl.sneak", SNEAK_MOVE),
+            Map.entry("ctrl.jump", JUMP),
+            Map.entry("ctrl.fly", CREATIVE_FLIGHT),
+            Map.entry("ctrl.elytra_fly", ELYTRA_FLIGHT),
+            Map.entry("ctrl.swim", SWIM),
+            Map.entry("ctrl.swim_stand", WATER_IDLE),
+            Map.entry("ctrl.climbing", CRAWL_IDLE),
+            Map.entry("ctrl.climb", CRAWL_MOVE),
+            Map.entry("ctrl.ladder_stillness", LADDER_IDLE),
+            Map.entry("ctrl.ladder_up", LADDER_UP),
+            Map.entry("ctrl.ladder_down", LADDER_DOWN));
 
     private final String configKey;
 
@@ -36,6 +53,11 @@ public enum MovementAnimationType {
 
     public String configKey() {
         return configKey;
+    }
+
+    /** Whether this semantic state is one of official YSM's ladder clips. */
+    public boolean isLadder() {
+        return this == LADDER_IDLE || this == LADDER_UP || this == LADDER_DOWN;
     }
 
     @Nullable
@@ -49,6 +71,28 @@ public enum MovementAnimationType {
                 .findFirst().orElse(null);
     }
 
+    /** Returns the semantic movement represented by an official main-controller flag. */
+    @Nullable
+    static MovementAnimationType fromControlQuery(String query) {
+        return query == null ? null : CONTROL_QUERIES.get(
+                query.trim().toLowerCase(Locale.ROOT));
+    }
+
+    /** Returns null only when the query is not an official locomotion controller flag. */
+    @Nullable
+    static Boolean controlValue(String query,
+                                @Nullable MovementAnimationType movement) {
+        if (query == null) {
+            return null;
+        }
+        String normalized = query.trim().toLowerCase(Locale.ROOT);
+        if ("ctrl.idle".equals(normalized)) {
+            return movement == null;
+        }
+        MovementAnimationType expected = CONTROL_QUERIES.get(normalized);
+        return expected == null ? null : expected == movement;
+    }
+
     /**
      * Resolves only locomotion. Death, hurt, sleeping, riding, riptide, ordinary falling,
      * held-item actions, and Epic Fight actions deliberately remain outside this policy.
@@ -59,16 +103,11 @@ public enum MovementAnimationType {
                 || entity.isSleeping() || entity.isPassenger() || entity.hurtTime > 0) {
             return null;
         }
-        if (entity.isSwimming()) {
-            return SWIM;
-        }
-        if (entity.onClimbable()) {
-            double vertical = entity.getDeltaMovement().y;
-            return vertical > VERTICAL_EPSILON ? LADDER_UP
-                    : vertical < -VERTICAL_EPSILON ? LADDER_DOWN : LADDER_IDLE;
-        }
-        if (isCrawling(entity)) {
-            return isMoving(entity) ? CRAWL_MOVE : CRAWL_IDLE;
+        MovementAnimationType special = resolveSpecialMovement(
+                entity.isSwimming(), isCrawling(entity), entity.onClimbable(),
+                crawlMoving(entity.walkAnimation.speed()), entity.getY(), entity.yo);
+        if (special != null) {
+            return special;
         }
         if (entity instanceof Player player && player.getAbilities().flying) {
             return CREATIVE_FLIGHT;
@@ -76,7 +115,7 @@ public enum MovementAnimationType {
         if (entity.isFallFlying()) {
             return ELYTRA_FLIGHT;
         }
-        if (entity.isInWaterOrBubble()) {
+        if (waterIdle(entity.isInWater(), entity.onGround())) {
             return WATER_IDLE;
         }
         if (!entity.onGround()) {
@@ -96,7 +135,38 @@ public enum MovementAnimationType {
     }
 
     private static boolean isCrawling(LivingEntity entity) {
-        return entity.getPose() == Pose.SWIMMING && !entity.isInWaterOrBubble()
-                && !entity.isFallFlying();
+        return entity.getPose() == Pose.SWIMMING;
+    }
+
+    /** Mirrors official YSM's ordered swim, crawl, then ladder main-state checks. */
+    @Nullable
+    static MovementAnimationType resolveSpecialMovement(
+            boolean swimming, boolean crawling, boolean climbable,
+            boolean crawlMoving, double currentY, double previousY) {
+        if (swimming) {
+            return SWIM;
+        }
+        if (crawling) {
+            return crawlMoving ? CRAWL_MOVE : CRAWL_IDLE;
+        }
+        return climbable ? ladderMovement(currentY, previousY) : null;
+    }
+
+    /** Mirrors official YSM's crawl split based on the rendered walk-animation speed. */
+    static boolean crawlMoving(float walkAnimationSpeed) {
+        return Float.isFinite(walkAnimationSpeed)
+                && Math.abs(walkAnimationSpeed) > CRAWL_MOVING_THRESHOLD;
+    }
+
+    /** Mirrors official YSM's sign-only last-tick displacement split for ladders. */
+    static MovementAnimationType ladderMovement(double currentY, double previousY) {
+        double displacement = currentY - previousY;
+        return displacement > 0.0D ? LADDER_UP
+                : displacement < 0.0D ? LADDER_DOWN : LADDER_IDLE;
+    }
+
+    /** Official water-idle playback excludes players standing on the bottom. */
+    static boolean waterIdle(boolean inWater, boolean onGround) {
+        return inWater && !onGround;
     }
 }

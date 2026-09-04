@@ -3,6 +3,7 @@ package net.okitsu.ysmepicfightcompat.render;
 import net.minecraft.world.InteractionHand;
 import net.minecraft.world.entity.HumanoidArm;
 import net.minecraft.world.entity.LivingEntity;
+import net.okitsu.ysmepicfightcompat.animation.MovementAnimationType;
 import net.okitsu.ysmepicfightcompat.mesh.CompatHumanoidMesh;
 import net.okitsu.ysmepicfightcompat.mesh.HumanoidRig;
 import org.joml.Vector3f;
@@ -11,6 +12,7 @@ import yesman.epicfight.api.utils.math.OpenMatrix4f;
 import javax.annotation.Nullable;
 import java.util.ArrayDeque;
 import java.util.Map;
+import java.util.Set;
 
 /** Render-thread context connecting the selected mesh, its body draw, and item layers. */
 public final class RenderFrameContext {
@@ -22,6 +24,8 @@ public final class RenderFrameContext {
         @Nullable
         private final Float epicModelYaw;
         private final boolean epicFightActionActive;
+        @Nullable
+        private final MovementAnimationType ysmMovement;
         private CompatHumanoidMesh mesh;
         private OpenMatrix4f[] inputPoses;
         private Vector3f rightFist;
@@ -33,11 +37,14 @@ public final class RenderFrameContext {
         private boolean suppressRightHeldItem;
         private boolean suppressLeftHeldItem;
         private boolean mainHandItemSwitchUsesOffArmTool;
+        private boolean naturalLadderPose;
+        private Set<InteractionHand> ladderItemsInHand = Set.of();
 
         private Frame(LivingEntity entity, boolean firstPerson,
                       Map<String, Boolean> visibleParts, boolean showUnlistedParts,
                       @Nullable Float epicModelYaw,
-                      boolean epicFightActionActive) {
+                      boolean epicFightActionActive,
+                      @Nullable MovementAnimationType ysmMovement) {
             this.entity = entity;
             this.firstPerson = firstPerson;
             this.visibleParts = Map.copyOf(visibleParts);
@@ -45,6 +52,7 @@ public final class RenderFrameContext {
             this.epicModelYaw = epicModelYaw != null && Float.isFinite(epicModelYaw)
                     ? epicModelYaw : null;
             this.epicFightActionActive = epicFightActionActive;
+            this.ysmMovement = ysmMovement;
         }
 
         public LivingEntity entity() {
@@ -74,6 +82,12 @@ public final class RenderFrameContext {
             return epicFightActionActive;
         }
 
+        /** Configured YSM full-body movement that owns this exact rendered frame. */
+        @Nullable
+        public MovementAnimationType ysmMovement() {
+            return ysmMovement;
+        }
+
         public boolean isBoundTo(CompatHumanoidMesh expected) {
             return mesh == expected;
         }
@@ -97,8 +111,15 @@ public final class RenderFrameContext {
     public static Frame pushThirdPerson(LivingEntity entity,
                                         @Nullable Float epicModelYaw,
                                         boolean epicFightActionActive) {
+        return pushThirdPerson(entity, epicModelYaw, epicFightActionActive, null);
+    }
+
+    public static Frame pushThirdPerson(LivingEntity entity,
+                                        @Nullable Float epicModelYaw,
+                                        boolean epicFightActionActive,
+                                        @Nullable MovementAnimationType ysmMovement) {
         return push(new Frame(entity, false, Map.of(), true, epicModelYaw,
-                epicFightActionActive));
+                epicFightActionActive, ysmMovement));
     }
 
     public static Frame pushFirstPerson(LivingEntity entity,
@@ -121,7 +142,7 @@ public final class RenderFrameContext {
                                         @Nullable Float epicModelYaw,
                                         boolean epicFightActionActive) {
         return push(new Frame(entity, true, visibleParts, showUnlistedParts,
-                epicModelYaw, epicFightActionActive));
+                epicModelYaw, epicFightActionActive, null));
     }
 
     private static Frame push(Frame frame) {
@@ -172,7 +193,9 @@ public final class RenderFrameContext {
                                              @Nullable OpenMatrix4f[] attachmentPoses,
                                              boolean suppressRightHeldItem,
                                              boolean suppressLeftHeldItem,
-                                             boolean mainHandItemSwitchUsesOffArmTool) {
+                                             boolean mainHandItemSwitchUsesOffArmTool,
+                                             boolean naturalLadderPose,
+                                             Set<InteractionHand> ladderItemsInHand) {
         Frame frame = current();
         if (frame == null || frame.entity != entity || frame.mesh != mesh
                 || inputPoses == null) {
@@ -192,6 +215,9 @@ public final class RenderFrameContext {
         frame.suppressLeftHeldItem = suppressLeftHeldItem;
         frame.mainHandItemSwitchUsesOffArmTool =
                 mainHandItemSwitchUsesOffArmTool;
+        frame.naturalLadderPose = naturalLadderPose;
+        frame.ladderItemsInHand = ladderItemsInHand == null
+                ? Set.of() : Set.copyOf(ladderItemsInHand);
     }
 
     @Nullable
@@ -305,8 +331,27 @@ public final class RenderFrameContext {
         boolean right = physicalRightForLogicalHand(
                 hand, entity.getMainArm(),
                 frame.mainHandItemSwitchUsesOffArmTool);
-        return frame.mesh.replacesHeldItem(entity, hand)
-                || (right ? frame.suppressRightHeldItem : frame.suppressLeftHeldItem);
+        return shouldSuppressHeldItem(frame.naturalLadderPose,
+                frame.mesh.replacesHeldItem(entity, hand),
+                right ? frame.suppressRightHeldItem : frame.suppressLeftHeldItem);
+    }
+
+    static boolean shouldSuppressHeldItem(
+            boolean naturalLadderPose, boolean modelReplaces,
+            boolean authoredLocatorSuppresses) {
+        // Natural ladder mode hides the YSM prop. Keep Epic Fight's back item only
+        // when the selected model does not replace it; otherwise both render paths
+        // stay hidden while both hands climb.
+        return naturalLadderPose ? modelReplaces
+                : modelReplaces || authoredLocatorSuppresses;
+    }
+
+    /** True only when ladder mode is configured to keep this ordinary item in hand. */
+    public static boolean keepsLadderItemInHand(
+            LivingEntity entity, InteractionHand hand) {
+        Frame frame = current();
+        return frame != null && frame.entity == entity && frame.mesh != null
+                && frame.ladderItemsInHand.contains(hand);
     }
 
     static boolean physicalRightForLogicalHand(
@@ -332,6 +377,8 @@ public final class RenderFrameContext {
         frame.suppressRightHeldItem = false;
         frame.suppressLeftHeldItem = false;
         frame.mainHandItemSwitchUsesOffArmTool = false;
+        frame.naturalLadderPose = false;
+        frame.ladderItemsInHand = Set.of();
     }
 
     private static boolean finite(@Nullable Vector3f value) {

@@ -43,6 +43,7 @@ public record MovementAnimationPreferenceUpdateMessage(
         output.writeUtf(state.modelId(), MovementAnimationPolicy.MAX_MODEL_ID_LENGTH);
         output.writeByte(state.movement() == null ? -1 : state.movement().ordinal());
         output.writeBoolean(state.ysmOwned());
+        output.writeBoolean(state.naturalLadderPose());
     }
 
     static MovementAnimationDisplayState readState(FriendlyByteBuf input) {
@@ -56,6 +57,7 @@ public record MovementAnimationPreferenceUpdateMessage(
         } else {
             throw new IllegalArgumentException("Invalid movement-animation kind");
         }
-        return new MovementAnimationDisplayState(modelId, movement, input.readBoolean());
+        return new MovementAnimationDisplayState(
+                modelId, movement, input.readBoolean(), input.readBoolean());
     }
 }

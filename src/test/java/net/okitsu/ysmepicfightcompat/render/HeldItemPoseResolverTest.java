@@ -1,14 +1,35 @@
 package net.okitsu.ysmepicfightcompat.render;
 
+import net.minecraft.world.InteractionHand;
+import net.minecraft.world.item.UseAnim;
 import net.okitsu.ysmepicfightcompat.mesh.HumanoidRig;
 import org.junit.jupiter.api.Test;
 import yesman.epicfight.api.utils.math.OpenMatrix4f;
 import yesman.epicfight.api.utils.math.Vec3f;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertSame;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class HeldItemPoseResolverTest {
+    @Test
+    void followsEpicFightsFixedToolHandsAndRecognizesItsBowProxyRequest() {
+        assertTrue(HeldItemPoseResolver.ladderItemUsesRightTool(
+                InteractionHand.MAIN_HAND));
+        assertFalse(HeldItemPoseResolver.ladderItemUsesRightTool(
+                InteractionHand.OFF_HAND));
+        assertTrue(HeldItemPoseResolver.usesLadderHandAttachment(
+                InteractionHand.MAIN_HAND, true, true, UseAnim.NONE));
+        assertTrue(HeldItemPoseResolver.usesLadderHandAttachment(
+                InteractionHand.OFF_HAND, true, false, UseAnim.NONE));
+        assertTrue(HeldItemPoseResolver.usesLadderHandAttachment(
+                InteractionHand.OFF_HAND, false, true, UseAnim.BOW),
+                "Epic Fight renders a main-hand bow through its off-hand correction");
+        assertFalse(HeldItemPoseResolver.usesLadderHandAttachment(
+                InteractionHand.OFF_HAND, false, true, UseAnim.NONE));
+    }
+
     @Test
     void identifiesAnyExactEpicFightAttachmentPoseEntry() {
         OpenMatrix4f[] poses = matrices();

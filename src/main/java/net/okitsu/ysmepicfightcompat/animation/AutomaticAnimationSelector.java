@@ -238,14 +238,19 @@ final class AutomaticAnimationSelector {
         if (movement == null) {
             return main(firstAvailable("idle", "new_idle_empty"));
         }
-        String clip = switch (movement) {
+        return new MainState(movementClip(movement), movement);
+    }
+
+    /** Resolves the official main clip while keeping crawl and ladder semantics separate. */
+    String movementClip(MovementAnimationType movement) {
+        return switch (movement) {
             case SWIM -> firstAvailable("swim", "idle", "new_idle_empty");
             case LADDER_UP -> firstAvailable(
-                    "ladder_up", "climb", "idle", "new_idle_empty");
+                    "ladder_up", "idle", "new_idle_empty");
             case LADDER_DOWN -> firstAvailable(
-                    "ladder_down", "climb", "idle", "new_idle_empty");
+                    "ladder_down", "idle", "new_idle_empty");
             case LADDER_IDLE -> firstAvailable(
-                    "ladder_stillness", "climbing", "idle", "new_idle_empty");
+                    "ladder_stillness", "idle", "new_idle_empty");
             case CRAWL_MOVE -> firstAvailable("climb", "idle", "new_idle_empty");
             case CRAWL_IDLE -> firstAvailable("climbing", "idle", "new_idle_empty");
             case CREATIVE_FLIGHT -> firstAvailable("fly", "idle", "new_idle_empty");
@@ -258,7 +263,6 @@ final class AutomaticAnimationSelector {
             case RUN -> firstAvailable("run", "walk", "idle", "new_idle_empty");
             case WALK -> firstAvailable("walk", "idle", "new_idle_empty");
         };
-        return new MainState(clip, movement);
     }
 
     private static MainState main(String clip) {

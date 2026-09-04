@@ -6,9 +6,15 @@ import net.okitsu.ysmepicfightcompat.animation.MovementAnimationType;
 public record MovementAnimationDisplayState(
         String modelId,
         MovementAnimationType movement,
-        boolean ysmOwned) {
+        boolean ysmOwned,
+        boolean naturalLadderPose) {
     public static final MovementAnimationDisplayState DEFAULT =
-            new MovementAnimationDisplayState("", null, false);
+            new MovementAnimationDisplayState("", null, false, false);
+
+    public MovementAnimationDisplayState(
+            String modelId, MovementAnimationType movement, boolean ysmOwned) {
+        this(modelId, movement, ysmOwned, false);
+    }
 
     public MovementAnimationDisplayState {
         modelId = MovementAnimationPolicy.normalizeModelId(modelId);
@@ -19,11 +25,21 @@ public record MovementAnimationDisplayState(
         if (modelId.isEmpty() || movement == null) {
             ysmOwned = false;
         }
+        if (!ysmOwned || movement == null || !movement.isLadder()) {
+            naturalLadderPose = false;
+        }
     }
 
     public boolean usesYsm(String selectedModelId, MovementAnimationType currentMovement) {
         return ysmOwned && movement != null && movement == currentMovement
                 && modelId.equals(MovementAnimationPolicy.normalizeModelId(selectedModelId));
+    }
+
+    /** Whether this owner selected the natural ladder composition for this exact frame. */
+    public boolean usesNaturalLadderPose(
+            String selectedModelId, MovementAnimationType currentMovement) {
+        return naturalLadderPose
+                && usesYsm(selectedModelId, currentMovement);
     }
 
     /**

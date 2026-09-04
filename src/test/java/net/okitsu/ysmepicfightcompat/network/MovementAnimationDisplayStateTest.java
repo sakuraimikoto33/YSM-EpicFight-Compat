@@ -46,6 +46,35 @@ class MovementAnimationDisplayStateTest {
     }
 
     @Test
+    void naturalLadderStateMatchesOnlyItsResolvedModelAndMovement() {
+        MovementAnimationDisplayState state = new MovementAnimationDisplayState(
+                "wine_fox/01_taisho_maid", MovementAnimationType.LADDER_UP,
+                true, true);
+
+        assertTrue(state.usesNaturalLadderPose(
+                "wine_fox/01_taisho_maid", MovementAnimationType.LADDER_UP));
+        assertFalse(state.usesNaturalLadderPose(
+                "wine_fox/21_saint", MovementAnimationType.LADDER_UP));
+        assertFalse(state.usesNaturalLadderPose(
+                "wine_fox/01_taisho_maid", MovementAnimationType.LADDER_DOWN));
+    }
+
+    @Test
+    void naturalLadderStateCannotEscapeLadderYsmOwnership() {
+        MovementAnimationDisplayState ordinaryMovement =
+                new MovementAnimationDisplayState(
+                        "wine_fox/01_taisho_maid", MovementAnimationType.RUN,
+                        true, true);
+        MovementAnimationDisplayState epicOwnedLadder =
+                new MovementAnimationDisplayState(
+                        "wine_fox/01_taisho_maid", MovementAnimationType.LADDER_IDLE,
+                        false, true);
+
+        assertFalse(ordinaryMovement.naturalLadderPose());
+        assertFalse(epicOwnedLadder.naturalLadderPose());
+    }
+
+    @Test
     void emptyModelOrMovementCannotClaimYsmOwnership() {
         MovementAnimationDisplayState noModel = new MovementAnimationDisplayState(
                 "", MovementAnimationType.RUN, true);
@@ -54,6 +83,8 @@ class MovementAnimationDisplayStateTest {
 
         assertFalse(noModel.ysmOwned());
         assertFalse(noMovement.ysmOwned());
+        assertFalse(noModel.naturalLadderPose());
+        assertFalse(noMovement.naturalLadderPose());
         assertFalse(noModel.usesYsm("", MovementAnimationType.RUN));
         assertFalse(noMovement.usesYsm("wine_fox/21_saint", null));
     }

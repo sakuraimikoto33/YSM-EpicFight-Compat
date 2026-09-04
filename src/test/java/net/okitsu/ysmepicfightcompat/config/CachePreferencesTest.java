@@ -48,9 +48,14 @@ class CachePreferencesTest {
                 "client", "useYsmMovementAnimations"))
                 instanceof ForgeConfigSpec.ValueSpec);
         assertTrue(ClientPreferences.CLIENT_SPEC.getRaw(List.of(
+                "client", "useNaturalLadderAnimations"))
+                instanceof ForgeConfigSpec.ValueSpec);
+        assertTrue(ClientPreferences.CLIENT_SPEC.getRaw(List.of(
                 "client", "movementAnimationExclusions"))
                 instanceof ForgeConfigSpec.ValueSpec);
         assertTrue(ClientPreferences.USE_YSM_MOVEMENT_ANIMATIONS
+                .getDefault());
+        assertTrue(ClientPreferences.USE_NATURAL_LADDER_ANIMATIONS
                 .getDefault());
         assertTrue(ClientPreferences
                 .USE_YSM_HELD_ITEM_SWITCH_ANIMATIONS.getDefault());
@@ -117,6 +122,9 @@ class CachePreferencesTest {
                 "Default: true");
         assertCommentTail(ClientPreferences.CLIENT_SPEC,
                 List.of("client", "useYsmMovementAnimations"),
+                "Default: true");
+        assertCommentTail(ClientPreferences.CLIENT_SPEC,
+                List.of("client", "useNaturalLadderAnimations"),
                 "Default: true");
         assertCommentTail(ClientPreferences.CLIENT_SPEC,
                 List.of("client", "epicFightCompatibilityWarningShown"),

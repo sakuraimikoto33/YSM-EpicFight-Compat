@@ -88,7 +88,19 @@ final class MovementPoseTransition {
                 transitionItemSwitchHands = Set.of();
                 transitionStart = Double.NaN;
             } else if (!Objects.equals(previousMovementPoseKey, movementPoseKey)) {
-                if (lastOutput != null) {
+                boolean changingWithinYsm = previousMovementPoseKey != null
+                        && movementPoseKey != null;
+                boolean entryBlendPresent = transitionSource != null
+                        && Double.isFinite(transitionStart);
+                if (changingWithinYsm && entryBlendPresent) {
+                    // Crawl idle/move and ladder up/still/down can alternate every tick.
+                    // Keep the original Epic Fight -> YSM ownership blend running while
+                    // its live authored target changes; restarting from lastOutput would
+                    // pin these states to the initial Epic Fight pose indefinitely.
+                    transitionItemSwitchHands = union(
+                            transitionItemSwitchHands,
+                            union(previousItemSwitchHands, currentItemSwitchHands));
+                } else if (lastOutput != null) {
                     // Entering or leaving YSM ownership, or switching between two
                     // authored movements, starts from the exact prior displayed pose.
                     transitionSource = copyOf(lastOutput);

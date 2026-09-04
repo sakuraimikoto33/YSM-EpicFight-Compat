@@ -41,6 +41,8 @@
   "config.ysm_epicfight_compat.held_item_switch_animation_entry.invalid": "Enter an item ID such as minecraft:diamond_pickaxe or minecraft:air, or an item tag such as #forge:tools/pickaxes.",
   "config.ysm_epicfight_compat.use_ysm_movement_animations": "Use YSM movement animations",
   "config.ysm_epicfight_compat.use_ysm_movement_animations.tooltip": "When enabled, lets model-authored YSM full-body locomotion replace Epic Fight locomotion. The current resolved pose decision, not these rules, is synchronized to other players.",
+  "config.ysm_epicfight_compat.use_natural_ladder_animations": "Use natural YSM ladder animations",
+  "config.ysm_epicfight_compat.use_natural_ladder_animations.tooltip": "When enabled, keeps authored YSM arm motion on both arms so both hands can climb. Ordinary Epic Fight items are stowed; items replaced by a YSM model are hidden. Models without dedicated ladder arm motion keep their original behavior. Only the resolved pose state, not this setting, is synchronized.",
   "config.ysm_epicfight_compat.movement_animation_exclusions": "Model-specific movement exclusions",
   "config.ysm_epicfight_compat.movement_animation_exclusions.tooltip": "Each model ID has movement states that disable YSM movement animation even while the main setting is enabled. The list has no effect while the main setting is disabled. Configured automatically adds the currently selected model. Rules stay local; only the current resolved pose decision is synchronized.",
   "config.ysm_epicfight_compat.movement_animation_entry.tooltip": "Movement states that disable YSM movement animation for this YSM model.",

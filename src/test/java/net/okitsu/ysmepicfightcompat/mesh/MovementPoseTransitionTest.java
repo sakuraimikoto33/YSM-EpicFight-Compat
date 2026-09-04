@@ -76,6 +76,32 @@ class MovementPoseTransitionTest {
     }
 
     @Test
+    void alternatingCrawlOrLadderStatesDoNotRestartTheOwnershipEntryBlend() {
+        Fixture fixture = new Fixture();
+        MovementPoseTransition.Channel channel = new MovementPoseTransition.Channel();
+
+        channel.apply(0.0D, null, false, fixture.composer, fixture.pose(2.0F));
+
+        OpenMatrix4f[] downStart = fixture.pose(10.0F);
+        channel.apply(1.0D, "ladder_down", false, fixture.composer, downStart);
+        assertEquals(2.0F, fixture.x(downStart), 0.0001F);
+
+        OpenMatrix4f[] idleMiddle = fixture.pose(20.0F);
+        channel.apply(2.0D, "ladder_idle", false, fixture.composer, idleMiddle);
+        assertEquals(8.0F, fixture.x(idleMiddle), 0.0001F,
+                "an internal YSM state change must retain the original entry clock");
+
+        OpenMatrix4f[] downMiddle = fixture.pose(14.0F);
+        channel.apply(3.0D, "ladder_down", false, fixture.composer, downMiddle);
+        assertEquals(10.0F, fixture.x(downMiddle), 0.0001F);
+
+        OpenMatrix4f[] idleEnd = fixture.pose(20.0F);
+        channel.apply(4.0D, "ladder_idle", false, fixture.composer, idleEnd);
+        assertEquals(20.0F, fixture.x(idleEnd), 0.0001F,
+                "the YSM pose must become fully owned after the original three ticks");
+    }
+
+    @Test
     void tickRewindAndPoseCountChangesResetStaleTransitionState() {
         Fixture fixture = new Fixture();
         MovementPoseTransition.Channel channel = new MovementPoseTransition.Channel();

@@ -8,6 +8,7 @@ import yesman.epicfight.api.utils.math.OpenMatrix4f;
 
 import java.util.HashMap;
 import java.util.Map;
+import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -75,13 +76,31 @@ class RenderFrameContextTest {
     }
 
     @Test
+    void naturalLadderHidesEpicItemOnlyWhenTheModelReplacesIt() {
+        assertTrue(RenderFrameContext.shouldSuppressHeldItem(
+                true, true, true));
+        assertTrue(RenderFrameContext.shouldSuppressHeldItem(
+                true, true, false));
+        assertFalse(RenderFrameContext.shouldSuppressHeldItem(
+                true, false, true));
+        assertFalse(RenderFrameContext.shouldSuppressHeldItem(
+                true, false, false));
+        assertTrue(RenderFrameContext.shouldSuppressHeldItem(
+                false, true, false));
+        assertTrue(RenderFrameContext.shouldSuppressHeldItem(
+                false, false, true));
+        assertFalse(RenderFrameContext.shouldSuppressHeldItem(
+                false, false, false));
+    }
+
+    @Test
     void defensivelyPublishesTheElytraLocatorForTheExactPoseArray() {
         RenderFrameContext.pushThirdPerson(null);
         OpenMatrix4f[] inputPoses = {new OpenMatrix4f()};
         OpenMatrix4f locator = new OpenMatrix4f().translate(2.0F, 3.0F, 4.0F);
         RenderFrameContext.publishHeldItemPoints(
                 null, null, inputPoses, null, null, null, null,
-                locator, null, false, false, false);
+                locator, null, false, false, false, false, Set.of());
         locator.m30 = 99.0F;
 
         OpenMatrix4f published = RenderFrameContext.elytraLocatorPose(

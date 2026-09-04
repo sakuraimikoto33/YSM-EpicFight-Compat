@@ -52,6 +52,25 @@ public final class ClientMovementAnimationPreferences {
                 .usesYsm(selectedModelId, movement);
     }
 
+    /** Resolves only the current visual choice; the underlying client setting is not sent. */
+    public static boolean usesNaturalLadderPose(
+            LivingEntity entity, String selectedModelId,
+            MovementAnimationType movement) {
+        if (entity == null || movement == null || !movement.isLadder()) {
+            return false;
+        }
+        Minecraft minecraft = Minecraft.getInstance();
+        Player local = minecraft.player;
+        if (local != null && local.getUUID().equals(entity.getUUID())) {
+            return localNaturalLadderPose(selectedModelId, movement);
+        }
+        if (!(entity instanceof Player)) {
+            return false;
+        }
+        return RemoteMovementAnimationPreferences.find(entity.getUUID())
+                .usesNaturalLadderPose(selectedModelId, movement);
+    }
+
     /**
      * RemotePlayer velocity and creative-flight abilities are not authoritative on
      * observing clients. Use the owner's synchronized semantic state to choose the
@@ -104,8 +123,18 @@ public final class ClientMovementAnimationPreferences {
 
     static MovementAnimationDisplayState resolveState(
             String modelId, @Nullable MovementAnimationType movement) {
-        return new MovementAnimationDisplayState(modelId, movement,
-                movement != null && localPolicy().usesYsm(modelId, movement));
+        boolean ysmOwned = movement != null
+                && localPolicy().usesYsm(modelId, movement);
+        return new MovementAnimationDisplayState(modelId, movement, ysmOwned,
+                ysmOwned && movement.isLadder()
+                        && ClientPreferences.USE_NATURAL_LADDER_ANIMATIONS.get());
+    }
+
+    private static boolean localNaturalLadderPose(
+            String modelId, MovementAnimationType movement) {
+        return movement.isLadder()
+                && ClientPreferences.USE_NATURAL_LADDER_ANIMATIONS.get()
+                && localPolicy().usesYsm(modelId, movement);
     }
 
     private static String selectedModelId(Player player) {

@@ -41,6 +41,8 @@
   "config.ysm_epicfight_compat.held_item_switch_animation_entry.invalid": "minecraft:diamond_pickaxeやminecraft:airのようなアイテムID、または#forge:tools/pickaxesのようなアイテムタグを入力してください。",
   "config.ysm_epicfight_compat.use_ysm_movement_animations": "YSMの移動アニメーションを使用",
   "config.ysm_epicfight_compat.use_ysm_movement_animations.tooltip": "有効な場合、モデル固有のYSM全身移動アニメーションをEpic Fightの移動姿勢の代わりに使用します。ルールではなく、現在の解決済み姿勢だけを他プレイヤーへ同期します。",
+  "config.ysm_epicfight_compat.use_natural_ladder_animations": "YSMの自然なはしごアニメーションを使用",
+  "config.ysm_epicfight_compat.use_natural_ladder_animations.tooltip": "有効な場合、YSMで定義された両腕の動きを維持して両手で昇降します。通常のEpic Fight手持ち品は収納し、YSMモデルで置換される手持ち品は非表示にします。専用のはしご腕アニメーションがないモデルは現在の描画を維持します。この設定自体ではなく、解決済み姿勢状態だけを同期します。",
   "config.ysm_epicfight_compat.movement_animation_exclusions": "モデル別の移動アニメーション除外",
   "config.ysm_epicfight_compat.movement_animation_exclusions.tooltip": "各モデルIDに、メイン設定が有効な場合でもYSM移動アニメーションを無効として扱う移動状態を設定します。メイン設定が無効な場合、この一覧は何も有効化しません。Configuredでは現在選択中のモデルが自動で追加されます。ルールは同期せず、現在の解決済み姿勢だけを同期します。",
   "config.ysm_epicfight_compat.movement_animation_entry.tooltip": "このYSMモデルでYSM移動アニメーションを無効として扱う移動状態です。",

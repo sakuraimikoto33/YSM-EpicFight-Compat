@@ -52,6 +52,9 @@ final class EntityAnimationEnvironment implements ExpressionEngine.Environment {
     private double deltaTime;
     private double animationTime;
     private double lifeTime;
+    private boolean movementResolved;
+    @Nullable
+    private MovementAnimationType movement;
     private OfficialRoamingVariables.View roamingVariables;
     private int cachedActorCount = -1;
     private boolean cameraPositionResolved;
@@ -122,6 +125,12 @@ final class EntityAnimationEnvironment implements ExpressionEngine.Environment {
     void fullBodyReferenceYaw(@Nullable Float epicModelYaw) {
         fullBodyModelYaw = epicModelYaw != null && Float.isFinite(epicModelYaw)
                 ? epicModelYaw : null;
+    }
+
+    /** Keeps controller flags on the exact semantic state selected for the main clip. */
+    void movement(@Nullable MovementAnimationType movement) {
+        this.movement = movement;
+        movementResolved = true;
     }
 
     void clipTime(double animationTime) {
@@ -225,6 +234,12 @@ final class EntityAnimationEnvironment implements ExpressionEngine.Environment {
     @Override
     public double readQuery(int slot) {
         String name = ExpressionEngine.slotName(slot);
+        if (movementResolved) {
+            Boolean control = MovementAnimationType.controlValue(name, movement);
+            if (control != null) {
+                return flag(control);
+            }
+        }
         double horizontalSpeed = Math.sqrt(entity.getDeltaMovement().x * entity.getDeltaMovement().x
                 + entity.getDeltaMovement().z * entity.getDeltaMovement().z) * 20.0D;
         float bodyYaw = Mth.rotLerp(partialTick, entity.yBodyRotO, entity.yBodyRot);
@@ -244,7 +259,8 @@ final class EntityAnimationEnvironment implements ExpressionEngine.Environment {
             case "query.health" -> entity.getHealth();
             case "query.max_health" -> entity.getMaxHealth();
             case "query.head_x_rotation", "ysm.head_yaw" -> relativeHeadYaw;
-            case "query.head_y_rotation", "ysm.head_pitch" -> headPitch;
+            case "query.head_y_rotation" -> headPitch;
+            case "ysm.head_pitch" -> headPitch;
             case "query.eye_target_x_rotation" -> entity.getViewXRot(partialTick);
             case "query.eye_target_y_rotation" ->
                     Mth.wrapDegrees(entity.getViewYRot(partialTick));
@@ -315,19 +331,24 @@ final class EntityAnimationEnvironment implements ExpressionEngine.Environment {
             case "ctrl.riptide" -> flag(entity.isAutoSpinAttack());
             case "ctrl.sleep" -> flag(entity.isSleeping());
             case "ctrl.swim" -> flag(entity.isSwimming());
-            case "ctrl.climb" -> flag(isCrawling() && horizontalSpeed > 0.01D);
-            case "ctrl.climbing" -> flag(isCrawling() && horizontalSpeed <= 0.01D);
+            case "ctrl.climb" -> flag(isCrawling()
+                    && MovementAnimationType.crawlMoving(entity.walkAnimation.speed()));
+            case "ctrl.climbing" -> flag(isCrawling()
+                    && !MovementAnimationType.crawlMoving(entity.walkAnimation.speed()));
             case "ctrl.ladder_up" -> flag(entity.onClimbable()
-                    && entity.getDeltaMovement().y > 0.01D);
+                    && MovementAnimationType.ladderMovement(entity.getY(), entity.yo)
+                    == MovementAnimationType.LADDER_UP);
             case "ctrl.ladder_stillness" -> flag(entity.onClimbable()
-                    && Math.abs(entity.getDeltaMovement().y) <= 0.01D);
+                    && MovementAnimationType.ladderMovement(entity.getY(), entity.yo)
+                    == MovementAnimationType.LADDER_IDLE);
             case "ctrl.ladder_down" -> flag(entity.onClimbable()
-                    && entity.getDeltaMovement().y < -0.01D);
+                    && MovementAnimationType.ladderMovement(entity.getY(), entity.yo)
+                    == MovementAnimationType.LADDER_DOWN);
             case "ctrl.fly" -> flag(entity instanceof Player player
                     && player.getAbilities().flying);
             case "ctrl.elytra_fly" -> flag(entity.isFallFlying());
-            case "ctrl.swim_stand" -> flag(entity.isInWaterOrBubble()
-                    && !entity.isSwimming());
+            case "ctrl.swim_stand" -> flag(MovementAnimationType.waterIdle(
+                    entity.isInWater(), entity.onGround()) && !entity.isSwimming());
             case "ctrl.attacked" -> flag(entity.hurtTime > 0);
             case "ctrl.jump" -> flag(!entity.onGround() && entity.getDeltaMovement().y > 0.0D);
             case "ctrl.sneak" -> flag(entity.isShiftKeyDown() && horizontalSpeed > 0.01D);
@@ -635,8 +656,7 @@ final class EntityAnimationEnvironment implements ExpressionEngine.Environment {
     }
 
     private boolean isCrawling() {
-        return entity.getPose() == Pose.SWIMMING && !entity.isInWaterOrBubble()
-                && !entity.isFallFlying();
+        return entity.getPose() == Pose.SWIMMING && !entity.isSwimming();
     }
 
     private double actorCount() {

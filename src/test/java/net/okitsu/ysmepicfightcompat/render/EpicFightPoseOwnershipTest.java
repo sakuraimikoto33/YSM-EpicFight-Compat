@@ -39,6 +39,28 @@ class EpicFightPoseOwnershipTest {
     }
 
     @Test
+    void ordinaryEpicFightClimbLocksDoNotClaimTheConfiguredYsmPose() {
+        assertTrue(EpicFightPoseOwnership.isOrdinaryClimbMotion(
+                true, LivingMotions.CLIMB, LivingMotions.IDLE));
+        assertFalse(EpicFightPoseOwnership.isOrdinaryClimbMotion(
+                false, LivingMotions.CLIMB, LivingMotions.IDLE));
+        assertFalse(EpicFightPoseOwnership.actionFlagsRequireEpicPose(
+                true, false, false, false,
+                true, false, false, false, true));
+    }
+
+    @Test
+    void ordinaryClimbExceptionNeverMasksARealActionFlag() {
+        for (int active = 0; active < 6; active++) {
+            boolean[] actions = new boolean[6];
+            actions[active] = true;
+            assertTrue(EpicFightPoseOwnership.actionFlagsRequireEpicPose(
+                    true, actions[0], actions[1], actions[2], true,
+                    actions[3], actions[4], actions[5], true));
+        }
+    }
+
+    @Test
     void idleAliasDoesNotBecomeInactionPoseOwnership() {
         assertFalse(EpicFightPoseOwnership.isActionMotion(LivingMotions.IDLE));
         assertFalse(EpicFightPoseOwnership.isActionMotion(LivingMotions.RUN));

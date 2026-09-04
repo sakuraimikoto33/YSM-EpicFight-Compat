@@ -1,16 +1,70 @@
 package net.okitsu.ysmepicfightcompat.render;
 
+import net.minecraft.world.InteractionHand;
 import net.minecraft.world.entity.LivingEntity;
+import net.minecraft.world.item.UseAnim;
 import net.okitsu.ysmepicfightcompat.integration.tlm.TouhouMaidRenderBridge;
 import net.okitsu.ysmepicfightcompat.mesh.CompatHumanoidMesh;
 import net.okitsu.ysmepicfightcompat.mesh.HumanoidRig;
 import org.joml.Vector3f;
 import yesman.epicfight.api.utils.math.OpenMatrix4f;
+import yesman.epicfight.api.animation.Joint;
+import yesman.epicfight.api.model.Armature;
+import yesman.epicfight.model.armature.types.ToolHolderArmature;
 import yesman.epicfight.world.capabilities.entitypatch.LivingEntityPatch;
 
 /** Selects the converted model transform used by Epic Fight's ordinary item renderer. */
 public final class HeldItemPoseResolver {
     private HeldItemPoseResolver() {
+    }
+
+    /**
+     * Keeps an ordinary item in its physical hand when natural ladder mode is disabled.
+     * The patch's persistent hand-parent state is never mutated; only this render lookup
+     * is replaced, so Epic Fight still owns all action-time joint changes.
+     */
+    public static Joint resolveParentJoint(
+            LivingEntityPatch<?> patch, InteractionHand hand) {
+        if (patch == null || hand == null) {
+            return null;
+        }
+        Joint original = patch.getParentJointOfHand(hand);
+        LivingEntity entity = patch.getOriginal();
+        if (entity == null) {
+            return original;
+        }
+        boolean requestedHandHeld =
+                RenderFrameContext.keepsLadderItemInHand(entity, hand);
+        boolean mainHandHeld = RenderFrameContext.keepsLadderItemInHand(
+                entity, InteractionHand.MAIN_HAND);
+        if (!usesLadderHandAttachment(hand, requestedHandHeld, mainHandHeld,
+                entity.getMainHandItem().getUseAnimation())) {
+            return original;
+        }
+        Armature armature = patch.getArmature();
+        if (!(armature instanceof ToolHolderArmature tools)) {
+            return original;
+        }
+        return ladderItemUsesRightTool(hand)
+                ? tools.rightToolJoint() : tools.leftToolJoint();
+    }
+
+    /**
+     * Epic Fight's two-handed bow renderer asks for the OFF_HAND correction while
+     * rendering the MAIN_HAND bow. Treat that request as the kept main-hand item;
+     * ordinary requests still have to match their own logical hand.
+     */
+    static boolean usesLadderHandAttachment(
+            InteractionHand requestedHand, boolean requestedHandHeld,
+            boolean mainHandHeld, UseAnim mainHandUseAnimation) {
+        return requestedHandHeld
+                || (requestedHand == InteractionHand.OFF_HAND
+                && mainHandHeld && mainHandUseAnimation == UseAnim.BOW);
+    }
+
+    /** Epic Fight fixes MAIN_HAND to Tool_R and OFF_HAND to Tool_L. */
+    static boolean ladderItemUsesRightTool(InteractionHand requestedHand) {
+        return requestedHand == InteractionHand.MAIN_HAND;
     }
 
     /**
