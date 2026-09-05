@@ -412,6 +412,356 @@ class AuxiliaryPoseMatricesTest {
     }
 
     @Test
+    void keepsEpicFightGripOffsetsAndBasisOnBothHands() {
+        assertEpicFightGripProjection(1.0F, 1.0F, 1.0F, true);
+    }
+
+    @Test
+    void keepsSneakingGripRotationWithNonuniformModelScale() {
+        assertEpicFightGripProjection(0.7F, 0.9F, 1.0F, false);
+    }
+
+    @Test
+    void scalesAnEpicOwnedGripPositionOnceForTheMaidLayer() {
+        assertEpicFightGripProjection(0.7F, 0.9F, 1.25F, true);
+    }
+
+    @Test
+    void preservesAddonToolScaleShearAndIndependentMotion() {
+        assertEpicFightGripProjection(0.7F, 0.9F, 1.0F, true, true);
+    }
+
+    @Test
+    void matchesVersion030GripAcrossModelScalesAndAddonToolTransforms() {
+        for (float[] scale : new float[][]{
+                {1.0F, 1.0F}, {0.55F, 0.55F}, {0.7F, 0.9F}, {1.3F, 0.65F}}) {
+            assertEpicFightGripProjection(scale[0], scale[1], 1.0F, true, true);
+        }
+    }
+
+    @Test
+    void keepsTheCurrentRootBobAndLiveGripWhenReusingPoseArrays() {
+        float horizontalScale = 0.7F;
+        float verticalScale = 0.9F;
+        AuxiliaryBoneLayout layout = rightToolLayout(
+                0.0F, horizontalScale, verticalScale);
+        Armature armature = gripArmature();
+        OpenMatrix4f[] bind = bindPoses(armature);
+        OpenMatrix4f[] poses = copy(bind);
+        AuxiliaryPoseMatrices matrices = new AuxiliaryPoseMatrices(layout);
+        AuxiliaryBoneLayout.Entry hand = layout.attachmentEntry(HumanoidRig.RIGHT_TOOL);
+        assertNotNull(hand);
+        Vector3f bindFist = layout.jointPivot(HumanoidRig.RIGHT_TOOL);
+        assertNotNull(bindFist);
+        Vector3f bindVertex = new Vector3f(hand.bone().faces().get(0).positions()[0])
+                .mul(horizontalScale, verticalScale, horizontalScale);
+        OpenMatrix4f[] previousComplete = null;
+        float[] rootHeights = {0.0F, 0.12F, 0.3F, 0.18F, -0.08F, -0.21F,
+                0.0F, 0.09F, 0.0F};
+
+        for (int frame = 0; frame < rootHeights.length; frame++) {
+            float bob = rootHeights[frame];
+            OpenMatrix4f rootMotion = new OpenMatrix4f().translate(0.0F, bob, 0.0F);
+            for (int joint = 0; joint < poses.length; joint++) {
+                poses[joint].load(rootMotion).mulBack(bind[joint]);
+            }
+            // Independent animated Tool correction must use this frame too. It is
+            // neither a second root bob nor a displacement to smooth independently.
+            OpenMatrix4f liveTool = poses[HumanoidRig.RIGHT_TOOL];
+            liveTool.translate(0.035F, -0.02F, 0.06F)
+                    .rotateDeg(23.0F * (float) Math.sin(frame * 0.7D), Vec3f.Y_AXIS)
+                    .scale(0.7F, 1.3F, 0.85F);
+            liveTool.m31 += 0.03F * (float) Math.cos(frame * 0.7D);
+            OpenMatrix4f[] complete = matrices.compose(armature, poses,
+                    null, null, null, false, null, null, null);
+            assertNotNull(complete);
+            if (previousComplete != null) {
+                assertSame(previousComplete, complete);
+            }
+            previousComplete = complete;
+
+            Vector3f fist = matrices.displayedFist(complete, HumanoidRig.RIGHT_TOOL);
+            assertNotNull(fist);
+            assertEquals(bindFist.x(), fist.x(), 0.00002F);
+            assertEquals(bindFist.y() + bob, fist.y(), 0.00002F);
+            assertEquals(bindFist.z(), fist.z(), 0.00002F);
+            Vec4f vertex = OpenMatrix4f.transform(complete[hand.poseIndex()],
+                    new Vec4f(bindVertex.x(), bindVertex.y(), bindVertex.z(), 1.0F),
+                    new Vec4f());
+            assertEquals(bindVertex.y() + bob, vertex.y, 0.00002F);
+
+            OpenMatrix4f expected = new OpenMatrix4f(liveTool);
+            expected.m30 = fist.x() + liveTool.m30 - bind[HumanoidRig.RIGHT_TOOL].m30;
+            expected.m31 = fist.y() + liveTool.m31
+                    - (bind[HumanoidRig.RIGHT_TOOL].m31 + bob);
+            expected.m32 = fist.z() + liveTool.m32 - bind[HumanoidRig.RIGHT_TOOL].m32;
+            OpenMatrix4f[] projected = matrices.displayedAttachmentPoses(
+                    armature, complete, poses, 1.0F, false, false);
+            assertNotNull(projected);
+            assertMatrixNear(expected, projected[HumanoidRig.RIGHT_TOOL], 0.00002F);
+        }
+    }
+
+    private static void assertEpicFightGripProjection(
+            float horizontalScale, float verticalScale,
+            float translationScale, boolean animateTool) {
+        assertEpicFightGripProjection(horizontalScale, verticalScale,
+                translationScale, animateTool, false);
+    }
+
+    private static void assertEpicFightGripProjection(
+            float horizontalScale, float verticalScale,
+            float translationScale, boolean animateTool, boolean addonToolTransform) {
+        GeometryDocument geometry = new GeometryDocument();
+        for (String side : new String[]{"Right", "Left"}) {
+            float x = side.equals("Right") ? -0.35F : 0.35F;
+            GeometryDocument.Bone hand = faceBone(side + "Hand",
+                    x - 0.08F, x + 0.08F, 0.8F, 1.2F);
+            hand.pivot(x, 1.2F, 0.0F);
+            GeometryDocument.Bone locator = new GeometryDocument.Bone(
+                    side + "HandLocator");
+            locator.parentName(hand.name());
+            locator.pivot(x, 0.8F, 0.02F);
+            geometry.add(hand);
+            geometry.add(locator);
+        }
+        geometry.linkHierarchy();
+        AuxiliaryBoneLayout layout = AuxiliaryBoneLayout.create(
+                geometry, horizontalScale, verticalScale);
+        Armature armature = gripArmature();
+        OpenMatrix4f[] bind = bindPoses(armature);
+        OpenMatrix4f[] poses = copy(bind);
+        for (int hand : new int[]{HumanoidRig.RIGHT_HAND, HumanoidRig.LEFT_HAND}) {
+            int tool = hand == HumanoidRig.RIGHT_HAND
+                    ? HumanoidRig.RIGHT_TOOL : HumanoidRig.LEFT_TOOL;
+            OpenMatrix4f tilt = new OpenMatrix4f().translate(0.0F, -0.12F, 0.08F)
+                    .rotateDeg(28.0F, Vec3f.X_AXIS)
+                    .rotateDeg(-13.0F, Vec3f.Z_AXIS);
+            poses[hand].load(tilt).mulBack(bind[hand]);
+            poses[tool].load(tilt).mulBack(bind[tool]);
+            if (animateTool) {
+                poses[tool].translate(0.03F, -0.02F, 0.06F)
+                        .rotateDeg(17.0F, Vec3f.Y_AXIS);
+            }
+            if (addonToolTransform) {
+                OpenMatrix4f shear = new OpenMatrix4f();
+                shear.m10 = 0.25F;
+                shear.m21 = -0.17F;
+                poses[tool].scale(0.65F, 1.45F, 0.8F).mulBack(shear);
+            }
+        }
+        OpenMatrix4f[] originalSnapshot = copy(poses);
+        AuxiliaryPoseMatrices matrices = new AuxiliaryPoseMatrices(layout);
+        OpenMatrix4f[] complete = matrices.compose(armature, poses,
+                null, null, null, false, null, null, null);
+        assertNotNull(complete);
+        OpenMatrix4f[] completeSnapshot = copy(complete);
+        OpenMatrix4f[] projected = matrices.displayedAttachmentPoses(
+                armature, complete, poses, translationScale, false, false);
+        assertNotNull(projected);
+
+        for (int hand : new int[]{HumanoidRig.RIGHT_HAND, HumanoidRig.LEFT_HAND}) {
+            int tool = hand == HumanoidRig.RIGHT_HAND
+                    ? HumanoidRig.RIGHT_TOOL : HumanoidRig.LEFT_TOOL;
+            Vector3f fist = matrices.displayedFist(complete, tool);
+            assertNotNull(fist);
+            OpenMatrix4f handSkin = new OpenMatrix4f(poses[hand])
+                    .mulBack(armature.searchJointById(hand).getToOrigin());
+            Vec4f handGrip = OpenMatrix4f.transform(handSkin,
+                    new Vec4f(bind[tool].m30, bind[tool].m31, bind[tool].m32, 1.0F),
+                    new Vec4f());
+            OpenMatrix4f expected = new OpenMatrix4f(poses[tool]);
+            expected.m30 = (fist.x() + poses[tool].m30 - handGrip.x) * translationScale;
+            expected.m31 = (fist.y() + poses[tool].m31 - handGrip.y) * translationScale;
+            expected.m32 = (fist.z() + poses[tool].m32 - handGrip.z) * translationScale;
+            assertMatrixEquals(expected, projected[tool]);
+        }
+        for (int joint = 0; joint < poses.length; joint++) {
+            assertMatrixEquals(originalSnapshot[joint], poses[joint]);
+        }
+        for (int joint = 0; joint < complete.length; joint++) {
+            assertMatrixEquals(completeSnapshot[joint], complete[joint]);
+        }
+    }
+
+    @Test
+    void followsThePhysicalYsmHandWithoutImportingIndependentLocatorMotion() {
+        float horizontalScale = 0.7F;
+        float verticalScale = 0.9F;
+        AuxiliaryBoneLayout layout = rightToolLayout(
+                -30.0F, horizontalScale, verticalScale);
+        Armature armature = gripArmature();
+        OpenMatrix4f[] bind = bindPoses(armature);
+        OpenMatrix4f[] poses = copy(bind);
+        poses[HumanoidRig.RIGHT_TOOL].translate(0.03F, 0.04F, -0.02F)
+                .rotateDeg(25.0F, Vec3f.Y_AXIS)
+                .scale(0.65F, 1.45F, 0.8F);
+        OpenMatrix4f addonShear = new OpenMatrix4f();
+        addonShear.m10 = 0.25F;
+        addonShear.m21 = -0.17F;
+        poses[HumanoidRig.RIGHT_TOOL].mulBack(addonShear);
+        OpenMatrix4f[] originalSnapshot = copy(poses);
+        OpenMatrix4f[] complete = AuxiliaryPoseMatrices.allocate(layout.totalPoseCount());
+        AuxiliaryBoneLayout.Entry hand = layout.attachmentEntry(HumanoidRig.RIGHT_TOOL);
+        AuxiliaryBoneLayout.Entry locator = layout.toolLocatorEntry(HumanoidRig.RIGHT_TOOL);
+        assertNotNull(hand);
+        assertNotNull(locator);
+        Matrix4f handDelta = new Matrix4f().rotateX((float) Math.toRadians(-35.0F))
+                .rotateY((float) Math.toRadians(37.0F));
+        Matrix4f locatorDelta = new Matrix4f(handDelta)
+                .translate(0.02F, -0.04F, 0.01F)
+                .rotateX((float) Math.toRadians(15.0F));
+        complete[hand.poseIndex()].load(scaledSkin(
+                handDelta, horizontalScale, verticalScale));
+        complete[locator.poseIndex()].load(scaledSkin(
+                locatorDelta, horizontalScale, verticalScale));
+
+        AuxiliaryPoseMatrices matrices = new AuxiliaryPoseMatrices(layout);
+        OpenMatrix4f[] completeSnapshot = copy(complete);
+        OpenMatrix4f[] projected = matrices.displayedAttachmentPoses(
+                armature, complete, poses, 1.0F, false, false);
+
+        assertNotNull(projected);
+        // Ordinary items follow the same physical hand and authored fist point as
+        // 0.3.0. Independent locator adjustments belong to an explicit item switch,
+        // not to generic whole-body ownership. Keep every live addon grip component.
+        OpenMatrix4f expected = OpenMatrix4f.importFromMojangMatrix(
+                new Matrix4f(handDelta).mul(OpenMatrix4f.exportToMojangMatrix(
+                        poses[HumanoidRig.RIGHT_TOOL])));
+        Vector3f fist = matrices.displayedFist(complete, HumanoidRig.RIGHT_TOOL);
+        assertNotNull(fist);
+        Vector3f gripOffset = new Vector3f(
+                poses[HumanoidRig.RIGHT_TOOL].m30 - bind[HumanoidRig.RIGHT_TOOL].m30,
+                poses[HumanoidRig.RIGHT_TOOL].m31 - bind[HumanoidRig.RIGHT_TOOL].m31,
+                poses[HumanoidRig.RIGHT_TOOL].m32 - bind[HumanoidRig.RIGHT_TOOL].m32);
+        handDelta.transformDirection(gripOffset);
+        expected.m30 = fist.x() + gripOffset.x();
+        expected.m31 = fist.y() + gripOffset.y();
+        expected.m32 = fist.z() + gripOffset.z();
+        assertMatrixEquals(expected, projected[HumanoidRig.RIGHT_TOOL]);
+        for (int joint = 0; joint < poses.length; joint++) {
+            assertMatrixEquals(originalSnapshot[joint], poses[joint]);
+        }
+        for (int joint = 0; joint < complete.length; joint++) {
+            assertMatrixEquals(completeSnapshot[joint], complete[joint]);
+        }
+    }
+
+    @Test
+    void transportsTheCompleteLiveGripWithTheAlreadyBlendedPhysicalHand() {
+        float horizontalScale = 0.7F;
+        float verticalScale = 0.9F;
+        AuxiliaryBoneLayout layout = rightToolLayout(
+                0.0F, horizontalScale, verticalScale);
+        Armature armature = gripArmature(true);
+        OpenMatrix4f[] bind = bindPoses(armature);
+        OpenMatrix4f[] poses = copy(bind);
+        OpenMatrix4f epicHandTilt = new OpenMatrix4f().rotateDeg(20.0F, Vec3f.X_AXIS);
+        poses[HumanoidRig.RIGHT_HAND].load(epicHandTilt)
+                .mulBack(bind[HumanoidRig.RIGHT_HAND]);
+        Vec4f epicGripPoint = OpenMatrix4f.transform(epicHandTilt,
+                new Vec4f(bind[HumanoidRig.RIGHT_TOOL].m30,
+                        bind[HumanoidRig.RIGHT_TOOL].m31,
+                        bind[HumanoidRig.RIGHT_TOOL].m32, 1.0F), new Vec4f());
+        // The live Tool has independent pitch/yaw, displacement, scale and shear.
+        // None may fade out just because the body becomes fully YSM-owned.
+        OpenMatrix4f residual = gripResidual();
+        poses[HumanoidRig.RIGHT_TOOL].load(new OpenMatrix4f())
+                .rotateDeg(-129.0F, Vec3f.X_AXIS)
+                .rotateDeg(23.0F, Vec3f.Y_AXIS)
+                .scale(0.7F, 1.3F, 0.85F)
+                .mulBack(residual);
+        Vec4f gripDisplacement = new Vec4f(0.035F, -0.02F, 0.06F, 0.0F);
+        poses[HumanoidRig.RIGHT_TOOL].m30 = epicGripPoint.x + gripDisplacement.x;
+        poses[HumanoidRig.RIGHT_TOOL].m31 = epicGripPoint.y + gripDisplacement.y;
+        poses[HumanoidRig.RIGHT_TOOL].m32 = epicGripPoint.z + gripDisplacement.z;
+        AuxiliaryBoneLayout.Entry hand = layout.attachmentEntry(HumanoidRig.RIGHT_TOOL);
+        AuxiliaryBoneLayout.Entry locator = layout.toolLocatorEntry(HumanoidRig.RIGHT_TOOL);
+        assertNotNull(hand);
+        assertNotNull(locator);
+        Vector3f pivot = layout.attachmentPivot(HumanoidRig.RIGHT_TOOL);
+        assertNotNull(pivot);
+        AuxiliaryPoseMatrices matrices = new AuxiliaryPoseMatrices(layout);
+        OpenMatrix4f baseline = null;
+        OpenMatrix4f baselineItemFrame = null;
+        Vec4f baselineFist = null;
+        OpenMatrix4f itemCorrection = new OpenMatrix4f()
+                .translate(0.0F, 0.0F, -0.13F)
+                .rotateDeg(-90.0F, Vec3f.X_AXIS);
+        Vec4f[] itemPoints = {
+                new Vec4f(0.0F, 0.0F, 0.0F, 1.0F),
+                new Vec4f(0.1F, 0.8F, 0.0F, 1.0F),
+                new Vec4f(-0.1F, 0.4F, 0.3F, 1.0F)
+        };
+
+        for (float weight : new float[]{0.0F, 0.000001F, 0.25F, 0.5F, 1.0F}) {
+            OpenMatrix4f[] complete = AuxiliaryPoseMatrices.allocate(layout.totalPoseCount());
+            OpenMatrix4f remainingEpicTilt = new OpenMatrix4f()
+                    .rotateDeg(20.0F * (1.0F - weight), Vec3f.X_AXIS);
+            // These matrices already contain the body's ownership transition. The
+            // locator's independent 15-degree sneak adjustment must not rotate an
+            // ordinary item away from the physical hand during that transition.
+            complete[hand.poseIndex()].load(remainingEpicTilt).mulBack(scaledSkin(
+                    new Matrix4f().rotateX((float) Math.toRadians(-50.0F * weight)),
+                    horizontalScale, verticalScale));
+            complete[locator.poseIndex()].load(remainingEpicTilt).mulBack(scaledSkin(
+                    new Matrix4f().rotateX((float) Math.toRadians(-35.0F * weight)),
+                    horizontalScale, verticalScale));
+            OpenMatrix4f actual = new OpenMatrix4f(matrices.displayedAttachmentPoses(
+                    armature, complete, poses, 1.0F, false, false)
+                    [HumanoidRig.RIGHT_TOOL]);
+            float displayedHandDegrees = 20.0F - 70.0F * weight;
+            OpenMatrix4f handRotationDelta = new OpenMatrix4f()
+                    .rotateDeg(displayedHandDegrees - 20.0F, Vec3f.X_AXIS);
+            OpenMatrix4f expected = OpenMatrix4f.mul(handRotationDelta,
+                    poses[HumanoidRig.RIGHT_TOOL], new OpenMatrix4f());
+            Vec4f displayedPoint = OpenMatrix4f.transform(complete[hand.poseIndex()],
+                    new Vec4f(pivot.x(), pivot.y(), pivot.z(), 1.0F), new Vec4f());
+            Vec4f displayedDisplacement = OpenMatrix4f.transform(handRotationDelta,
+                    gripDisplacement, new Vec4f());
+            expected.m30 = displayedPoint.x + displayedDisplacement.x;
+            expected.m31 = displayedPoint.y + displayedDisplacement.y;
+            expected.m32 = displayedPoint.z + displayedDisplacement.z;
+            assertMatrixNear(expected, actual, 0.00002F);
+            if (weight == 0.0F) {
+                baseline = actual;
+                baselineItemFrame = OpenMatrix4f.mul(
+                        expected, itemCorrection, new OpenMatrix4f());
+                baselineFist = new Vec4f(
+                        displayedPoint.x, displayedPoint.y, displayedPoint.z, 1.0F);
+            } else if (weight == 0.000001F) {
+                assertNotNull(baseline);
+                assertMatrixNear(baseline, actual, 0.00002F);
+            }
+
+            // Check the actual ordinary Epic Fight item correction and blade points,
+            // not merely the Tool origin. All three points must travel rigidly with
+            // the displayed hand while retaining the addon's local grip transform.
+            assertNotNull(baselineItemFrame);
+            assertNotNull(baselineFist);
+            OpenMatrix4f actualItemFrame = OpenMatrix4f.mul(
+                    actual, itemCorrection, new OpenMatrix4f());
+            for (Vec4f itemPoint : itemPoints) {
+                Vec4f originalPoint = OpenMatrix4f.transform(
+                        baselineItemFrame, itemPoint, new Vec4f());
+                Vec4f fromFist = new Vec4f(originalPoint.x - baselineFist.x,
+                        originalPoint.y - baselineFist.y,
+                        originalPoint.z - baselineFist.z, 0.0F);
+                Vec4f transported = OpenMatrix4f.transform(
+                        handRotationDelta, fromFist, new Vec4f());
+                Vec4f actualPoint = OpenMatrix4f.transform(
+                        actualItemFrame, itemPoint, new Vec4f());
+                assertEquals(displayedPoint.x + transported.x,
+                        actualPoint.x, 0.00002F);
+                assertEquals(displayedPoint.y + transported.y,
+                        actualPoint.y, 0.00002F);
+                assertEquals(displayedPoint.z + transported.z,
+                        actualPoint.z, 0.00002F);
+            }
+        }
+    }
+
+    @Test
     void neutralYsmLocatorBindRotationDoesNotReplaceEpicToolBindBasis() {
         AuxiliaryBoneLayout layout = rightToolLayout(-30.0F);
         OpenMatrix4f epicBind = new OpenMatrix4f()
@@ -455,6 +805,7 @@ class AuxiliaryPoseMatricesTest {
         OpenMatrix4f delta = scaledSkin(
                 rawDelta, horizontalScale, verticalScale);
         complete[handSource.poseIndex()].load(delta);
+        complete[layout.toolLocatorEntry(HumanoidRig.RIGHT_TOOL).poseIndex()].load(delta);
 
         OpenMatrix4f[] projected = new AuxiliaryPoseMatrices(layout)
                 .displayedAttachmentPoses(armature, complete, poses,
@@ -967,6 +1318,57 @@ class AuxiliaryPoseMatricesTest {
                 new OpenMatrix4f[]{invalid}, 0.5F);
 
         assertMatrixEquals(expected[entry.poseIndex()], output[entry.poseIndex()]);
+    }
+
+    private static Armature gripArmature() {
+        return gripArmature(false);
+    }
+
+    private static Armature gripArmature(boolean hasBindResidual) {
+        Map<String, Joint> joints = new LinkedHashMap<>();
+        Joint root = new Joint("Root", HumanoidRig.ROOT, new OpenMatrix4f());
+        joints.put(root.getName(), root);
+        for (int hand : new int[]{HumanoidRig.RIGHT_HAND, HumanoidRig.LEFT_HAND}) {
+            boolean right = hand == HumanoidRig.RIGHT_HAND;
+            String side = right ? "R" : "L";
+            Joint handJoint = new Joint("Hand_" + side, hand,
+                    new OpenMatrix4f().translate(right ? -0.3F : 0.3F, 1.0F, 0.0F));
+            OpenMatrix4f toolBind = new OpenMatrix4f()
+                    .translate(0.0F, -0.27F, 0.015F)
+                    .rotateDeg(-179.0F, Vec3f.X_AXIS);
+            if (hasBindResidual) {
+                toolBind.mulBack(gripResidual());
+            }
+            Joint toolJoint = new Joint("Tool_" + side,
+                    right ? HumanoidRig.RIGHT_TOOL : HumanoidRig.LEFT_TOOL, toolBind);
+            handJoint.addSubJoints(toolJoint);
+            root.addSubJoints(handJoint);
+            joints.put(handJoint.getName(), handJoint);
+            joints.put(toolJoint.getName(), toolJoint);
+        }
+        for (int id = 1; id < HumanoidRig.EPIC_JOINT_COUNT; id++) {
+            if (id == HumanoidRig.RIGHT_HAND || id == HumanoidRig.LEFT_HAND
+                    || id == HumanoidRig.RIGHT_TOOL || id == HumanoidRig.LEFT_TOOL) {
+                continue;
+            }
+            Joint joint = new Joint("Other_" + id, id, new OpenMatrix4f());
+            root.addSubJoints(joint);
+            joints.put(joint.getName(), joint);
+        }
+        Armature armature = new Armature("grip_test", HumanoidRig.EPIC_JOINT_COUNT,
+                root, joints);
+        armature.bakeOriginMatrices();
+        return armature;
+    }
+
+    private static OpenMatrix4f gripResidual() {
+        OpenMatrix4f result = new OpenMatrix4f();
+        result.m00 = 1.0003F;
+        result.m11 = 0.9996F;
+        result.m22 = 1.0001F;
+        result.m01 = result.m10 = 0.0002F;
+        result.m12 = result.m21 = -0.00015F;
+        return result;
     }
 
     private static AuxiliaryBoneLayout rightToolLayout(float locatorBindZDegrees) {

@@ -1,6 +1,7 @@
 package net.okitsu.ysmepicfightcompat.mesh;
 
 import net.okitsu.ysmepicfightcompat.geometry.GeometryDocument;
+import org.joml.Matrix3f;
 import org.joml.Matrix4f;
 import org.joml.Quaternionf;
 import org.joml.Vector3f;
@@ -46,6 +47,13 @@ public final class AuxiliaryPoseMatrices {
     private final LocalTransform attachmentSourceTransform = new LocalTransform();
     private final LocalTransform attachmentOriginalTransform = new LocalTransform();
     private final LocalTransform attachmentBindTransform = new LocalTransform();
+    private final Quaternionf attachmentHandRotation = new Quaternionf();
+    private final Quaternionf attachmentHandToDisplayedRotation = new Quaternionf();
+    private final Quaternionf attachmentGripRotation = new Quaternionf();
+    private final Vector3f attachmentGripOffset = new Vector3f();
+    private final Matrix3f attachmentPolarFrame = new Matrix3f();
+    private final Matrix3f attachmentPolarInverse = new Matrix3f();
+    private final Matrix3f attachmentPolarPrevious = new Matrix3f();
     private final Vec4f heldItemReferencePoint = new Vec4f();
     private final Vec4f heldItemHandPoint = new Vec4f();
     private final Vec4f heldItemToolPoint = new Vec4f();
@@ -53,6 +61,9 @@ public final class AuxiliaryPoseMatrices {
     private final Vec4f leftDisplayedPoint = new Vec4f();
     private final Vec4f attachmentPoint = new Vec4f();
     private Armature preparedArmature;
+    // Ownership metadata only: never changes the evaluated/blended body matrices.
+    private float rightEpicGripWeight = 1.0F;
+    private float leftEpicGripWeight = 1.0F;
 
     public AuxiliaryPoseMatrices(AuxiliaryBoneLayout layout) {
         this.layout = layout;
@@ -103,11 +114,53 @@ public final class AuxiliaryPoseMatrices {
         // arrays are valid too. Custom props depend on the model-specific Tool skin, so do
         // not silently demote an otherwise valid pose array to the generic Hand anchor.
         OpenMatrix4f[] retargetedAnchors = retargeter.retarget(armature, poses);
-        return compose(poses, toOrigin, layout, output, parallelDeltas, wholeModelDeltas,
+        OpenMatrix4f[] complete = compose(poses, toOrigin, layout, output, parallelDeltas, wholeModelDeltas,
                 heldItemDeltas, retargetedAnchors, replaceEpicFightPose,
                 replaceEpicFightAnchors, suppressParallelDeltas,
                 heldItemAnchorJoints, fullBodyBlendSource, fullBodyBlendWeight,
                 blendScratch);
+        float endingWeight = validBlendSource(fullBodyBlendSource)
+                ? unitWeight(fullBodyBlendWeight) : 0.0F;
+        rightEpicGripWeight = rawEpicGripWeight(HumanoidRig.RIGHT_TOOL,
+                replaceEpicFightPose, replaceEpicFightAnchors, heldItemAnchorJoints)
+                * (1.0F - endingWeight);
+        leftEpicGripWeight = rawEpicGripWeight(HumanoidRig.LEFT_TOOL,
+                replaceEpicFightPose, replaceEpicFightAnchors, heldItemAnchorJoints)
+                * (1.0F - endingWeight);
+        return complete;
+    }
+
+    private float rawEpicGripWeight(int tool, boolean fullBody,
+                                   @Nullable boolean[] replaced, @Nullable int[] anchors) {
+        if (fullBody) {
+            return 0.0F;
+        }
+        int auxiliary = layout.toolAnchorPoseIndex(tool) - HumanoidRig.EPIC_JOINT_COUNT;
+        boolean replacedHand = replaced != null && auxiliary >= 0
+                && auxiliary < replaced.length && replaced[auxiliary];
+        boolean stillAttachedToEpic = anchors != null && auxiliary >= 0
+                && auxiliary < anchors.length && anchors[auxiliary] >= 0;
+        return replacedHand && !stillAttachedToEpic ? 0.0F : 1.0F;
+    }
+
+    float epicGripWeight(int tool) {
+        return tool == HumanoidRig.RIGHT_TOOL ? rightEpicGripWeight : leftEpicGripWeight;
+    }
+
+    private boolean validBlendSource(@Nullable OpenMatrix4f[] source) {
+        if (source == null || source.length != layout.entries().size()) {
+            return false;
+        }
+        for (OpenMatrix4f matrix : source) {
+            if (matrix == null || !finite(matrix)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private static float unitWeight(float weight) {
+        return Float.isFinite(weight) ? Math.max(0.0F, Math.min(1.0F, weight)) : 0.0F;
     }
 
     /** Places Epic Fight's selected Tool pose at an exact point published by the body draw. */
@@ -208,8 +261,10 @@ public final class AuxiliaryPoseMatrices {
      * <p>Epic Fight renders patched layers after the converted body and otherwise gives
      * those layers its original pose array. Each projected entry keeps Epic Fight's
      * scale/shear contract, but takes its position and proper rotation from the exact
-     * YSM bone that was just drawn. Missing or ambiguous model controls fail open to the
-     * original Epic Fight pose.</p>
+     * YSM bone that was just drawn. Ordinary Tool poses retain the live Epic Fight
+     * grip only to the extent that Epic Fight still owns the displayed hand. Only an
+     * explicit item switch imports independent locator motion. Missing or ambiguous
+     * model controls fail open to the original Epic Fight pose.</p>
      */
     @Nullable
     public OpenMatrix4f[] displayedAttachmentPoses(
@@ -245,12 +300,24 @@ public final class AuxiliaryPoseMatrices {
 
             boolean locatorOwned = joint == HumanoidRig.RIGHT_TOOL && rightItemSwitch
                     || joint == HumanoidRig.LEFT_TOOL && leftItemSwitch;
+            boolean toolJoint = joint == HumanoidRig.RIGHT_TOOL
+                    || joint == HumanoidRig.LEFT_TOOL;
+            if (locatorOwned && layout.toolLocatorEntry(joint) == null) {
+                locatorOwned = false;
+            }
+            if (toolJoint && !locatorOwned) {
+                OpenMatrix4f grip = heldItemPoseFollowingDisplayedHand(
+                        armature, complete, originalPoses, joint);
+                if (grip != null) {
+                    destination.load(grip);
+                    destination.m30 *= safeTranslationScale;
+                    destination.m31 *= safeTranslationScale;
+                    destination.m32 *= safeTranslationScale;
+                }
+                continue;
+            }
             AuxiliaryBoneLayout.Entry source = locatorOwned
                     ? layout.toolLocatorEntry(joint) : layout.attachmentEntry(joint);
-            if (source == null && locatorOwned) {
-                locatorOwned = false;
-                source = layout.attachmentEntry(joint);
-            }
             Vector3f pivot = layout.attachmentPivot(joint);
             if (source == null || pivot == null
                     || source.poseIndex() < 0 || source.poseIndex() >= complete.length
@@ -300,16 +367,139 @@ public final class AuxiliaryPoseMatrices {
     }
 
     @Nullable
+    private OpenMatrix4f heldItemPoseFollowingDisplayedHand(
+            Armature armature, OpenMatrix4f[] complete, OpenMatrix4f[] originalPoses,
+            int joint) {
+        Vector3f fist = displayedFist(complete, joint);
+        float epicWeight = epicGripWeight(joint);
+        if (epicWeight == 0.0F && fist != null) {
+            // Do not even decompose the hidden EF pose at this endpoint. An addon
+            // may collapse its Tool/Hand to zero scale while YSM draws a normal hand.
+            int handIndex = layout.toolAnchorPoseIndex(joint);
+            attachmentSourceFrame.set(load(authoredItemScratch, complete[handIndex]))
+                    .mul(attachmentModelScale);
+            if (toolRotation(attachmentSourceFrame, attachmentSourceTransform.rotation)) {
+                attachmentResultFrame.rotation(attachmentSourceTransform.rotation)
+                        .mul(load(attachmentOriginalFrame, referenceBindWorlds[joint]));
+                attachmentResultFrame.m30(fist.x()).m31(fist.y()).m32(fist.z());
+                store(heldItemOutput, attachmentResultFrame);
+                return heldItemOutput;
+            }
+        }
+        OpenMatrix4f grip = heldItemPose(armature, originalPoses, joint, fist);
+        if (grip == null || fist == null) {
+            return null;
+        }
+        // Start with the 0.3.0 grip: preserve the complete live Tool matrix and its
+        // independent offset from the hand. Move that grip only by the rotation
+        // actually added to the physical hand, never by a sibling locator's motion.
+        // heldItemPose has already prepared heldItemHandSkin from the same input.
+        attachmentSourceFrame.set(load(authoredItemScratch, heldItemHandSkin))
+                .mul(attachmentModelScale);
+        if (!toolRotation(attachmentSourceFrame, attachmentHandRotation)) {
+            return grip;
+        }
+        int handPoseIndex = layout.toolAnchorPoseIndex(joint);
+        attachmentSourceFrame.set(load(authoredItemScratch, complete[handPoseIndex]))
+                .mul(attachmentModelScale);
+        if (!toolRotation(attachmentSourceFrame, attachmentSourceTransform.rotation)) {
+            return grip;
+        }
+        attachmentHandToDisplayedRotation.set(attachmentHandRotation).conjugate()
+                .premul(attachmentSourceTransform.rotation).normalize();
+        attachmentGripOffset.set(grip.m30 - fist.x(), grip.m31 - fist.y(),
+                grip.m32 - fist.z());
+        attachmentHandToDisplayedRotation.transform(attachmentGripOffset);
+        attachmentResultFrame.rotation(attachmentHandToDisplayedRotation)
+                .mul(load(attachmentOriginalFrame, originalPoses[joint]));
+        if (epicWeight < 1.0F) {
+            // The body already contains its complete YSM/transition pose. Only blend
+            // the grip relative to that hand: live EF Tool motion must not continue
+            // independently while YSM is in charge (including addon idle Tool tracks).
+            if (!splitGrip(load(attachmentOriginalFrame, originalPoses[joint]),
+                    attachmentOriginalTransform)
+                    || !splitGrip(load(attachmentOriginalFrame, referenceBindWorlds[joint]),
+                    attachmentBindTransform)) {
+                return grip;
+            }
+            attachmentGripRotation.set(attachmentHandRotation).conjugate()
+                    .mul(attachmentOriginalTransform.rotation);
+            attachmentBindTransform.rotation.slerp(attachmentGripRotation, epicWeight);
+            attachmentGripRotation.set(attachmentSourceTransform.rotation)
+                    .mul(attachmentBindTransform.rotation);
+            lerpLinear(attachmentBindTransform.residual, attachmentOriginalTransform.residual,
+                    epicWeight, attachmentDeltaFrame);
+            attachmentResultFrame.rotation(attachmentGripRotation).mul(attachmentDeltaFrame);
+            attachmentGripOffset.mul(epicWeight);
+        }
+        attachmentResultFrame.m30(fist.x() + attachmentGripOffset.x())
+                .m31(fist.y() + attachmentGripOffset.y())
+                .m32(fist.z() + attachmentGripOffset.z());
+        store(grip, attachmentResultFrame);
+        return grip;
+    }
+
+    private boolean splitGrip(Matrix4f frame, LocalTransform destination) {
+        if (!decomposeAffine(frame, destination)
+                || !toolRotation(frame, destination.rotation)) {
+            return false;
+        }
+        destination.updateResidual();
+        return true;
+    }
+
+    @Nullable
     private Quaternionf displayedAttachmentRotation(OpenMatrix4f complete, int joint) {
-        attachmentSourceFrame.set(attachmentModelScaleInverse)
-                .mul(load(authoredItemScratch, complete))
-                .mul(attachmentModelScale)
-                .mul(load(attachmentOriginalFrame, referenceBindWorlds[joint]));
-        if (decomposeAffine(attachmentSourceFrame, attachmentSourceTransform)
-                && attachmentSourceTransform.rotationValid) {
+        // The displayed frame is C*S, not S^-1*C*S. The latter describes the
+        // unscaled authored model and tilts attachments when height != width.
+        attachmentSourceFrame.set(load(authoredItemScratch, complete))
+                .mul(attachmentModelScale);
+        if (toolRotation(attachmentSourceFrame, attachmentSourceTransform.rotation)) {
+            attachmentSourceTransform.rotation.mul(referenceBindRotations[joint]);
             return attachmentSourceTransform.rotation;
         }
         return null;
+    }
+
+    /** Removes both left and right scale/shear without tilting the Tool's grip. */
+    private boolean toolRotation(Matrix4f frame, Quaternionf destination) {
+        attachmentPolarFrame.set(frame);
+        float determinant = attachmentPolarFrame.determinant();
+        if (!Float.isFinite(determinant)
+                || Math.abs(determinant) <= SINGULAR_DETERMINANT_EPSILON) {
+            return false;
+        }
+        if (determinant < 0.0F) {
+            // Reflections cannot be represented by a proper rotation. Keep the sign
+            // in the original Tool residual and use a deterministic proper frame.
+            attachmentPolarFrame.m20(-attachmentPolarFrame.m20())
+                    .m21(-attachmentPolarFrame.m21()).m22(-attachmentPolarFrame.m22());
+        }
+        for (int iteration = 0; iteration < 12; iteration++) {
+            attachmentPolarPrevious.set(attachmentPolarFrame);
+            attachmentPolarInverse.set(attachmentPolarFrame).invert().transpose();
+            double norm = squaredNorm(attachmentPolarFrame);
+            double inverseNorm = squaredNorm(attachmentPolarInverse);
+            float balancingScale = (float) Math.sqrt(Math.sqrt(inverseNorm / norm));
+            if (!Float.isFinite(balancingScale) || balancingScale <= 0.0F) {
+                return false;
+            }
+            attachmentPolarFrame.scale(balancingScale)
+                    .add(attachmentPolarInverse.scale(1.0F / balancingScale)).scale(0.5F);
+            if (attachmentPolarFrame.equals(attachmentPolarPrevious, 1.0E-6F)) {
+                attachmentPolarFrame.getNormalizedRotation(destination).normalize();
+                return finite(destination);
+            }
+        }
+        return false;
+    }
+
+    private static double squaredNorm(Matrix3f matrix) {
+        return (double) matrix.m00() * matrix.m00() + (double) matrix.m01() * matrix.m01()
+                + (double) matrix.m02() * matrix.m02() + (double) matrix.m10() * matrix.m10()
+                + (double) matrix.m11() * matrix.m11() + (double) matrix.m12() * matrix.m12()
+                + (double) matrix.m20() * matrix.m20() + (double) matrix.m21() * matrix.m21()
+                + (double) matrix.m22() * matrix.m22();
     }
 
     private boolean displayedLocatorLinear(OpenMatrix4f complete) {
@@ -341,6 +531,22 @@ public final class AuxiliaryPoseMatrices {
         }
         applyFullBodyBlend(layout, destination, completeBlendSource,
                 sourceWeight, blendScratch);
+    }
+
+    /** Carries grip ownership through the body's existing transition, with no new clock. */
+    void blendFromComplete(OpenMatrix4f[] destination, OpenMatrix4f[] source,
+                           float sourceWeight, float sourceRightGrip, float sourceLeftGrip) {
+        if (destination == null || source == null
+                || destination.length != layout.totalPoseCount()
+                || source.length != layout.totalPoseCount()) {
+            return;
+        }
+        blendFromComplete(destination, source, sourceWeight);
+        if (validBlendSource(completeBlendSource)) {
+            float weight = unitWeight(sourceWeight);
+            rightEpicGripWeight = lerp(rightEpicGripWeight, sourceRightGrip, weight);
+            leftEpicGripWeight = lerp(leftEpicGripWeight, sourceLeftGrip, weight);
+        }
     }
 
     private boolean prepareArmature(Armature armature) {

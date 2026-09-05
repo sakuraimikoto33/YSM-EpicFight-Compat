@@ -84,6 +84,11 @@ public final class HeldItemPoseResolver {
         if (patch == null || joint < 0) {
             return applyItemCorrection(itemCorrection, originalPose);
         }
+        if (AttachmentArmatureScope.isDisplayedPoseArray(patch.getArmature(), poses)) {
+            // An add-on has read the scoped final skeleton rather than the layer
+            // argument. It is already placed/scaled, including optional entity scale.
+            return applyItemCorrection(itemCorrection, originalPose);
+        }
         LivingEntity entity = patch.getOriginal();
         CompatHumanoidMesh mesh = RenderFrameContext.currentMeshFor(entity);
         if (mesh == null) {

@@ -9,6 +9,7 @@
     "AttackAnimationSoundMixin"
   ],
   "client": [
+    "AttachmentArmatureMixin",
     "CombatOverlayMixin",
     "CombatFirstPersonMixin",
     "ConfiguredForgeConfigMixin",

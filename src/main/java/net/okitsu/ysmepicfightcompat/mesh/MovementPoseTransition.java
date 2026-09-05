@@ -53,6 +53,10 @@ final class MovementPoseTransition {
         private Set<InteractionHand> transitionItemSwitchHands = Set.of();
         private double transitionStart = Double.NaN;
         private double previousAnimationTicks = Double.NaN;
+        private float previousRightGrip = 1.0F;
+        private float previousLeftGrip = 1.0F;
+        private float transitionRightGrip = 1.0F;
+        private float transitionLeftGrip = 1.0F;
 
         void apply(double animationTicks, @Nullable String movementPoseKey,
                    boolean epicFightActionActive,
@@ -104,6 +108,8 @@ final class MovementPoseTransition {
                     // Entering or leaving YSM ownership, or switching between two
                     // authored movements, starts from the exact prior displayed pose.
                     transitionSource = copyOf(lastOutput);
+                    transitionRightGrip = previousRightGrip;
+                    transitionLeftGrip = previousLeftGrip;
                     transitionItemSwitchHands = union(
                             previousItemSwitchHands, currentItemSwitchHands);
                     transitionStart = animationTicks;
@@ -120,7 +126,8 @@ final class MovementPoseTransition {
                 double elapsed = Math.max(0.0D, animationTicks - transitionStart);
                 if (elapsed < DURATION_TICKS) {
                     float sourceWeight = (float) (1.0D - elapsed / DURATION_TICKS);
-                    poses.blendFromComplete(complete, transitionSource, sourceWeight);
+                    poses.blendFromComplete(complete, transitionSource, sourceWeight,
+                            transitionRightGrip, transitionLeftGrip);
                     displayedItemSwitchHands = union(
                             displayedItemSwitchHands, transitionItemSwitchHands);
                 } else {
@@ -136,6 +143,8 @@ final class MovementPoseTransition {
                 return Set.of();
             }
             lastOutput = snapshot;
+            previousRightGrip = poses.epicGripWeight(HumanoidRig.RIGHT_TOOL);
+            previousLeftGrip = poses.epicGripWeight(HumanoidRig.LEFT_TOOL);
             previousItemSwitchHands = epicFightActionActive
                     ? Set.of() : currentItemSwitchHands;
             previousAnimationTicks = animationTicks;
@@ -150,6 +159,8 @@ final class MovementPoseTransition {
             transitionItemSwitchHands = Set.of();
             transitionStart = Double.NaN;
             previousAnimationTicks = Double.NaN;
+            previousRightGrip = previousLeftGrip = 1.0F;
+            transitionRightGrip = transitionLeftGrip = 1.0F;
         }
     }
 

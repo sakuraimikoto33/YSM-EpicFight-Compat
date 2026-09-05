@@ -7,6 +7,7 @@ import net.okitsu.ysmepicfightcompat.animation.MovementAnimationType;
 import net.okitsu.ysmepicfightcompat.mesh.CompatHumanoidMesh;
 import net.okitsu.ysmepicfightcompat.mesh.HumanoidRig;
 import org.joml.Vector3f;
+import yesman.epicfight.api.model.Armature;
 import yesman.epicfight.api.utils.math.OpenMatrix4f;
 
 import javax.annotation.Nullable;
@@ -225,7 +226,7 @@ public final class RenderFrameContext {
                                          OpenMatrix4f[] inputPoses, int toolJoint) {
         Frame frame = current();
         if (frame == null || frame.entity != entity || frame.mesh != mesh
-                || frame.inputPoses != inputPoses) {
+                || !sameBodyPoseSource(frame.inputPoses, inputPoses)) {
             return null;
         }
         Vector3f point = toolJoint == HumanoidRig.RIGHT_TOOL ? frame.rightFist
@@ -240,7 +241,7 @@ public final class RenderFrameContext {
             OpenMatrix4f[] inputPoses, int toolJoint) {
         Frame frame = current();
         if (frame == null || frame.entity != entity || frame.mesh != mesh
-                || frame.inputPoses != inputPoses) {
+                || !sameBodyPoseSource(frame.inputPoses, inputPoses)) {
             return null;
         }
         OpenMatrix4f pose = toolJoint == HumanoidRig.RIGHT_TOOL
@@ -257,8 +258,9 @@ public final class RenderFrameContext {
         Frame frame = current();
         if (frame == null || frame.entity != entity || frame.mesh != mesh
                 || requestedPoses == null
-                || (requestedPoses != frame.inputPoses
-                && requestedPoses != frame.attachmentPoses)) {
+                || (!sameBodyPoseSource(frame.inputPoses, requestedPoses)
+                && requestedPoses != frame.attachmentPoses
+                && !AttachmentArmatureScope.isDisplayedPoseArray(requestedPoses))) {
             return null;
         }
         return frame.elytraLocatorPose == null
@@ -267,7 +269,8 @@ public final class RenderFrameContext {
 
     /**
      * Returns the projected final YSM pose for one Epic Fight attachment joint.
-     * Both the body input and the already-projected layer array identify this frame.
+     * Both the body input (including a complete shallow copy) and the already-projected
+     * layer array identify this frame.
      */
     @Nullable
     public static OpenMatrix4f displayedAttachmentPose(
@@ -276,7 +279,7 @@ public final class RenderFrameContext {
         Frame frame = current();
         if (frame == null || frame.entity != entity || frame.mesh != mesh
                 || requestedPoses == null
-                || (requestedPoses != frame.inputPoses
+                || (!sameBodyPoseSource(frame.inputPoses, requestedPoses)
                 && requestedPoses != frame.attachmentPoses)
                 || frame.attachmentPoses == null
                 || joint < 0 || joint >= frame.attachmentPoses.length) {
@@ -286,13 +289,55 @@ public final class RenderFrameContext {
         return pose == null ? null : new OpenMatrix4f(pose);
     }
 
-    /** Replaces only the exact pose array passed from this converted body to patched layers. */
+    /** Replaces only poses sharing this converted body's complete input skeleton. */
     public static OpenMatrix4f[] resolvePatchedLayerPoses(OpenMatrix4f[] requestedPoses) {
         Frame frame = current();
         return frame != null && requestedPoses != null
-                && frame.mesh != null && frame.inputPoses == requestedPoses
+                && frame.mesh != null && sameBodyPoseSource(frame.inputPoses, requestedPoses)
                 && frame.attachmentPoses != null
                 ? frame.attachmentPoses : requestedPoses;
+    }
+
+    /**
+     * Render integrations may shallow-copy the armature array before drawing the body,
+     * while passing the original array to its layers. Array identity alone loses the
+     * completed YSM pose in that case. Accept only a complete shared skeleton: every
+     * matrix must be the very same object at the very same joint index. Equal numeric
+     * values, partial sharing, and a replaced joint do not establish render provenance.
+     * Entity, mesh, and render-frame checks remain the caller's responsibility.
+     */
+    static boolean sameBodyPoseSource(@Nullable OpenMatrix4f[] body,
+                                      @Nullable OpenMatrix4f[] requested) {
+        if (body == null || requested == null) {
+            return false;
+        }
+        if (body == requested) {
+            return true;
+        }
+        if (body.length < HumanoidRig.EPIC_JOINT_COUNT || body.length != requested.length) {
+            return false;
+        }
+        for (int joint = 0; joint < body.length; joint++) {
+            if (body[joint] == null || body[joint] != requested[joint]) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    public static OpenMatrix4f[] resolvePatchedLayerPoses(
+            LivingEntity entity, OpenMatrix4f[] requestedPoses) {
+        Frame frame = current();
+        return frame != null && frame.entity == entity
+                ? resolvePatchedLayerPoses(requestedPoses) : requestedPoses;
+    }
+
+    /** Covers armature re-reads only for this exact body's subsequent layer call. */
+    public static AttachmentArmatureScope openAttachmentScope(
+            LivingEntity entity, Armature armature, OpenMatrix4f[] requestedPoses) {
+        OpenMatrix4f[] displayed = resolvePatchedLayerPoses(entity, requestedPoses);
+        return AttachmentArmatureScope.open(armature, requestedPoses,
+                displayed == requestedPoses ? null : displayed);
     }
 
     @Nullable

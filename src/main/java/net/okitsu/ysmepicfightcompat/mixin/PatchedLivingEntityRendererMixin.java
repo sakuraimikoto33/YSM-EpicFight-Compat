@@ -4,16 +4,19 @@ import com.mojang.blaze3d.vertex.PoseStack;
 import net.minecraft.client.model.EntityModel;
 import net.minecraft.client.renderer.MultiBufferSource;
 import net.minecraft.client.renderer.entity.LivingEntityRenderer;
+import net.minecraft.client.renderer.entity.layers.RenderLayer;
 import net.minecraft.world.entity.LivingEntity;
 import net.okitsu.ysmepicfightcompat.integration.tlm.TouhouMaidRenderBridge;
 import net.okitsu.ysmepicfightcompat.render.RenderFrameContext;
+import net.okitsu.ysmepicfightcompat.render.AttachmentArmatureScope;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
-import org.spongepowered.asm.mixin.injection.ModifyArg;
+import org.spongepowered.asm.mixin.injection.Redirect;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 import yesman.epicfight.api.utils.math.OpenMatrix4f;
 import yesman.epicfight.client.renderer.patched.entity.PatchedLivingEntityRenderer;
+import yesman.epicfight.client.renderer.patched.layer.PatchedLayer;
 import yesman.epicfight.world.capabilities.entitypatch.LivingEntityPatch;
 
 /** Creates the converted-mesh scope inherited by EFTLM's maid renderer. */
@@ -59,21 +62,34 @@ public abstract class PatchedLivingEntityRendererMixin {
         TouhouMaidRenderBridge.exit(this, entity, patch);
     }
 
-    /** Gives both ordinary and custom patched layers the final displayed YSM skeleton. */
-    @ModifyArg(
+    /** Keeps layer arguments and armature re-reads on the same completed body pose. */
+    @Redirect(
             method = RENDER_LAYER,
             at = @At(
                     value = "INVOKE",
                     target = PATCHED_LAYER_RENDER,
                     remap = false
             ),
-            index = 6,
             require = 2,
             expect = 2,
             remap = false
     )
-    private OpenMatrix4f[] ysmCompat$replacePatchedLayerPoses(
-            OpenMatrix4f[] originalPoses) {
-        return RenderFrameContext.resolvePatchedLayerPoses(originalPoses);
+    @SuppressWarnings({"rawtypes", "unchecked"})
+    private void ysmCompat$renderWithDisplayedAttachments(
+            PatchedLayer layer, LivingEntity entity, LivingEntityPatch patch,
+            RenderLayer originalLayer, PoseStack matrices, MultiBufferSource buffers,
+            int light, OpenMatrix4f[] originalPoses,
+            float bob, float yRot, float xRot, float partialTick) {
+        OpenMatrix4f[] displayed = RenderFrameContext.resolvePatchedLayerPoses(
+                entity, originalPoses);
+        try (AttachmentArmatureScope ignored = RenderFrameContext.openAttachmentScope(
+                entity, patch.getArmature(), originalPoses)) {
+            // Each layer gets a private view. An add-on changing its input must not
+            // corrupt the body snapshot used by the next layer or by an armature read.
+            OpenMatrix4f[] layerPoses = AttachmentArmatureScope.resolvePoseMatrices(
+                    patch.getArmature(), displayed, false);
+            layer.renderLayer(entity, patch, originalLayer, matrices, buffers, light,
+                    layerPoses, bob, yRot, xRot, partialTick);
+        }
     }
 }
