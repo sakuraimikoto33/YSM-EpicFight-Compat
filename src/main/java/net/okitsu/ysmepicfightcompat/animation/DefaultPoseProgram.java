@@ -174,11 +174,16 @@ public final class DefaultPoseProgram {
     }
 
     private static final class NeutralEnvironment implements ExpressionEngine.Environment {
-        private final Map<Integer, Double> values = new HashMap<>();
+        private final Map<Integer, Object> values = new HashMap<>();
         private final Set<Integer> assigned = new HashSet<>();
 
         @Override
         public double readVariable(int slot) {
+            return ExpressionEngine.number(readVariableValue(slot));
+        }
+
+        @Override
+        public Object readVariableValue(int slot) {
             return values.getOrDefault(slot, 0.0D);
         }
 
@@ -189,7 +194,12 @@ public final class DefaultPoseProgram {
 
         @Override
         public void writeVariable(int slot, double value) {
-            values.put(slot, value);
+            writeVariableValue(slot, value);
+        }
+
+        @Override
+        public void writeVariableValue(int slot, Object value) {
+            values.put(slot, ExpressionEngine.boundedValue(value));
             assigned.add(slot);
         }
 

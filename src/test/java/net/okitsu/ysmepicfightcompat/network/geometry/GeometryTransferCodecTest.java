@@ -4,17 +4,26 @@ import net.okitsu.ysmepicfightcompat.animation.AnimationClip;
 import net.okitsu.ysmepicfightcompat.animation.AnimationController;
 import net.okitsu.ysmepicfightcompat.animation.DeclarativeParticleEffect;
 import net.okitsu.ysmepicfightcompat.assets.ModelBundle;
+import net.okitsu.ysmepicfightcompat.assets.ModelFunctionAssets;
+import net.okitsu.ysmepicfightcompat.cache.ModelDiskCache;
 import net.okitsu.ysmepicfightcompat.geometry.GeometryDocument;
 import net.okitsu.ysmepicfightcompat.network.CompatNetwork;
 import org.joml.Vector3f;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
 import java.io.ByteArrayInputStream;
+import java.io.ByteArrayOutputStream;
 import java.io.DataInputStream;
+import java.io.DataOutputStream;
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.Arrays;
 import java.util.Map;
 import java.util.zip.GZIPInputStream;
+import java.util.zip.GZIPOutputStream;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -23,6 +32,138 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class GeometryTransferCodecTest {
+    @Test
+    void roundTripsFunctionSourcesThroughEveryCacheRegion(@TempDir Path root) throws IOException {
+        ModelBundle model = functionModel();
+        model.functions().put("calculate", "return args[0] + 3;\n// 雪");
+        model.functions().put("@player_ctrl_main", "return ctrl.state_bypass;");
+        model.functions().put("setup@player_init", "v.ready=1;");
+        model.mergeMultilineExpressions(true);
+        byte[] payload = GeometryTransferCodec.encode(model);
+        byte[] digest = ModelDiskCache.sha256(payload);
+        for (String region : java.util.List.of("client", "remote", "server")) {
+            Path directory = root.resolve(region);
+            assertTrue(ModelDiskCache.write(directory, "model",
+                    new ModelDiskCache.Entry(digest, digest, payload), 1024 * 1024));
+            byte[] restored = ModelDiskCache.read(directory, "model", 1024 * 1024)
+                    .orElseThrow().payload();
+            ModelBundle decoded = GeometryTransferCodec.decode("model", restored);
+            assertEquals(model.functions(), decoded.functions());
+            assertTrue(decoded.mergeMultilineExpressions());
+            try (var files = Files.list(directory)) {
+                assertTrue(files.allMatch(file -> file.getFileName().toString().endsWith(".cache")));
+            }
+        }
+    }
+
+    @Test
+    void rejectsInvalidFunctionNamesAndEncodingLimits() {
+        ModelBundle model = functionModel();
+        model.functions().put("../escape", "return 1;");
+        assertThrows(IOException.class, () -> GeometryTransferCodec.encode(model));
+        model.functions().clear();
+        model.functions().put("sum", "x".repeat(ModelFunctionAssets.MAX_SOURCE_BYTES + 1));
+        assertThrows(IOException.class, () -> GeometryTransferCodec.encode(model));
+        model.functions().clear();
+        model.functions().put("sum", "x".repeat(ModelFunctionAssets.MAX_SOURCE_BYTES));
+        String shared = model.functions().get("sum");
+        for (int index = 0; index < 16; index++) {
+            model.functions().put("copy_" + index, shared);
+        }
+        assertThrows(IOException.class, () -> GeometryTransferCodec.encode(model));
+        model.functions().clear();
+        for (int index = 0; index <= ModelFunctionAssets.MAX_FUNCTIONS; index++) {
+            model.functions().put("entry_" + index, "");
+        }
+        assertThrows(IOException.class, () -> GeometryTransferCodec.encode(model));
+    }
+
+    @Test
+    void rejectsMalformedFunctionTransferSectionsAndOldScriptlessCachePayloads() throws IOException {
+        byte[] baseline;
+        try (var gzip = new GZIPInputStream(new ByteArrayInputStream(
+                GeometryTransferCodec.encode(functionModel())))) {
+            baseline = gzip.readAllBytes();
+        }
+        byte[] prefix = Arrays.copyOf(baseline, baseline.length - 5);
+        assertThrows(IOException.class, () -> GeometryTransferCodec.decode("old", gzip(prefix)));
+        assertThrows(IOException.class, () -> GeometryTransferCodec.decode("too-many",
+                withFunctionSection(prefix, output -> {
+                    output.writeBoolean(false);
+                    output.writeInt(ModelFunctionAssets.MAX_FUNCTIONS + 1);
+                })));
+        assertThrows(IOException.class, () -> GeometryTransferCodec.decode("oversized",
+                withFunctionSection(prefix, output -> {
+                    output.writeBoolean(false);
+                    output.writeInt(1);
+                    writeString(output, "sum");
+                    output.writeInt(ModelFunctionAssets.MAX_SOURCE_BYTES + 1);
+                })));
+        assertThrows(IOException.class, () -> GeometryTransferCodec.decode("utf8",
+                withFunctionSection(prefix, output -> {
+                    output.writeBoolean(false);
+                    output.writeInt(1);
+                    writeString(output, "sum");
+                    output.writeInt(2);
+                    output.write(new byte[]{(byte) 0xC3, 0x28});
+                })));
+        assertThrows(IOException.class, () -> GeometryTransferCodec.decode("duplicate",
+                withFunctionSection(prefix, output -> {
+                    output.writeBoolean(false);
+                    output.writeInt(2);
+                    for (String name : java.util.List.of("sum", "SUM")) {
+                        writeString(output, name);
+                        writeString(output, "return 1;");
+                    }
+                })));
+        assertThrows(IOException.class, () -> GeometryTransferCodec.decode("total-size",
+                withFunctionSection(prefix, output -> {
+                    output.writeBoolean(false);
+                    output.writeInt(17);
+                    byte[] source = new byte[ModelFunctionAssets.MAX_SOURCE_BYTES];
+                    for (int index = 0; index < 17; index++) {
+                        writeString(output, "entry_" + index);
+                        output.writeInt(source.length);
+                        output.write(source);
+                    }
+                })));
+    }
+
+    private static ModelBundle functionModel() {
+        GeometryDocument geometry = new GeometryDocument();
+        geometry.add(bone("root", ""));
+        geometry.linkHierarchy();
+        return ModelBundle.remote("functions", geometry, Map.of(), 1, 1, "");
+    }
+
+    private static byte[] withFunctionSection(byte[] prefix, SectionWriter writer) throws IOException {
+        ByteArrayOutputStream buffer = new ByteArrayOutputStream();
+        buffer.write(prefix);
+        try (DataOutputStream output = new DataOutputStream(buffer)) {
+            writer.write(output);
+        }
+        return gzip(buffer.toByteArray());
+    }
+
+    private static byte[] gzip(byte[] bytes) throws IOException {
+        ByteArrayOutputStream buffer = new ByteArrayOutputStream();
+        try (GZIPOutputStream gzip = new GZIPOutputStream(buffer)) {
+            gzip.write(bytes);
+        }
+        return buffer.toByteArray();
+    }
+
+    private static void writeString(DataOutputStream output, String value) throws IOException {
+        byte[] bytes = value.getBytes(StandardCharsets.UTF_8);
+        output.writeInt(bytes.length);
+        output.write(bytes);
+    }
+
+    @FunctionalInterface
+    private interface SectionWriter {
+        void write(DataOutputStream output) throws IOException;
+    }
+
     @Test
     void keepsUnreleasedProtocolsAtVersionOne() throws IOException {
         assertEquals("1", CompatNetwork.PROTOCOL);

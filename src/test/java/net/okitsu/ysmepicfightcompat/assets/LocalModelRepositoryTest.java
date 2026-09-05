@@ -6,6 +6,9 @@ import org.junit.jupiter.api.io.TempDir;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.ByteBuffer;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
 import java.util.Arrays;
 import java.util.Map;
 import java.util.Set;
@@ -14,9 +17,124 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class LocalModelRepositoryTest {
+    @Test
+    void retainsFunctionsAndSubscriptionsFromManifestFolder(@TempDir Path root) throws Exception {
+        Path model = writeFunctionModel(root, "scripts");
+        Files.createDirectories(model.resolve("scripts/nested"));
+        Files.writeString(model.resolve("scripts/Calculate.MOLANG"),
+                "// Unicode source: 雪\nreturn args[0] + args[1];");
+        Files.writeString(model.resolve("scripts/nested/@player_ctrl_main.molang"),
+                "return ctrl.state_bypass;");
+        Files.writeString(model.resolve("scripts/初期化@player_init.molang"), "v.ready=1;");
+        Files.writeString(model.resolve("scripts/ignored.txt"), "not a function");
+
+        byte[] before = LocalModelRepository.contentDigest(root, "function-model");
+        ModelBundle loaded = LocalModelRepository.load(root, "function-model");
+        assertNotNull(loaded);
+        assertEquals(Set.of("calculate", "@player_ctrl_main", "初期化@player_init"),
+                loaded.functions().keySet());
+        assertEquals("// Unicode source: 雪\nreturn args[0] + args[1];",
+                loaded.functions().get("calculate"));
+        Files.writeString(model.resolve("scripts/Calculate.MOLANG"), "return 42;");
+        assertFalse(Arrays.equals(before, LocalModelRepository.contentDigest(root, "function-model")));
+    }
+
+    @Test
+    void usesDefaultFunctionsDirectoryAndMergesExplicitTimelineBlocks(@TempDir Path root)
+            throws IOException {
+        Path model = writeFunctionModel(root, null);
+        Files.createDirectories(model.resolve("functions"));
+        Files.writeString(model.resolve("functions/setup@player_update.molang"), "v.frame=1;");
+        Files.writeString(model.resolve("ysm.json"), """
+                {"properties":{"merge_multiline_expr":true},"files":{"player":{
+                  "model":{"main":"main.json"},"animation":{"main":"anim.json"}
+                }}}
+                """);
+        Files.writeString(model.resolve("anim.json"), """
+                {"animations":{"parallel0":{"timeline":{"0.0":[
+                  "v.ready ? {", "v.value=fn.compute();", "};"
+                ]}}}}
+                """);
+        ModelBundle loaded = LocalModelRepository.load(root, "function-model");
+        assertNotNull(loaded);
+        assertTrue(loaded.mergeMultilineExpressions());
+        assertEquals("v.frame=1;", loaded.functions().get("setup@player_update"));
+        assertEquals(java.util.List.of("v.ready ? {\nv.value=fn.compute();\n};"),
+                loaded.animations().get("parallel0").timeline().get(0).statements());
+    }
+
+    @Test
+    void invalidatesPreFunctionParsedBundleDigest(@TempDir Path root) throws Exception {
+        Path model = writeFunctionModel(root, null);
+        MessageDigest oldDigest = MessageDigest.getInstance("SHA-256");
+        oldDigest.update("ysm-ef-model-bundle:pbr-materials-v1".getBytes(StandardCharsets.UTF_8));
+        oldDigest.update("function-model".getBytes(StandardCharsets.UTF_8));
+        for (String name : java.util.List.of("main.json", "ysm.json")) {
+            byte[] bytes = Files.readAllBytes(model.resolve(name));
+            oldDigest.update(name.getBytes(StandardCharsets.UTF_8));
+            oldDigest.update(ByteBuffer.allocate(Long.BYTES).putLong(bytes.length).array());
+            oldDigest.update(bytes);
+        }
+        OfficialDefaultAnimationLibrary.contributeDigest(root, oldDigest);
+        assertFalse(Arrays.equals(oldDigest.digest(),
+                LocalModelRepository.contentDigest(root, "function-model")));
+    }
+
+    @Test
+    void rejectsDuplicateOversizedAndMalformedFunctionFiles(@TempDir Path root) throws IOException {
+        Path model = writeFunctionModel(root, "scripts");
+        Files.createDirectories(model.resolve("scripts/nested"));
+        Files.writeString(model.resolve("scripts/sum.molang"), "return 1;");
+        Files.writeString(model.resolve("scripts/nested/SUM.molang"), "return 2;");
+        assertNull(LocalModelRepository.load(root, "function-model"));
+
+        Files.delete(model.resolve("scripts/nested/SUM.molang"));
+        Files.write(model.resolve("scripts/sum.molang"), new byte[]{(byte) 0xC3, 0x28});
+        assertNull(LocalModelRepository.load(root, "function-model"));
+        Files.write(model.resolve("scripts/sum.molang"),
+                new byte[ModelFunctionAssets.MAX_SOURCE_BYTES + 1]);
+        assertNull(LocalModelRepository.load(root, "function-model"));
+    }
+
+    @Test
+    void rejectsEscapingFunctionDirectory(@TempDir Path root) throws IOException {
+        writeFunctionModel(root, "../outside");
+        assertNull(LocalModelRepository.load(root, "function-model"));
+    }
+
+    @Test
+    void rejectsLinkedFunctionDirectoryWhenSupported(@TempDir Path root) throws IOException {
+        Path model = writeFunctionModel(root, "scripts");
+        Path external = Files.createDirectory(root.resolve("external"));
+        Files.writeString(external.resolve("escape.molang"), "return 99;");
+        try {
+            Files.createSymbolicLink(model.resolve("scripts"), external);
+        } catch (UnsupportedOperationException | IOException | SecurityException exception) {
+            org.junit.jupiter.api.Assumptions.assumeTrue(false,
+                    "Symbolic links are unavailable in this environment");
+        }
+        assertNull(LocalModelRepository.load(root, "function-model"));
+    }
+
+    private static Path writeFunctionModel(Path root, String functionDirectory) throws IOException {
+        Path model = Files.createDirectories(root.resolve("custom/function-model"));
+        String declaration = functionDirectory == null ? ""
+                : "\"function_path\":\"" + functionDirectory + "\",";
+        Files.writeString(model.resolve("ysm.json"), "{\"files\":{" + declaration
+                + "\"player\":{\"model\":{\"main\":\"main.json\"}}}}");
+        Files.writeString(model.resolve("main.json"), """
+                {"minecraft:geometry":[{
+                  "description":{"texture_width":16,"texture_height":16},
+                  "bones":[{"name":"root"}]
+                }]}
+                """);
+        return model;
+    }
+
     @Test
     void associatesManifestPbrTexturesWithoutExposingThemAsSkins(@TempDir Path root)
             throws IOException {

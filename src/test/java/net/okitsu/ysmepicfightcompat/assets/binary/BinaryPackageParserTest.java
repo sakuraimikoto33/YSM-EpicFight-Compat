@@ -2,6 +2,7 @@ package net.okitsu.ysmepicfightcompat.assets.binary;
 
 import net.okitsu.ysmepicfightcompat.animation.AnimationController;
 import net.okitsu.ysmepicfightcompat.assets.ModelBundle;
+import net.okitsu.ysmepicfightcompat.assets.ModelFunctionAssets;
 import org.junit.jupiter.api.Test;
 
 import java.io.ByteArrayOutputStream;
@@ -13,6 +14,76 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 class BinaryPackageParserTest {
+    @Test
+    void retainsModernMolangSourceAndSubscriptionBasenames() {
+        ByteArrayOutputStream output = functionHeader(2);
+        writeText(output, "SUM");
+        writeText(output, "a".repeat(64)); // Opaque package metadata, not a path.
+        writeBlob(output, "return args[0] + args[1];".getBytes(StandardCharsets.UTF_8));
+        writeText(output, "初期化@player_init");
+        writeText(output, "b".repeat(64));
+        writeBlob(output, "v.ready=1;\n// 雪".getBytes(StandardCharsets.UTF_8));
+        writeModernFunctionTail(output);
+
+        ModelBundle bundle = BinaryPackageParser.parse("functions", output.toByteArray());
+        assertEquals(java.util.Map.of("sum", "return args[0] + args[1];",
+                        "初期化@player_init", "v.ready=1;\n// 雪"), bundle.functions());
+    }
+
+    @Test
+    void rejectsModernFunctionCountAndLengthBeforeReadingBodies() {
+        assertThrows(IllegalStateException.class, () -> BinaryPackageParser.parse(
+                "function-count", functionHeader(ModelFunctionAssets.MAX_FUNCTIONS + 1).toByteArray()));
+        ByteArrayOutputStream output = functionHeader(1);
+        writeText(output, "sum");
+        writeText(output, "a".repeat(64));
+        writeVarUInt(output, ModelFunctionAssets.MAX_SOURCE_BYTES + 1);
+        assertThrows(IllegalStateException.class,
+                () -> BinaryPackageParser.parse("function-size", output.toByteArray()));
+    }
+
+    @Test
+    void rejectsModernDuplicateAndMalformedFunctionSource() {
+        ByteArrayOutputStream duplicate = functionHeader(2);
+        for (String name : java.util.List.of("sum", "SUM")) {
+            writeText(duplicate, name);
+            writeText(duplicate, "a".repeat(64));
+            writeBlob(duplicate, "return 1;".getBytes(StandardCharsets.UTF_8));
+        }
+        assertThrows(IllegalStateException.class,
+                () -> BinaryPackageParser.parse("duplicate", duplicate.toByteArray()));
+
+        ByteArrayOutputStream malformed = functionHeader(1);
+        writeText(malformed, "sum");
+        writeText(malformed, "a".repeat(64));
+        writeBlob(malformed, new byte[]{(byte) 0xC3, 0x28});
+        assertThrows(IllegalArgumentException.class,
+                () -> BinaryPackageParser.parse("invalid-source", malformed.toByteArray()));
+    }
+
+    private static ByteArrayOutputStream functionHeader(int count) {
+        ByteArrayOutputStream output = new ByteArrayOutputStream();
+        writeInt(output, 32);
+        writeVarUInt(output, 0); // Sounds.
+        writeVarUInt(output, count);
+        return output;
+    }
+
+    private static void writeModernFunctionTail(ByteArrayOutputStream output) {
+        writeVarUInt(output, 0); // Languages.
+        writeVarUInt(output, 0); // Vehicles.
+        writeVarUInt(output, 0); // Projectiles.
+        writeVarUInt(output, 1); // Entity marker.
+        writeVarUInt(output, 0); // Animation files.
+        writeVarUInt(output, 0); // Controllers.
+        writeVarUInt(output, 0); // Textures.
+        writeVarUInt(output, 1); // Models.
+        writeVarUInt(output, 1); // Player.
+        writeText(output, "models/main.json");
+        writeEmptyGeometry(output);
+        writeModernEmptyProperties(output);
+    }
+
     @Test
     void rejectsCountsBeyondTheSafetyLimit() {
         byte[] payload = {16, 0, 0, 0, (byte) 0xC1, (byte) 0x84, 0x3D};

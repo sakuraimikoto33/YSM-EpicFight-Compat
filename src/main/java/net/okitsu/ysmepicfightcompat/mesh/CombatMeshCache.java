@@ -396,6 +396,7 @@ public final class CombatMeshCache {
 
     public static synchronized void clear() {
         GENERATION.incrementAndGet();
+        net.okitsu.ysmepicfightcompat.animation.ClientScriptEvents.clear();
         MESHES.values().forEach(handle -> {
             handle.mesh().releaseAllAnimationStates();
             handle.mesh().destroy();
@@ -481,7 +482,7 @@ public final class CombatMeshCache {
         DefaultPoseProgram pose = new DefaultPoseProgram(source.geometry(), source.animations());
         ParallelAnimationProgram parallel = new ParallelAnimationProgram(
                 source.modelId(), source.geometry(), source.animations(),
-                source.animationControllers(),
+                source.animationControllers(), source.functions(),
                 baked.auxiliaryBones(),
                 source.widthScale(), source.heightScale());
         CompatHumanoidMesh mesh = new CompatHumanoidMesh(source.modelId(), pose, parallel,

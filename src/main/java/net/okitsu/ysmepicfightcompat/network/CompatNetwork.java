@@ -25,6 +25,8 @@ import net.okitsu.ysmepicfightcompat.network.message.MaidPreferenceSnapshotMessa
 import net.okitsu.ysmepicfightcompat.network.message.MaidPreferenceUpdateMessage;
 import net.okitsu.ysmepicfightcompat.network.message.OwnerPreferenceEpochMessage;
 import net.okitsu.ysmepicfightcompat.network.message.SelectionUpdateMessage;
+import net.okitsu.ysmepicfightcompat.network.message.ScriptSyncRequestMessage;
+import net.okitsu.ysmepicfightcompat.network.message.ScriptSyncSnapshotMessage;
 import net.okitsu.ysmepicfightcompat.network.message.SubEntityPreferenceQueryMessage;
 import net.okitsu.ysmepicfightcompat.network.message.SubEntityPreferenceSnapshotMessage;
 import net.okitsu.ysmepicfightcompat.network.message.SubEntityPreferenceUpdateMessage;
@@ -128,10 +130,18 @@ public final class CompatNetwork {
                 SubEntityPreferenceUpdateMessage::read,
                 SubEntityPreferenceUpdateMessage::receive,
                 Optional.of(NetworkDirection.PLAY_TO_SERVER));
-        CHANNEL.registerMessage(id, SubEntityPreferenceSnapshotMessage.class,
+        CHANNEL.registerMessage(id++, SubEntityPreferenceSnapshotMessage.class,
                 SubEntityPreferenceSnapshotMessage::write,
                 SubEntityPreferenceSnapshotMessage::read,
                 SubEntityPreferenceSnapshotMessage::receive,
+                Optional.of(NetworkDirection.PLAY_TO_CLIENT));
+        CHANNEL.registerMessage(id++, ScriptSyncRequestMessage.class,
+                ScriptSyncRequestMessage::write, ScriptSyncRequestMessage::read,
+                ScriptSyncRequestMessage::receive,
+                Optional.of(NetworkDirection.PLAY_TO_SERVER));
+        CHANNEL.registerMessage(id, ScriptSyncSnapshotMessage.class,
+                ScriptSyncSnapshotMessage::write, ScriptSyncSnapshotMessage::read,
+                ScriptSyncSnapshotMessage::receive,
                 Optional.of(NetworkDirection.PLAY_TO_CLIENT));
     }
 

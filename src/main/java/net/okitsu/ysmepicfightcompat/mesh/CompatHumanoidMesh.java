@@ -233,6 +233,8 @@ public final class CompatHumanoidMesh extends HumanoidMesh {
                             frame.epicFightActionActive(), auxiliaryPoses, complete);
                 }
                 if (frame != null) {
+                    parallelAnimations.publishBoneQueries(frame.entity(), complete,
+                            animationFrame == null ? Set.of() : animationFrame.hiddenBones());
                     boolean rightItemSwitch = ownsItemSwitchTool(
                             frame.entity(), displayedItemSwitchHands,
                             HumanoidRig.RIGHT_TOOL);

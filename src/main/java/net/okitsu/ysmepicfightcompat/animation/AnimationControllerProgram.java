@@ -86,7 +86,7 @@ final class AnimationControllerProgram {
         }
     }
 
-    private static final class ControllerEnvironment implements ExpressionEngine.Environment {
+    private static final class ControllerEnvironment implements MolangScriptRuntime.Host {
         private final ExpressionEngine.Environment delegate;
         private Completion completion = Completion.NONE;
         private String soundScope = "controller";
@@ -95,6 +95,27 @@ final class AnimationControllerProgram {
 
         private ControllerEnvironment(ExpressionEngine.Environment delegate) {
             this.delegate = delegate;
+        }
+
+        @Override public MolangScriptRuntime scripts() { return MolangScriptRuntime.scripts(delegate); }
+        @Override public Object readVariableValue(int slot) {
+            return stateVariables.containsKey(slot) ? stateVariables.get(slot) : delegate.readVariableValue(slot);
+        }
+        @Override public void writeVariableValue(int slot, Object value) {
+            if (stateVariables.containsKey(slot)) writeVariable(slot, ExpressionEngine.number(value));
+            else delegate.writeVariableValue(slot, value);
+        }
+        @Override public Object readQueryValue(int slot) {
+            if (slot == ANY_FINISHED || slot == ALL_FINISHED) return readQuery(slot);
+            MolangScriptRuntime runtime = scripts();
+            Object value = runtime == null ? MolangScriptRuntime.UNHANDLED
+                    : runtime.read(ExpressionEngine.slotName(slot), this);
+            return value == MolangScriptRuntime.UNHANDLED ? delegate.readQueryValue(slot) : value;
+        }
+        @Override public Object invokeValue(String name, Object[] arguments) {
+            MolangScriptRuntime runtime = scripts();
+            Object value = runtime == null ? MolangScriptRuntime.UNHANDLED : runtime.invoke(name, arguments, this);
+            return value == MolangScriptRuntime.UNHANDLED ? delegate.invokeValue(name, arguments) : value;
         }
 
         private void completion(Completion value) {
@@ -231,6 +252,12 @@ final class AnimationControllerProgram {
 
     boolean isEmpty() {
         return controllers.isEmpty();
+    }
+
+    boolean hasController(String name) {
+        String normalized = normalize(name).replaceAll("_(\\d+)$", "$1");
+        return controllers.keySet().stream().anyMatch(key ->
+                normalize(key).replaceAll("_(\\d+)$", "$1").equals(normalized));
     }
 
     List<ActiveAnimation> select(double now, ExpressionEngine.Environment environment,

@@ -107,6 +107,22 @@ class DefaultPoseProgramTest {
     }
 
     @Test
+    void preservesTypedLocalsBetweenDefaultPoseTimelineAndBoneChannels() {
+        GeometryDocument geometry = new GeometryDocument();
+        geometry.add(new GeometryDocument.Bone("tail"));
+        geometry.linkHierarchy();
+        AnimationClip clip = BedrockAnimationParser.parse("parallel.typed_default",
+                JsonParser.parseString("""
+                        {"timeline":{"0":"v.scales=[1,0];v.form='hidden';"},
+                         "bones":{"tail":{"scale":"v.form=='hidden'?v.scales[1]:1"}}}
+                        """).getAsJsonObject());
+
+        DefaultPoseProgram program = new DefaultPoseProgram(geometry, Map.of(clip.name(), clip));
+
+        assertEquals(1, program.hiddenBoneCount());
+    }
+
+    @Test
     void firstPersonGroupsTreatArmAndSleeveAsOneVisibleJointFamily() {
         Map<String, Boolean> arms = Map.of(
                 "rightArm", false, "rightSleeve", true,

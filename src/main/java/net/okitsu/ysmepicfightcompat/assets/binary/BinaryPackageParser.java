@@ -4,6 +4,7 @@ import net.okitsu.ysmepicfightcompat.animation.AnimationClip;
 import net.okitsu.ysmepicfightcompat.animation.AnimationController;
 import net.okitsu.ysmepicfightcompat.animation.BedrockAnimationParser;
 import net.okitsu.ysmepicfightcompat.assets.ModelBundle;
+import net.okitsu.ysmepicfightcompat.assets.ModelFunctionAssets;
 import net.okitsu.ysmepicfightcompat.geometry.GeometryDocument;
 import org.joml.Vector3f;
 
@@ -176,7 +177,7 @@ public final class BinaryPackageParser {
 
     private static void readModern(Cursor input, int format, ModelBundle result) {
         skipSounds(input, format);
-        skipFunctions(input);
+        readFunctions(input, result);
         skipLanguages(input);
         if (format < 26) {
             repeat(input.count("sub-entity"), ignored -> skipSubEntity(input, format));
@@ -503,6 +504,9 @@ public final class BinaryPackageParser {
         if (format > 15) {
             input.varUInt("property flag");
             if (format >= 32) {
+                // Its semantic identity has not been verified against a matched
+                // official folder/package fixture. Do not infer multiline merging
+                // from the introduction version alone; keep the bundle default.
                 input.varUInt("property flag");
             }
             input.text();
@@ -715,12 +719,25 @@ public final class BinaryPackageParser {
         });
     }
 
-    private static void skipFunctions(Cursor input) {
-        repeat(input.count("function file"), ignored -> {
-            input.text();
-            input.text();
-            input.skipBlob();
-        });
+    private static void readFunctions(Cursor input, ModelBundle result) {
+        int count = input.count("function file");
+        require(count <= ModelFunctionAssets.MAX_FUNCTIONS, "Too many Molang functions");
+        long totalBytes = 0;
+        for (int index = 0; index < count; index++) {
+            String name = input.text(ModelFunctionAssets.MAX_NAME_BYTES, "function name");
+            // Real modern packages retain the complete basename, including any
+            // @subscription, followed by opaque hexadecimal metadata (not a path).
+            // The source identity comes only from the first field.
+            input.text(16 * 1_024, "function metadata");
+            String key = ModelFunctionAssets.canonicalName(name);
+            byte[] bytes = input.blob(ModelFunctionAssets.MAX_SOURCE_BYTES, "Molang source");
+            totalBytes += bytes.length;
+            require(totalBytes <= ModelFunctionAssets.MAX_TOTAL_SOURCE_BYTES,
+                    "Molang sources exceed their total size limit");
+            String source = ModelFunctionAssets.decodeSource(bytes);
+            require(result.functions().putIfAbsent(key, source) == null,
+                    "Duplicate Molang function name");
+        }
     }
 
     private static void skipLanguages(Cursor input) {
@@ -826,14 +843,22 @@ public final class BinaryPackageParser {
         }
 
         private String text() {
-            int length = boundedLength(MAX_TEXT_BYTES, "text");
+            return text(MAX_TEXT_BYTES, "text");
+        }
+
+        private String text(int maximum, String label) {
+            int length = boundedLength(maximum, label);
             String value = new String(source, offset, length, StandardCharsets.UTF_8);
             offset += length;
             return value;
         }
 
         private byte[] blob() {
-            int length = boundedLength(MAX_BLOB_BYTES, "blob");
+            return blob(MAX_BLOB_BYTES, "blob");
+        }
+
+        private byte[] blob(int maximum, String label) {
+            int length = boundedLength(maximum, label);
             byte[] value = java.util.Arrays.copyOfRange(source, offset, offset + length);
             offset += length;
             return value;

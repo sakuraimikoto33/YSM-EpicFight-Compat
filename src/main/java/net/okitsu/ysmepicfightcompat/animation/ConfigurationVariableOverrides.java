@@ -21,23 +21,23 @@ final class ConfigurationVariableOverrides {
 
     synchronized Map<String, Double> evaluate(String source,
                                                ExpressionEngine.Environment fallback) {
-        Map<Integer, Double> workingValues = new HashMap<>(values);
+        Map<Integer, Object> workingValues = new HashMap<>(values);
         Set<Integer> workingAssigned = new HashSet<>(assigned);
         Set<Integer> written = new HashSet<>();
         ExpressionEngine.compile(source).evaluate(new OverlayEnvironment(
                 workingValues, workingAssigned, written, fallback));
 
         for (int slot : workingAssigned) {
-            if (isOrdinaryVariable(slot)) {
-                values.put(slot, workingValues.getOrDefault(slot, 0.0D));
+            if (isOrdinaryVariable(slot) && workingValues.get(slot) instanceof Number value) {
+                values.put(slot, ExpressionEngine.number(value));
                 assigned.add(slot);
             }
         }
         Map<String, Double> changes = new LinkedHashMap<>();
         for (int slot : written) {
-            if (isOrdinaryVariable(slot)) {
+            if (isOrdinaryVariable(slot) && workingValues.get(slot) instanceof Number value) {
                 changes.put(ExpressionEngine.slotName(slot),
-                        workingValues.getOrDefault(slot, 0.0D));
+                        ExpressionEngine.number(value));
             }
         }
         return Map.copyOf(changes);
@@ -73,14 +73,24 @@ final class ConfigurationVariableOverrides {
                 && !name.startsWith("variable.roaming."));
     }
 
-    private record OverlayEnvironment(Map<Integer, Double> values, Set<Integer> assigned,
+    private record OverlayEnvironment(Map<Integer, Object> values, Set<Integer> assigned,
                                       Set<Integer> written,
                                       ExpressionEngine.Environment fallback)
-            implements ExpressionEngine.Environment {
+            implements MolangScriptRuntime.Host {
+        @Override
+        public MolangScriptRuntime scripts() {
+            return MolangScriptRuntime.scripts(fallback);
+        }
+
         @Override
         public double readVariable(int slot) {
+            return ExpressionEngine.number(readVariableValue(slot));
+        }
+
+        @Override
+        public Object readVariableValue(int slot) {
             return assigned.contains(slot) ? values.getOrDefault(slot, 0.0D)
-                    : fallback.readVariable(slot);
+                    : fallback.readVariableValue(slot);
         }
 
         @Override
@@ -90,14 +100,48 @@ final class ConfigurationVariableOverrides {
 
         @Override
         public void writeVariable(int slot, double value) {
-            values.put(slot, Double.isFinite(value) ? value : 0.0D);
+            writeVariableValue(slot, value);
+        }
+
+        @Override
+        public void writeVariableValue(int slot, Object value) {
+            values.put(slot, ExpressionEngine.boundedValue(value));
             assigned.add(slot);
             written.add(slot);
         }
 
         @Override
         public double readQuery(int slot) {
-            return fallback.readQuery(slot);
+            return ExpressionEngine.number(readQueryValue(slot));
+        }
+
+        @Override
+        public Object readQueryValue(int slot) {
+            MolangScriptRuntime runtime = scripts();
+            if (runtime != null) {
+                Object value = runtime.read(ExpressionEngine.slotName(slot), this);
+                if (value != MolangScriptRuntime.UNHANDLED) {
+                    return value;
+                }
+            }
+            return fallback.readQueryValue(slot);
+        }
+
+        @Override
+        public Object invokeValue(String name, Object[] arguments) {
+            MolangScriptRuntime runtime = scripts();
+            if (runtime != null) {
+                Object value = runtime.invoke(name, arguments, this);
+                if (value != MolangScriptRuntime.UNHANDLED) {
+                    return value;
+                }
+            }
+            return fallback.invokeValue(name, arguments);
+        }
+
+        @Override
+        public Object[] arguments() {
+            return fallback.arguments();
         }
 
         @Override

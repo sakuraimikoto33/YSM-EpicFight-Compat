@@ -9,6 +9,7 @@ import net.minecraft.world.item.ItemStack;
 import net.okitsu.ysmepicfightcompat.CompatMod;
 import net.okitsu.ysmepicfightcompat.geometry.GeometryDocument;
 import net.okitsu.ysmepicfightcompat.mesh.AuxiliaryBoneLayout;
+import net.okitsu.ysmepicfightcompat.mesh.DisplayedBoneQueries;
 import net.okitsu.ysmepicfightcompat.mesh.HumanoidRig;
 import net.okitsu.ysmepicfightcompat.network.ClientHeldItemModelPreferences;
 import net.okitsu.ysmepicfightcompat.network.ClientMovementAnimationPreferences;
@@ -59,6 +60,12 @@ public final class ParallelAnimationProgram {
     private static final double ITEM_SWITCH_EXIT_BLEND_SECONDS = 3.0D / 20.0D;
     private static final Set<String> WHOLE_MODEL_MOUNTED_STATES = Set.of(
             "boat", "ride_pig", "ride", "sit");
+    private static final Set<String> SCRIPT_WORLD_CONTROLLERS = Set.of(
+            "player.main", "player.pre_main", "player.post_main",
+            "player.hold_mainhand", "player.hold_offhand", "player.pre_hold", "player.post_hold",
+            "player.use", "player.pre_use", "player.post_use", "player.swing",
+            "player.pre_swing", "player.post_swing", "player.passenger", "player.vehicle",
+            "player.armor_head", "player.armor_chest", "player.armor_legs", "player.armor_feet");
     private static final ExecutorService ANIMATION_WORKERS = Executors.newFixedThreadPool(
             Math.max(1, Math.min(2, Runtime.getRuntime().availableProcessors() - 1)), task -> {
                 Thread worker = new Thread(task, "ysm-ef-molang-evaluator");
@@ -280,7 +287,7 @@ public final class ParallelAnimationProgram {
     }
 
     private static final class ControllerVariableEnvironment
-            implements ExpressionEngine.Environment {
+            implements MolangScriptRuntime.Host {
         private final ExpressionEngine.Environment delegate;
         private final Map<Integer, Double> variables;
 
@@ -288,6 +295,26 @@ public final class ParallelAnimationProgram {
                                               Map<Integer, Double> variables) {
             this.delegate = delegate;
             this.variables = new HashMap<>(variables);
+        }
+
+        @Override public MolangScriptRuntime scripts() { return MolangScriptRuntime.scripts(delegate); }
+        @Override public Object readVariableValue(int slot) {
+            return variables.containsKey(slot) ? variables.get(slot) : delegate.readVariableValue(slot);
+        }
+        @Override public void writeVariableValue(int slot, Object value) {
+            if (variables.containsKey(slot)) writeVariable(slot, ExpressionEngine.number(value));
+            else delegate.writeVariableValue(slot, value);
+        }
+        @Override public Object readQueryValue(int slot) {
+            MolangScriptRuntime runtime = scripts();
+            Object value = runtime == null ? MolangScriptRuntime.UNHANDLED
+                    : runtime.read(ExpressionEngine.slotName(slot), this);
+            return value == MolangScriptRuntime.UNHANDLED ? delegate.readQueryValue(slot) : value;
+        }
+        @Override public Object invokeValue(String name, Object[] arguments) {
+            MolangScriptRuntime runtime = scripts();
+            Object value = runtime == null ? MolangScriptRuntime.UNHANDLED : runtime.invoke(name, arguments, this);
+            return value == MolangScriptRuntime.UNHANDLED ? delegate.invokeValue(name, arguments) : value;
         }
 
         @Override
@@ -380,6 +407,9 @@ public final class ParallelAnimationProgram {
     private final Map<String, ClipProgram> automaticClips;
     private final Map<String, ClipProgram> controllerClips;
     private final Map<String, ClipProgram> rouletteClips;
+    private final Map<String, ClipProgram> scriptClips;
+    private final Map<String, String> scriptSources;
+    private final Map<String, MolangScriptRuntime.Clip> scriptClipInfo;
     private final AutomaticAnimationSelector automaticSelector;
     private final CustomHeldItemPolicy customHeldItems;
     private final AnimationControllerProgram controllerProgram;
@@ -414,7 +444,18 @@ public final class ParallelAnimationProgram {
                                     Map<String, AnimationController> controllers,
                                     AuxiliaryBoneLayout layout,
                                     float horizontalScale, float verticalScale) {
+        this(modelId, geometry, animations, controllers, Map.of(), layout,
+                horizontalScale, verticalScale);
+    }
+
+    public ParallelAnimationProgram(String modelId, GeometryDocument geometry,
+                                    Map<String, AnimationClip> animations,
+                                    Map<String, AnimationController> controllers,
+                                    Map<String, String> functions,
+                                    AuxiliaryBoneLayout layout,
+                                    float horizontalScale, float verticalScale) {
         this.modelId = modelId == null ? "" : modelId;
+        scriptSources = Map.copyOf(functions);
         this.layout = layout;
         this.epicFightPoseControls = epicFightPoseControls(layout);
         this.horizontalScale = positiveScale(horizontalScale);
@@ -433,6 +474,16 @@ public final class ParallelAnimationProgram {
         automaticClips = compileAutomaticClips(animations, visibilityByName);
         controllerClips = compileControllerClips(animations, visibilityByName);
         rouletteClips = compileRouletteClips(animations, visibilityByName);
+        Map<String, ClipProgram> scripted = new HashMap<>();
+        Map<String, MolangScriptRuntime.Clip> scriptInfo = new HashMap<>();
+        if (!scriptSources.isEmpty()) {
+            scripted.putAll(controllerClips);
+            parallelClips.forEach(program -> scripted.putIfAbsent(normalize(program.clip().name()), program));
+            animations.forEach((name, clip) -> scriptInfo.put(normalize(name),
+                    new MolangScriptRuntime.Clip(duration(clip), clip.playback())));
+        }
+        scriptClips = Map.copyOf(scripted);
+        scriptClipInfo = Map.copyOf(scriptInfo);
         Map<String, AutomaticAnimationSelector.ClipInfo> automaticInfo = new HashMap<>();
         automaticClips.forEach((name, program) -> automaticInfo.put(name,
                 new AutomaticAnimationSelector.ClipInfo(program.duration())));
@@ -616,7 +667,7 @@ public final class ParallelAnimationProgram {
 
     public boolean isEmpty() {
         return parallelClips.isEmpty() && automaticClips.isEmpty()
-                && controllerProgram.isEmpty() && rouletteClips.isEmpty();
+                && controllerProgram.isEmpty() && rouletteClips.isEmpty() && scriptSources.isEmpty();
     }
 
     /** Whether this model replaces Epic Fight's item rendering for the current hand item. */
@@ -678,13 +729,17 @@ public final class ParallelAnimationProgram {
     public void releaseEntity(LivingEntity entity) {
         RuntimeState removed = entity == null ? null : states.remove(entity);
         if (removed != null) {
+            ClientScriptEvents.unbind(entity, removed.scripts);
             removed.reset(0.0D);
         }
     }
 
     /** Releases every entity state before the owning converted mesh is discarded. */
     public void releaseAllEntities() {
-        states.values().forEach(state -> state.reset(0.0D));
+        states.forEach((entity, state) -> {
+            ClientScriptEvents.unbind(entity, state.scripts);
+            state.reset(0.0D);
+        });
         states.clear();
     }
 
@@ -758,6 +813,7 @@ public final class ParallelAnimationProgram {
                         @Nullable MovementAnimationType renderedYsmMovement) {
         RuntimeState state = states.computeIfAbsent(entity,
                 value -> new RuntimeState(value, modelId,
+                        scriptSources, scriptClipInfo,
                         new EvaluationScratch(visibilityBones.size(), auxiliaryCount)));
         double sampledNow = (entity.tickCount + partialTick) / 20.0D;
         if (entity.tickCount < state.lastTickCount) {
@@ -768,6 +824,9 @@ public final class ParallelAnimationProgram {
         // rewound, which indicates a real lifecycle reset.
         double now = stableSampleTime(entity.tickCount, sampledNow,
                 state.lastTickCount, state.lastNow);
+        if (now > state.boneQuerySampledAt) {
+            state.environment.boneQueries(state.displayedBoneQueries);
+        }
         float stablePartialTick = (float) Math.max(0.0D,
                 Math.min(1.0D, now * 20.0D - entity.tickCount));
         double elapsed = Math.max(0.0D, now - state.startedAt);
@@ -798,6 +857,16 @@ public final class ParallelAnimationProgram {
         AutomaticAnimationSelector.Selection selected =
                 automaticSelector.select(entity, now, state.automaticState,
                         synchronizedMovement);
+        state.environment.update(stablePartialTick, firstPerson, deltaTime);
+        state.environment.movement(selected.movement());
+        state.environment.fullBodyReferenceYaw(epicModelYaw);
+        state.environment.customBowAim(null, null);
+        state.environment.clipTime(0.0D);
+        state.environment.soundScope("model/scripts");
+        state.scripts.frame(now, state.environment);
+        AutomaticAnimationSelector.Selection builtInSelection = selected;
+        selected = selectScriptControllers(selected, state.scripts, state.scriptOutputs,
+                state.environment, now, elapsed);
         List<AutomaticAnimationSelector.ActiveClip> rawAutomatic =
                 filterDisabledItemReplacementClips(entity, selected.clips(),
                         enabledReplacementHands);
@@ -827,7 +896,6 @@ public final class ParallelAnimationProgram {
                 fullBodyEnding != null && fullBodyEnding.compositeSnapshot() != null);
         Float visualFacingYaw = customBowHeadYaw
                 ? entity.getViewYRot(stablePartialTick) : null;
-        state.environment.update(stablePartialTick, firstPerson, deltaTime);
         state.environment.movement(selected.movement());
         state.environment.customBowAim(visualFacingYaw, epicModelYaw);
         Set<InteractionHand> attackReplacementHands = customAttackSoundHands(entity);
@@ -844,6 +912,9 @@ public final class ParallelAnimationProgram {
                                 name, activeReplacementHands,
                                 enabledItemAnimationHands,
                                 prospectiveItemSwitch));
+        controllerSelection = mergeScriptControllers(controllerSelection, state.scriptOutputs,
+                name -> controllerOutputsEnabled(name, activeReplacementHands,
+                        enabledItemAnimationHands, prospectiveItemSwitch));
         ItemSwitchPose itemSwitchPose = updateItemSwitchPose(
                 selected.clips(), controllerSelection.allActive(),
                 selected.main(), selected.movement(),
@@ -860,7 +931,14 @@ public final class ParallelAnimationProgram {
                 controllerSelection.outputActive();
         state.attackSoundRouteHands = attackSoundRouteHands(
                 automatic, controlled, attackReplacementHands);
-        state.prepareControllerTimelines(controllerProgram.activeKeys(controlled));
+        Set<String> controllerTimelineKeys = new LinkedHashSet<>(controllerProgram.activeKeys(controlled));
+        controllerSelection.allActive().stream()
+                .filter(active -> active.instanceKey().startsWith("script/"))
+                .map(AnimationControllerProgram.ActiveAnimation::instanceKey)
+                .forEach(controllerTimelineKeys::add);
+        state.prepareControllerTimelines(controllerTimelineKeys);
+        synchronizeSuppressedScriptTimelines(state, builtInSelection,
+                controllerSelection, elapsed);
         collectCompletedEvaluation(state);
         boolean mountedFullBody = automatic.stream()
                 .anyMatch(active -> isWholeModelMountedClip(active.name()));
@@ -871,6 +949,8 @@ public final class ParallelAnimationProgram {
                 && state.publishedFrame.replaceEpicFightPose()
                 && !currentFullBodyOwner;
         boolean workerEligible = entity != Minecraft.getInstance().player
+                && scriptSources.isEmpty()
+                && !state.environment.hasTypedVariables()
                 && !epicFightActionActive
                 && !mountedFullBody
                 && !leavingPublishedFullBody
@@ -909,6 +989,159 @@ public final class ParallelAnimationProgram {
             OfficialRoamingVariables.stopLocalRouletteAnimation(entity);
         }
         return state.publishedFrame;
+    }
+
+    /** Publish once after final mesh composition; never expose same-frame feedback. */
+    public void publishBoneQueries(LivingEntity entity, OpenMatrix4f[] complete,
+                                   Set<String> hiddenBones) {
+        RuntimeState state = states.get(entity);
+        if (state == null || !state.environment.boneQueriesRequested()
+                || state.lastNow == state.boneQuerySampledAt) return;
+        state.displayedBoneQueries = DisplayedBoneQueries.capture(
+                layout, complete, state.displayedBoneQueries, hiddenBones);
+        state.boneQuerySampledAt = state.lastNow;
+    }
+
+    AutomaticAnimationSelector.Selection selectScriptControllers(
+            AutomaticAnimationSelector.Selection selected, MolangScriptRuntime scripts,
+            Map<String, MolangScriptRuntime.Output> outputs,
+            ExpressionEngine.Environment environment, double now, double elapsed) {
+        outputs.clear();
+        if (scripts.controllers().isEmpty()) return selected;
+        List<AutomaticAnimationSelector.ActiveClip> automatic = new ArrayList<>(selected.clips());
+        AutomaticAnimationSelector.ActiveClip main = selected.main();
+        for (String channel : scripts.controllers().stream()
+                .sorted(Comparator.comparingInt(ParallelAnimationProgram::scriptControllerStage)
+                        .thenComparing(java.util.function.Function.identity())).toList()) {
+            // A script customizes the built-in provider. An explicitly authored
+            // Bedrock controller replaces that provider and retains precedence.
+            if (!supportsScriptController(channel) || controllerProgram.hasController(channel)) continue;
+            AutomaticAnimationSelector.ActiveClip fallback = selected.clips().stream()
+                    .filter(active -> scriptChannel(active, selected.main()).equals(channelKey(channel)))
+                    .findFirst().orElse(null);
+            String fallbackName = fallback == null ? "" : fallback.name();
+            double fallbackElapsed = fallback == null ? elapsed : fallback.elapsed();
+            if (fallback == null && channel.contains("parallel")) {
+                fallbackName = parallelClips.stream().map(program -> program.clip().name())
+                        .filter(name -> channelKey("player." + name).equals(channelKey(channel)))
+                        .findFirst().orElse("");
+            }
+            MolangScriptRuntime.Output output = scripts.controller(
+                    channel, fallbackName, fallbackElapsed, now, environment);
+            outputs.put(channel, output);
+            if (output.overridden()) {
+                automatic.removeIf(active -> scriptChannel(active, selected.main()).equals(channelKey(channel)));
+                if (channelKey(channel).equals("player.main")) {
+                    main = output.visible() ? new AutomaticAnimationSelector.ActiveClip(
+                            output.name(), output.elapsed(), false) : null;
+                }
+            }
+        }
+        return new AutomaticAnimationSelector.Selection(automatic, main,
+                selected.movement(), selected.heldItemChanges());
+    }
+
+    static String scriptChannel(AutomaticAnimationSelector.ActiveClip active,
+                                        AutomaticAnimationSelector.ActiveClip main) {
+        if (active == main) return "player.main";
+        String name = active.name().split("[:$#]", 2)[0];
+        name = switch (name) {
+            case "swing_hand", "swing_offhand" -> "swing";
+            case "use_mainhand", "use_offhand" -> "use";
+            case "head", "chest", "legs", "feet" -> "armor_" + name;
+            default -> name;
+        };
+        return channelKey("player." + name);
+    }
+
+    private static String channelKey(String channel) {
+        return normalize(channel).replaceAll("_(\\d+)$", "$1");
+    }
+
+    static boolean supportsScriptController(String channel) {
+        String name = channelKey(channel);
+        return SCRIPT_WORLD_CONTROLLERS.contains(name)
+                || name.matches("player\\.(?:pre_)?parallel[0-7]");
+    }
+
+    private static int scriptControllerStage(String channel) {
+        if (channel.contains("pre_parallel")) return 0;
+        if (channel.contains("parallel")) return 100;
+        return controllerStage(channel);
+    }
+
+    private static boolean scriptOverrides(RuntimeState state, String channel) {
+        return state != null && scriptOverrides(state.scriptOutputs, channel);
+    }
+
+    static boolean scriptOverrides(Map<String, MolangScriptRuntime.Output> outputs, String channel) {
+        return outputs.entrySet().stream().anyMatch(entry ->
+                entry.getValue().overridden() && channelKey(entry.getKey()).equals(channelKey(channel)));
+    }
+
+    AnimationControllerProgram.Selection mergeScriptControllers(
+            AnimationControllerProgram.Selection selected,
+            Map<String, MolangScriptRuntime.Output> outputs,
+            java.util.function.Predicate<String> enabled) {
+        List<AnimationControllerProgram.ActiveAnimation> observed = new ArrayList<>();
+        List<AnimationControllerProgram.ActiveAnimation> output = new ArrayList<>();
+        selected.allActive().stream().filter(active -> !scriptOverrides(outputs, active.controllerName()))
+                .forEach(observed::add);
+        selected.outputActive().stream().filter(active -> !scriptOverrides(outputs, active.controllerName()))
+                .forEach(output::add);
+        outputs.forEach((channel, scripted) -> {
+            if (!scripted.overridden() || !scriptClips.containsKey(scripted.name())) return;
+            AnimationControllerProgram.ActiveAnimation active = new AnimationControllerProgram.ActiveAnimation(
+                    channel, "script/" + channel + '/' + scripted.generation(),
+                    scripted.name(), scripted.elapsed(), scripted.weight(), false, Map.of());
+            observed.add(active);
+            if (scripted.visible() && enabled.test(channel)) output.add(active);
+        });
+        return new AnimationControllerProgram.Selection(output, observed);
+    }
+
+    private void synchronizeSuppressedScriptTimelines(RuntimeState state,
+            AutomaticAnimationSelector.Selection builtIn,
+            AnimationControllerProgram.Selection selected, double elapsed) {
+        if (state.scriptOutputs.isEmpty()) return;
+        Set<String> visible = controllerProgram.activeKeys(selected.outputActive());
+        for (AnimationControllerProgram.ActiveAnimation active : selected.allActive()) {
+            if (active.instanceKey().startsWith("script/") && !visible.contains(active.instanceKey())) {
+                state.silenceTimeline(active.instanceKey(), (float) active.elapsed());
+            }
+        }
+        for (AutomaticAnimationSelector.ActiveClip active : builtIn.clips()) {
+            ClipProgram program = automaticClips.get(active.name());
+            if (program != null && scriptOverrides(state, scriptChannel(active, builtIn.main()))) {
+                state.silenceTimeline(active.name(), active == builtIn.main()
+                        ? movementTime(program, active.elapsed()) : automaticTime(program, active.elapsed()));
+            }
+        }
+        for (ClipProgram program : parallelClips) {
+            if (scriptOverrides(state, "player." + program.clip().name())) {
+                state.silenceTimeline(program.clip().name(), localTime(program, elapsed));
+            }
+        }
+    }
+
+    private ClipProgram automaticProgram(String name) {
+        ClipProgram program = automaticClips.get(name);
+        return program == null ? scriptClips.get(name) : program;
+    }
+
+    private void evaluateScriptParallel(boolean before,
+            List<AnimationControllerProgram.ActiveAnimation> controlled,
+            ExpressionEngine.Environment environment, RuntimeState state,
+            PoseScratch target, EvaluationScratch scratch) {
+        for (AnimationControllerProgram.ActiveAnimation active : controlled) {
+            String channel = active.controllerName();
+            if (!active.instanceKey().startsWith("script/") || !channel.contains("parallel")
+                    || channel.contains("pre_parallel") != before) continue;
+            ClipProgram program = scriptClips.get(active.name());
+            if (program != null) evaluateProgram(program, (float) active.elapsed(), environment,
+                    state, target, ApplyMode.PARALLEL, active.weight(), false,
+                    active.instanceKey(), true, scratch);
+        }
     }
 
     private void scheduleEvaluation(RuntimeState state, double elapsed,
@@ -1065,6 +1298,26 @@ public final class ParallelAnimationProgram {
         return frame(testScratch);
     }
 
+    Frame sampleScriptControllersAt(double now,
+            AutomaticAnimationSelector.Selection selected,
+            ExpressionEngine.Environment environment, MolangScriptRuntime scripts,
+            AnimationControllerProgram.RuntimeState controllerState,
+            boolean movementEnabled) {
+        scripts.frame(now, environment);
+        Map<String, MolangScriptRuntime.Output> outputs = new LinkedHashMap<>();
+        selected = selectScriptControllers(selected, scripts, outputs, environment, now, now);
+        AnimationControllerProgram.Selection controlled = mergeScriptControllers(
+                controllerProgram.selectObserved(now, environment, controllerState, ignored -> true),
+                outputs, ignored -> true);
+        MovementPose movement = movementEnabled && selected.main() != null
+                && selected.movement() != null
+                ? new MovementPose(selected.main(), selected.movement()) : null;
+        evaluate(now, selected.clips(), controlled.outputActive(), null, movement,
+                LadderRenderPolicy.NONE, null, null, 0.0D, environment,
+                null, testScratch, outputs);
+        return frame(testScratch);
+    }
+
     private Set<InteractionHand> ysmReplacementHands(LivingEntity entity) {
         LinkedHashSet<InteractionHand> result = new LinkedHashSet<>();
         for (InteractionHand hand : InteractionHand.values()) {
@@ -1084,7 +1337,7 @@ public final class ParallelAnimationProgram {
         boolean naturalRequested =
                 ClientMovementAnimationPreferences.usesNaturalLadderPose(
                         entity, modelId, movementPose.movement());
-        ClipProgram main = automaticClips.get(movementPose.active().name());
+        ClipProgram main = automaticProgram(movementPose.active().name());
         if (naturalRequested) {
             // An idle fallback may animate an arm but is not a ladder pose. Models
             // without a dedicated ladder arm pose keep their established HOLD layer.
@@ -1519,7 +1772,8 @@ public final class ParallelAnimationProgram {
             ExpressionEngine.Environment environment, RuntimeState runtimeState) {
         Set<InteractionHand> pausedHoldHands = runtimeState.fullBodyInputHands;
         for (ClipProgram program : parallelClips) {
-            if (program.clip().name().startsWith("pre_parallel")) {
+            if (program.clip().name().startsWith("pre_parallel")
+                    && !scriptOverrides(runtimeState, "player." + program.clip().name())) {
                 fireProgramTimeline(program, localTime(program, elapsed), environment,
                         runtimeState, program.clip().name(), true);
             }
@@ -1579,7 +1833,8 @@ public final class ParallelAnimationProgram {
             }
         }
         for (ClipProgram program : parallelClips) {
-            if (!program.clip().name().startsWith("pre_parallel")) {
+            if (!program.clip().name().startsWith("pre_parallel")
+                    && !scriptOverrides(runtimeState, "player." + program.clip().name())) {
                 fireProgramTimeline(program, localTime(program, elapsed), environment,
                         runtimeState, program.clip().name(), true);
             }
@@ -1637,6 +1892,23 @@ public final class ParallelAnimationProgram {
                           ClipProgram rouletteClip, double rouletteElapsed,
                           ExpressionEngine.Environment environment,
                           RuntimeState runtimeState, EvaluationScratch scratch) {
+        evaluate(elapsed, automatic, controlled, fullBodyEnding, movementPose,
+                ladderPolicy, itemSwitchPose, rouletteClip, rouletteElapsed,
+                environment, runtimeState, scratch,
+                runtimeState == null ? Map.of() : runtimeState.scriptOutputs);
+    }
+
+    private void evaluate(double elapsed,
+                          List<AutomaticAnimationSelector.ActiveClip> automatic,
+                          List<AnimationControllerProgram.ActiveAnimation> controlled,
+                          @Nullable FullBodyEnding fullBodyEnding,
+                          @Nullable MovementPose movementPose,
+                          LadderRenderPolicy ladderPolicy,
+                          @Nullable ItemSwitchPose itemSwitchPose,
+                          ClipProgram rouletteClip, double rouletteElapsed,
+                          ExpressionEngine.Environment environment,
+                          RuntimeState runtimeState, EvaluationScratch scratch,
+                          Map<String, MolangScriptRuntime.Output> scriptOutputs) {
         resetScratch(scratch);
         scratch.naturalLadderPose = ladderPolicy.naturalPose();
         scratch.ladderItemsInHand.addAll(ladderPolicy.itemsInHand());
@@ -1672,11 +1944,13 @@ public final class ParallelAnimationProgram {
                 || itemSwitchPose != null
                 ? scratch.wholeModelPose : scratch.parallelPose;
         for (ClipProgram program : parallelClips) {
-            if (program.clip().name().startsWith("pre_parallel")) {
+            if (program.clip().name().startsWith("pre_parallel")
+                    && !scriptOverrides(scriptOutputs, "player." + program.clip().name())) {
                 evaluateProgram(program, localTime(program, elapsed), environment,
                         runtimeState, authoredTarget, ApplyMode.PARALLEL, scratch);
             }
         }
+        evaluateScriptParallel(true, controlled, environment, runtimeState, authoredTarget, scratch);
         if (customFullBodyPose) {
             for (PoseLayer layer : orderedFullBodyLayers(
                     automatic, controlled, fullBodyEnding)) {
@@ -1762,11 +2036,13 @@ public final class ParallelAnimationProgram {
             }
         }
         for (ClipProgram program : parallelClips) {
-            if (!program.clip().name().startsWith("pre_parallel")) {
+            if (!program.clip().name().startsWith("pre_parallel")
+                    && !scriptOverrides(scriptOutputs, "player." + program.clip().name())) {
                 evaluateProgram(program, localTime(program, elapsed), environment,
                         runtimeState, authoredTarget, ApplyMode.PARALLEL, scratch);
             }
         }
+        evaluateScriptParallel(false, controlled, environment, runtimeState, authoredTarget, scratch);
         applyOfficialMovementHeadTracking(movementPose, environment, scratch);
         composeVisibility(scratch, ladderPolicy.hiddenYsmItemRoots());
         composeAuxiliaryMatrices(scratch.parallelPose, scratch);
@@ -2030,7 +2306,9 @@ public final class ParallelAnimationProgram {
             boolean itemSwitchFullBody,
             ExpressionEngine.Environment environment, RuntimeState runtimeState,
             EvaluationScratch scratch) {
-        ClipProgram program = controllerClips.get(active.name());
+        if (active.instanceKey().startsWith("script/") && active.controllerName().contains("parallel")) return;
+        ClipProgram program = active.instanceKey().startsWith("script/")
+                ? scriptClips.get(active.name()) : controllerClips.get(active.name());
         if (program == null) {
             return;
         }
@@ -2053,7 +2331,8 @@ public final class ParallelAnimationProgram {
                 && isOrdinaryMainhandBowHold(program.clip().name())
                 ? PoseTransform.MIRROR_X : PoseTransform.NONE;
         boolean applied = evaluateProgram(
-                program, controllerTime(program, active.elapsed()),
+                program, active.instanceKey().startsWith("script/")
+                        ? (float) active.elapsed() : controllerTime(program, active.elapsed()),
                 controllerEnvironment, runtimeState,
                 customFullBodyPose || movementFullBody || itemSwitchFullBody
                         ? scratch.wholeModelPose
@@ -2210,7 +2489,7 @@ public final class ParallelAnimationProgram {
         if (movementPose == null) {
             return;
         }
-        ClipProgram program = automaticClips.get(movementPose.active().name());
+        ClipProgram program = automaticProgram(movementPose.active().name());
         if (program == null || !program.authoredLeftArmPose()
                 || program.authoredRightArmPose()) {
             return;
@@ -4047,6 +4326,10 @@ public final class ParallelAnimationProgram {
         private final Set<Integer> assigned = new java.util.HashSet<>();
         private final Map<String, Float> lastLocalTime = new HashMap<>();
         private final EntityAnimationEnvironment environment;
+        private final MolangScriptRuntime scripts;
+        private final Map<String, MolangScriptRuntime.Output> scriptOutputs = new LinkedHashMap<>();
+        private BoneQuerySnapshot displayedBoneQueries = BoneQuerySnapshot.EMPTY;
+        private double boneQuerySampledAt = Double.NEGATIVE_INFINITY;
         private final EvaluationScratch scratch;
         private final AutomaticAnimationSelector.State automaticState =
                 new AutomaticAnimationSelector.State();
@@ -4080,8 +4363,13 @@ public final class ParallelAnimationProgram {
         private String reportedFullBody = "";
 
         private RuntimeState(LivingEntity entity, String modelId,
+                             Map<String, String> functions,
+                             Map<String, MolangScriptRuntime.Clip> clips,
                              EvaluationScratch scratch) {
             environment = new EntityAnimationEnvironment(entity, variables, assigned, modelId);
+            scripts = new MolangScriptRuntime(functions, clips);
+            environment.scripts(scripts);
+            if (!scripts.isEmpty()) ClientScriptEvents.bind(entity, modelId, scripts);
             this.scratch = scratch;
             fullBodyActionSnapshot = new PoseLayerSnapshot(
                     scratch.wholeModelPose.positions.length,
@@ -4099,6 +4387,9 @@ public final class ParallelAnimationProgram {
             variables.clear();
             assigned.clear();
             environment.reset();
+            scriptOutputs.clear();
+            displayedBoneQueries = BoneQuerySnapshot.EMPTY;
+            boneQuerySampledAt = Double.NEGATIVE_INFINITY;
             automaticState.reset();
             controllerState.reset();
             lastLocalTime.clear();
@@ -4210,13 +4501,20 @@ public final class ParallelAnimationProgram {
 
         private void prepareControllerTimelines(Set<String> activeKeys) {
             lastLocalTime.keySet().removeIf(name -> {
-                boolean removed = name.startsWith("controller/")
+                boolean removed = (name.startsWith("controller/") || name.startsWith("script/"))
                         && !activeKeys.contains(name);
                 if (removed) {
                     environment.stopSoundScope(name);
+                    environment.stopParticleScope(name);
                 }
                 return removed;
             });
+        }
+
+        private void silenceTimeline(String key, float elapsed) {
+            environment.stopSoundScope(key);
+            environment.stopParticleScope(key);
+            lastLocalTime.put(key, elapsed);
         }
 
         private void reportRoulette(LivingEntity entity,

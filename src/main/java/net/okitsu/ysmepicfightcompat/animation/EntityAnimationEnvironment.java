@@ -9,21 +9,41 @@ import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.core.registries.Registries;
+import net.minecraft.nbt.CompoundTag;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.tags.TagKey;
+import net.minecraft.tags.FluidTags;
 import net.minecraft.util.Mth;
 import net.minecraft.world.InteractionHand;
 import net.minecraft.world.entity.EquipmentSlot;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.entity.Pose;
+import net.minecraft.world.entity.ai.attributes.Attribute;
+import net.minecraft.world.entity.ai.attributes.Attributes;
+import net.minecraft.world.entity.animal.Parrot;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.entity.player.PlayerModelPart;
 import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.item.CrossbowItem;
 import net.minecraft.world.item.Items;
 import net.minecraft.world.item.UseAnim;
+import net.minecraft.world.item.enchantment.Enchantment;
+import net.minecraft.world.item.enchantment.EnchantmentHelper;
+import net.minecraft.world.effect.MobEffect;
+import net.minecraft.world.effect.MobEffectInstance;
+import net.minecraft.world.level.LightLayer;
 import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.level.block.state.properties.BlockStateProperties;
+import net.minecraft.world.phys.BlockHitResult;
+import net.minecraft.world.phys.EntityHitResult;
+import net.minecraft.world.phys.HitResult;
 import net.minecraft.world.phys.Vec3;
+import net.minecraftforge.common.ForgeMod;
+import net.minecraftforge.fml.ModList;
+import net.okitsu.ysmepicfightcompat.integration.tlm.TouhouMaidSelectionAccess;
+import net.okitsu.ysmepicfightcompat.render.PlayerSelectionResolver;
+import org.lwjgl.glfw.GLFW;
 
 import javax.annotation.Nullable;
 import java.util.Locale;
@@ -32,7 +52,7 @@ import java.util.Random;
 import java.util.Set;
 
 /** Render-thread Molang values used by auxiliary animations. */
-final class EntityAnimationEnvironment implements ExpressionEngine.Environment {
+final class EntityAnimationEnvironment implements MolangScriptRuntime.Host {
     private static final double EPSILON = 0.0001D;
     private static final int MAX_DIE_ROLLS = 1024;
     private static final int MAX_RELATIVE_BLOCK_OFFSET = 8;
@@ -40,6 +60,8 @@ final class EntityAnimationEnvironment implements ExpressionEngine.Environment {
     private final LivingEntity entity;
     private final String modelId;
     private final Map<Integer, Double> variables;
+    private final Map<Integer, Object> typedVariables = new java.util.HashMap<>();
+    private MolangScriptRuntime scripts;
     private final Set<Integer> assigned;
     private final Random random;
     private final AuxiliaryPhysicsRuntime physics = new AuxiliaryPhysicsRuntime();
@@ -64,6 +86,11 @@ final class EntityAnimationEnvironment implements ExpressionEngine.Environment {
     private Set<InteractionHand> attackReplacementHands = Set.of();
     @Nullable
     private InteractionHand attackSoundHand;
+    private BoneQuerySnapshot boneQueries = BoneQuerySnapshot.EMPTY;
+    private boolean boneQueriesRequested;
+    private boolean renderingInInventory;
+    private boolean renderingInPaperdoll;
+    private boolean firstPersonModHide;
 
     EntityAnimationEnvironment(LivingEntity entity, Map<Integer, Double> variables,
                                Set<Integer> assigned) {
@@ -137,6 +164,20 @@ final class EntityAnimationEnvironment implements ExpressionEngine.Environment {
         this.animationTime = animationTime;
     }
 
+    void boneQueries(@Nullable BoneQuerySnapshot snapshot) {
+        boneQueries = snapshot == null ? BoneQuerySnapshot.EMPTY : snapshot;
+    }
+
+    boolean boneQueriesRequested() { return boneQueriesRequested; }
+    boolean hasTypedVariables() { return !typedVariables.isEmpty(); }
+
+    /** Only the owning renderer can distinguish inventory/paperdoll from world rendering. */
+    void renderingContext(boolean inventory, boolean paperdoll, boolean hideFirstPersonHead) {
+        renderingInInventory = inventory;
+        renderingInPaperdoll = paperdoll;
+        firstPersonModHide = hideFirstPersonHead;
+    }
+
     void soundScope(String soundScope) {
         this.soundScope = soundScope == null || soundScope.isBlank() ? "model" : soundScope;
         attackSoundHand = attackHandForScope(this.soundScope, attackReplacementHands);
@@ -183,11 +224,15 @@ final class EntityAnimationEnvironment implements ExpressionEngine.Environment {
     }
 
     void reset() {
+        typedVariables.clear();
+        if (scripts != null) scripts.reset();
         physics.reset();
         ClientSoundOutput.stopModel(entity, modelId);
         ClientParticleOutput.stopModel(entity, modelId);
         attackReplacementHands = Set.of();
         attackSoundHand = null;
+        boneQueries = BoneQuerySnapshot.EMPTY;
+        boneQueriesRequested = false;
     }
 
     @Override
@@ -222,6 +267,7 @@ final class EntityAnimationEnvironment implements ExpressionEngine.Environment {
 
     @Override
     public void writeVariable(int slot, double value) {
+        typedVariables.remove(slot);
         String name = ExpressionEngine.slotName(slot);
         if (RoamingVariableLookup.isRoaming(name)
                 && roamingVariables.writeRoaming(name, value)) {
@@ -229,6 +275,24 @@ final class EntityAnimationEnvironment implements ExpressionEngine.Environment {
         }
         variables.put(slot, Double.isFinite(value) ? value : 0.0D);
         assigned.add(slot);
+    }
+
+    void scripts(MolangScriptRuntime scripts) { this.scripts = scripts; }
+
+    @Override public MolangScriptRuntime scripts() { return scripts; }
+
+    @Override public Object readVariableValue(int slot) {
+        return typedVariables.containsKey(slot) ? typedVariables.get(slot) : readVariable(slot);
+    }
+
+    @Override public void writeVariableValue(int slot, Object value) {
+        if (value instanceof Number number) {
+            writeVariable(slot, number.doubleValue());
+        } else if (typedVariables.containsKey(slot) || typedVariables.size() < 4096) {
+            typedVariables.put(slot, ExpressionEngine.boundedValue(value));
+            variables.put(slot, 0.0D);
+            assigned.add(slot);
+        }
     }
 
     @Override
@@ -327,6 +391,52 @@ final class EntityAnimationEnvironment implements ExpressionEngine.Environment {
             case "ysm.has_elytra" -> flag(entity.getItemBySlot(EquipmentSlot.CHEST).is(Items.ELYTRA));
             case "ysm.air_supply" -> entity.getAirSupply();
             case "ysm.frozen_ticks" -> entity.getTicksFrozen();
+            case "ysm.weather" -> entity.level().isThundering() ? 2.0D
+                    : entity.level().isRaining() ? 1.0D : 0.0D;
+            case "ysm.fps" -> Minecraft.getInstance().getFps();
+            case "ysm.person_view" -> personView();
+            case "ysm.is_open_air" -> flag(entity.level().canSeeSky(entity.blockPosition()));
+            case "ysm.eye_in_water" -> flag(entity.isEyeInFluid(FluidTags.WATER));
+            case "ysm.is_riptide" -> flag(entity.isAutoSpinAttack());
+            case "ysm.on_ladder" -> flag(entity.onClimbable());
+            case "ysm.ladder_facing" -> ladderFacing();
+            case "ysm.arrow_count" -> entity.getArrowCount();
+            case "ysm.stinger_count" -> entity.getStingerCount();
+            case "ysm.elytra_rot_x" -> elytraRotation(0);
+            case "ysm.elytra_rot_y" -> elytraRotation(1);
+            case "ysm.elytra_rot_z" -> elytraRotation(2);
+            case "ysm.has_left_shoulder_parrot" -> flag(hasParrot(shoulder(true)));
+            case "ysm.has_right_shoulder_parrot" -> flag(hasParrot(shoulder(false)));
+            case "ysm.attack_damage" -> attribute(Attributes.ATTACK_DAMAGE);
+            case "ysm.attack_speed" -> attribute(Attributes.ATTACK_SPEED);
+            case "ysm.attack_knockback" -> attribute(Attributes.ATTACK_KNOCKBACK);
+            case "ysm.movement_speed" -> attribute(Attributes.MOVEMENT_SPEED);
+            case "ysm.knockback_resistance" -> attribute(Attributes.KNOCKBACK_RESISTANCE);
+            case "ysm.luck" -> attribute(Attributes.LUCK);
+            case "ysm.block_reach" -> attribute(ForgeMod.BLOCK_REACH.get());
+            case "ysm.entity_reach" -> attribute(ForgeMod.ENTITY_REACH.get());
+            case "ysm.swim_speed" -> attribute(ForgeMod.SWIM_SPEED.get());
+            case "ysm.entity_gravity" -> attribute(ForgeMod.ENTITY_GRAVITY.get());
+            case "ysm.step_height_addition" -> attribute(ForgeMod.STEP_HEIGHT_ADDITION.get());
+            case "ysm.nametag_distance" -> attribute(ForgeMod.NAMETAG_DISTANCE.get());
+            case "ysm.is_player" -> flag(entity instanceof Player);
+            case "ysm.is_maid" -> flag(TouhouMaidSelectionAccess.isSupportedMaid(entity));
+            case "ysm.mainhand_charged_crossbow" -> flag(chargedCrossbow(entity.getMainHandItem()));
+            case "ysm.offhand_charged_crossbow" -> flag(chargedCrossbow(entity.getOffhandItem()));
+            case "ysm.is_fishing" -> flag(entity instanceof Player player && player.fishing != null);
+            case "ysm.xxa" -> entity.xxa;
+            case "ysm.yya" -> entity.yya;
+            case "ysm.zza" -> entity.zza;
+            case "ysm.block_light" -> entity.level().getBrightness(LightLayer.BLOCK, entity.blockPosition());
+            case "ysm.sky_light" -> entity.level().getBrightness(LightLayer.SKY, entity.blockPosition());
+            case "ysm.time_delta" -> deltaTime;
+            case "ysm.swinging" -> flag(entity.swinging);
+            case "ysm.swing_time" -> entity.swingTime;
+            case "ysm.swinging_arm" -> entity.swinging && entity.swingingArm == InteractionHand.OFF_HAND ? 1.0D : 0.0D;
+            case "ysm.attack_time" -> entity.getAttackAnim(partialTick);
+            case "ysm.rendering_in_inventory" -> flag(renderingInInventory);
+            case "ysm.rendering_in_paperdoll" -> flag(renderingInPaperdoll);
+            case "ysm.first_person_mod_hide" -> flag(firstPersonModHide);
             case "ctrl.death" -> flag(entity.isDeadOrDying());
             case "ctrl.riptide" -> flag(entity.isAutoSpinAttack());
             case "ctrl.sleep" -> flag(entity.isSleeping());
@@ -357,6 +467,44 @@ final class EntityAnimationEnvironment implements ExpressionEngine.Environment {
             case "ctrl.walk" -> flag(!entity.isSprinting() && horizontalSpeed > 0.01D);
             case "ctrl.idle" -> flag(horizontalSpeed <= 0.01D);
             default -> 0.0D;
+        };
+    }
+
+    @Override
+    public Object readQueryValue(int slot) {
+        if (scripts != null) {
+            Object scripted = scripts.read(ExpressionEngine.slotName(slot), this);
+            if (scripted != MolangScriptRuntime.UNHANDLED) return scripted;
+        }
+        return switch (ExpressionEngine.slotName(slot)) {
+            case "ysm.texture_name" -> selectedTextureName();
+            case "ysm.dimension_name" -> entity.level().dimension().location().toString();
+            case "ysm.entity_type" -> entity instanceof Player ? "player"
+                    : TouhouMaidSelectionAccess.isSupportedMaid(entity) ? "maid" : "";
+            case "ysm.left_shoulder_parrot_variant" -> parrotVariant(shoulder(true));
+            case "ysm.right_shoulder_parrot_variant" -> parrotVariant(shoulder(false));
+            case "ysm.hit_target_id" -> hitTarget(false);
+            case "ysm.hit_target_type" -> hitTarget(true);
+            default -> readQuery(slot);
+        };
+    }
+
+    @Override
+    public Object invokeValue(String name, Object[] arguments) {
+        if (scripts != null) {
+            Object scripted = scripts.invoke(name, arguments, this);
+            if (scripted != MolangScriptRuntime.UNHANDLED) return scripted;
+        }
+        String function = name.toLowerCase(Locale.ROOT);
+        return switch (function) {
+            case "ysm.mod_version" -> modVersion(objectText(arguments, 0));
+            case "ysm.relative_block_name" -> relativeBlockName(
+                    objectNumber(arguments, 0), objectNumber(arguments, 1), objectNumber(arguments, 2));
+            case "ysm.bone_rot", "ysm.bone_pos", "ysm.bone_scale", "ysm.bone_pivot_abs" -> {
+                boneQueriesRequested = true;
+                yield boneQueries.query(function, objectText(arguments, 0));
+            }
+            default -> MolangScriptRuntime.Host.super.invokeValue(name, arguments);
         };
     }
 
@@ -408,6 +556,8 @@ final class EntityAnimationEnvironment implements ExpressionEngine.Environment {
                     entity.getZ() - entity.zOld);
             case "query.rotation_to_camera" -> rotationToCamera(arg(arguments, 0));
             case "ysm.perlin_noise" -> AuxiliaryPhysicsRuntime.perlinNoise(arguments);
+            case "ysm.mouse" -> mouse(arguments);
+            case "ysm.keyboard" -> keyboard(arguments);
             case "ysm.stop_sound" -> stopSound(null, arguments);
             case "ysm.stop_all_sounds" -> stopAllSounds(null, arguments);
             default -> 0.0D;
@@ -439,6 +589,9 @@ final class EntityAnimationEnvironment implements ExpressionEngine.Environment {
                     equippedItemHasTags(textArguments, false);
             case "query.max_durability" -> durability(textArguments, false);
             case "query.remaining_durability" -> durability(textArguments, true);
+            case "ysm.equipped_enchantment_level" -> enchantmentLevel(textArguments);
+            case "ysm.effect_level" -> effectLevel(textArguments);
+            case "ysm.relative_block_name_any" -> relativeBlockNameAny(textArguments, numericArguments);
             case "ctrl.hold" -> flag(AnimationConditionMatcher.hold(entity,
                     textArgument(textArguments, 0), textArgument(textArguments, 1)));
             case "ctrl.swing" -> flag(AnimationConditionMatcher.swing(entity,
@@ -456,6 +609,197 @@ final class EntityAnimationEnvironment implements ExpressionEngine.Environment {
     @Override
     public double invokeWithText(String name, String[] arguments) {
         return invokeWithMixedArguments(name, arguments, new double[arguments.length]);
+    }
+
+    private String selectedTextureName() {
+        if (entity instanceof Player player) {
+            PlayerSelectionResolver.Selection selection = PlayerSelectionResolver.current(player);
+            return selection != null && modelId.equals(selection.modelId())
+                    ? selection.textureName() : "";
+        }
+        TouhouMaidSelectionAccess.Selection selection = TouhouMaidSelectionAccess.resolve(entity);
+        return selection != null && modelId.equals(selection.modelId())
+                ? selection.textureName() : "";
+    }
+
+    @Nullable
+    private static String modVersion(String id) {
+        if (id == null || id.isBlank()) {
+            return null;
+        }
+        return ModList.get().getModContainerById(id)
+                .map(mod -> mod.getModInfo().getVersion().toString()).orElse(null);
+    }
+
+    private double enchantmentLevel(String[] arguments) {
+        ItemStack stack = itemBySlot(textArgument(arguments, 0));
+        if (stack.isEmpty()) {
+            return 0.0D;
+        }
+        return OfficialQueryValues.sumLevels(arguments, 1, text -> {
+            ResourceLocation id = resourceLocation(text, '$');
+            Enchantment enchantment = id == null ? null
+                    : BuiltInRegistries.ENCHANTMENT.getOptional(id).orElse(null);
+            return enchantment == null ? 0.0D
+                    : EnchantmentHelper.getItemEnchantmentLevel(enchantment, stack);
+        });
+    }
+
+    private double effectLevel(String[] arguments) {
+        return OfficialQueryValues.sumLevels(arguments, 0, text -> {
+            ResourceLocation id = resourceLocation(text, '$');
+            MobEffect effect = id == null ? null
+                    : BuiltInRegistries.MOB_EFFECT.getOptional(id).orElse(null);
+            MobEffectInstance active = effect == null ? null : entity.getEffect(effect);
+            // Minecraft stores a zero-based amplifier; YSM reports visible effect levels.
+            return active == null ? 0.0D : active.getAmplifier() + 1.0D;
+        });
+    }
+
+    private String relativeBlockName(double xOffset, double yOffset, double zOffset) {
+        BlockPos position = OfficialQueryValues.relativeBlockPosition(entity.getX(),
+                entity.getY(), entity.getZ(), xOffset, yOffset, zOffset);
+        if (position == null) {
+            return "";
+        }
+        // A visual query must not ask the client to load a missing chunk.
+        if (!entity.level().hasChunkAt(position)) {
+            return "";
+        }
+        return BuiltInRegistries.BLOCK.getKey(entity.level().getBlockState(position).getBlock()).toString();
+    }
+
+    private double relativeBlockNameAny(String[] text, double[] numbers) {
+        if (numbers == null || numbers.length < 3 || text == null || text.length <= 3) {
+            return 0.0D;
+        }
+        String actual = relativeBlockName(arg(numbers, 0), arg(numbers, 1), arg(numbers, 2));
+        if (actual.isEmpty()) {
+            return 0.0D;
+        }
+        for (int index = 3; index < text.length; index++) {
+            ResourceLocation id = resourceLocation(text[index], '$');
+            if (id != null && actual.equals(id.toString())) {
+                return 1.0D;
+            }
+        }
+        return 0.0D;
+    }
+
+    private int personView() {
+        if (firstPerson) {
+            return 0;
+        }
+        Minecraft client = Minecraft.getInstance();
+        return client.player == entity && !client.options.getCameraType().isMirrored() ? 1
+                : client.player == entity ? 2 : 1;
+    }
+
+    private double ladderFacing() {
+        if (!entity.onClimbable()) {
+            return 0.0D;
+        }
+        BlockPos position = entity.getLastClimbablePos().orElse(entity.blockPosition());
+        BlockState state = entity.level().getBlockState(position);
+        return state.hasProperty(BlockStateProperties.HORIZONTAL_FACING)
+                ? state.getValue(BlockStateProperties.HORIZONTAL_FACING).get2DDataValue() : 0.0D;
+    }
+
+    private double elytraRotation(int axis) {
+        if (entity instanceof AbstractClientPlayer player) {
+            return Math.toDegrees(axis == 0 ? player.elytraRotX
+                    : axis == 1 ? player.elytraRotY : player.elytraRotZ);
+        }
+        // Non-player adapters do not own vanilla's smoothed player wing fields.
+        double spread = 0.0D;
+        if (entity.isFallFlying()) {
+            Vec3 velocity = entity.getDeltaMovement();
+            spread = velocity.y >= 0.0D ? 1.0D
+                    : 1.0D - Math.pow(-velocity.normalize().y, 1.5D);
+        }
+        if (entity.isCrouching() && !entity.isFallFlying()) {
+            return axis == 0 ? 40.0D : axis == 1 ? 5.0D : -45.0D;
+        }
+        return axis == 0 ? 15.0D + 5.0D * spread
+                : axis == 1 ? 0.0D : -15.0D - 75.0D * spread;
+    }
+
+    @Nullable
+    private CompoundTag shoulder(boolean left) {
+        return entity instanceof Player player
+                ? left ? player.getShoulderEntityLeft() : player.getShoulderEntityRight() : null;
+    }
+
+    private static boolean hasParrot(@Nullable CompoundTag tag) {
+        return tag != null && "minecraft:parrot".equals(tag.getString("id"));
+    }
+
+    private static String parrotVariant(@Nullable CompoundTag tag) {
+        return hasParrot(tag) ? Parrot.Variant.byId(tag.getInt("Variant")).getSerializedName() : "";
+    }
+
+    private double attribute(Attribute attribute) {
+        var instance = entity.getAttribute(attribute);
+        return instance == null ? 0.0D : instance.getValue();
+    }
+
+    private static boolean chargedCrossbow(ItemStack stack) {
+        return stack.getItem() instanceof CrossbowItem && CrossbowItem.isCharged(stack);
+    }
+
+    private boolean permitsLocalInput() {
+        Minecraft client = Minecraft.getInstance();
+        return OfficialQueryValues.permitsLocalInput(client.player == entity,
+                client.level == entity.level(), client.isWindowActive(), client.screen != null);
+    }
+
+    private double mouse(double[] arguments) {
+        if (arguments == null || arguments.length != 1
+                || !OfficialQueryValues.mouseKey(arguments[0]) || !permitsLocalInput()) {
+            return 0.0D;
+        }
+        return flag(GLFW.glfwGetMouseButton(Minecraft.getInstance().getWindow().getWindow(),
+                (int) arguments[0]) == GLFW.GLFW_PRESS);
+    }
+
+    private double keyboard(double[] arguments) {
+        if (arguments == null || !permitsLocalInput()) {
+            return 0.0D;
+        }
+        long window = Minecraft.getInstance().getWindow().getWindow();
+        for (double key : arguments) {
+            if (OfficialQueryValues.keyboardKey(key)
+                    && GLFW.glfwGetKey(window, (int) key) == GLFW.GLFW_PRESS) {
+                return 1.0D;
+            }
+        }
+        return 0.0D;
+    }
+
+    private String hitTarget(boolean typeOnly) {
+        if (!permitsLocalInput()) {
+            return "";
+        }
+        HitResult hit = Minecraft.getInstance().hitResult;
+        if (hit instanceof BlockHitResult block && hit.getType() == HitResult.Type.BLOCK) {
+            return typeOnly ? "block" : BuiltInRegistries.BLOCK.getKey(
+                    entity.level().getBlockState(block.getBlockPos()).getBlock()).toString();
+        }
+        if (hit instanceof EntityHitResult target && hit.getType() == HitResult.Type.ENTITY) {
+            return typeOnly ? "entity" : BuiltInRegistries.ENTITY_TYPE.getKey(target.getEntity().getType()).toString();
+        }
+        return "";
+    }
+
+    @Nullable
+    private static String objectText(Object[] values, int index) {
+        return values != null && index < values.length && values[index] instanceof String text
+                ? text : null;
+    }
+
+    private static double objectNumber(Object[] values, int index) {
+        return values != null && index < values.length && values[index] instanceof Number number
+                ? number.doubleValue() : 0.0D;
     }
 
     private double random(double low, double high, boolean integer) {
@@ -581,13 +925,12 @@ final class EntityAnimationEnvironment implements ExpressionEngine.Environment {
 
     private double relativeBlockHasTags(String[] textArguments, double[] numericArguments,
                                         boolean requireAll) {
-        Integer x = relativeOffset(arg(numericArguments, 0));
-        Integer y = relativeOffset(arg(numericArguments, 1));
-        Integer z = relativeOffset(arg(numericArguments, 2));
-        if (x == null || y == null || z == null || textCount(textArguments, 3) == 0) {
+        BlockPos position = OfficialQueryValues.relativeBlockPosition(entity.getX(), entity.getY(),
+                entity.getZ(), arg(numericArguments, 0), arg(numericArguments, 1), arg(numericArguments, 2));
+        if (position == null || textCount(textArguments, 3) == 0
+                || !entity.level().hasChunkAt(position)) {
             return 0.0D;
         }
-        BlockPos position = entity.blockPosition().offset(x, y, z);
         BlockState state = entity.level().getBlockState(position);
         return flag(blockHasTags(state, textArguments, 3, requireAll));
     }

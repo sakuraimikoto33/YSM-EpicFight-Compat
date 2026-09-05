@@ -4,6 +4,7 @@ import net.okitsu.ysmepicfightcompat.animation.AnimationClip;
 import net.okitsu.ysmepicfightcompat.animation.AnimationController;
 import net.okitsu.ysmepicfightcompat.animation.DeclarativeParticleEffect;
 import net.okitsu.ysmepicfightcompat.assets.ModelBundle;
+import net.okitsu.ysmepicfightcompat.assets.ModelFunctionAssets;
 import net.okitsu.ysmepicfightcompat.geometry.GeometryDocument;
 import org.joml.Vector3f;
 
@@ -68,6 +69,7 @@ public final class GeometryTransferCodec {
             writeAnimations(output, model.animations());
             writeControllers(output, model.animationControllers());
             writeTextures(output, model);
+            writeFunctions(output, model);
         }
         byte[] payload = target.toByteArray();
         if (payload.length > MAX_COMPRESSED_BYTES) {
@@ -95,6 +97,8 @@ public final class GeometryTransferCodec {
             Map<String, AnimationClip> animations = readAnimations(input);
             Map<String, AnimationController> controllers = readControllers(input);
             TextureResult textures = readTextures(input);
+            boolean mergeMultiline = input.readBoolean();
+            Map<String, String> functions = readFunctions(input);
             if (input.read() != -1) {
                 throw new IOException("Trailing bytes in model transfer");
             }
@@ -103,10 +107,64 @@ public final class GeometryTransferCodec {
             result.textures().putAll(textures.bytes());
             result.textureInfo().putAll(textures.info());
             result.pbrTextures().putAll(textures.pbr());
+            result.functions().putAll(functions);
+            result.mergeMultilineExpressions(mergeMultiline);
             return result;
         } catch (RuntimeException exception) {
             throw new IOException("Invalid model transfer", exception);
         }
+    }
+
+    private static void writeFunctions(DataOutputStream output, ModelBundle model)
+            throws IOException {
+        bounded(model.functions().size(), ModelFunctionAssets.MAX_FUNCTIONS, "function");
+        output.writeBoolean(model.mergeMultilineExpressions());
+        output.writeInt(model.functions().size());
+        long totalBytes = 0;
+        java.util.Set<String> names = new java.util.HashSet<>();
+        for (Map.Entry<String, String> entry : model.functions().entrySet()) {
+            String name;
+            byte[] bytes;
+            try {
+                name = ModelFunctionAssets.canonicalName(entry.getKey());
+                bytes = ModelFunctionAssets.encodeSource(entry.getValue());
+            } catch (IllegalArgumentException exception) {
+                throw new IOException("Invalid Molang function asset", exception);
+            }
+            if (!names.add(name)) {
+                throw new IOException("Duplicate Molang function name");
+            }
+            totalBytes += bytes.length;
+            if (totalBytes > ModelFunctionAssets.MAX_TOTAL_SOURCE_BYTES) {
+                throw new IOException("Molang sources exceed their total size limit");
+            }
+            string(output, name);
+            output.writeInt(bytes.length);
+            output.write(bytes);
+        }
+    }
+
+    private static Map<String, String> readFunctions(DataInputStream input) throws IOException {
+        int count = bounded(input.readInt(), ModelFunctionAssets.MAX_FUNCTIONS, "function");
+        Map<String, String> functions = new LinkedHashMap<>();
+        long totalBytes = 0;
+        for (int index = 0; index < count; index++) {
+            String name = ModelFunctionAssets.canonicalName(string(input));
+            int length = bounded(input.readInt(), ModelFunctionAssets.MAX_SOURCE_BYTES,
+                    "Molang source byte");
+            totalBytes += length;
+            if (totalBytes > ModelFunctionAssets.MAX_TOTAL_SOURCE_BYTES) {
+                throw new IOException("Molang sources exceed their total size limit");
+            }
+            byte[] bytes = input.readNBytes(length);
+            if (bytes.length != length) {
+                throw new IOException("Truncated Molang function source");
+            }
+            if (functions.putIfAbsent(name, ModelFunctionAssets.decodeSource(bytes)) != null) {
+                throw new IOException("Duplicate Molang function name");
+            }
+        }
+        return functions;
     }
 
     private static void writeTextures(DataOutputStream output, ModelBundle model)

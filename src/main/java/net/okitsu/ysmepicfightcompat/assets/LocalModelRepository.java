@@ -18,6 +18,7 @@ import java.nio.file.Files;
 import java.nio.file.InvalidPathException;
 import java.nio.file.LinkOption;
 import java.nio.file.Path;
+import java.nio.file.attribute.BasicFileAttributes;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
@@ -31,7 +32,8 @@ import java.util.stream.Stream;
 /** Reads official YSM model sources while leaving all generated state in YSM's own folders. */
 public final class LocalModelRepository {
     private static final byte[] MODEL_BUNDLE_SCHEMA =
-            "ysm-ef-model-bundle:pbr-materials-v1".getBytes(StandardCharsets.UTF_8);
+            "ysm-ef-model-bundle:pbr-materials:molang-sources-v1"
+                    .getBytes(StandardCharsets.UTF_8);
     private static final Path DEFAULT_ROOT = Path.of("config", "yes_steve_model");
     private static final List<String> CATALOGS = List.of("builtin", "built", "custom", "auth");
     private static final long MAX_MANIFEST = 4L * 1024 * 1024;
@@ -162,7 +164,7 @@ public final class LocalModelRepository {
             LocatedModel located = source.get();
             MessageDigest digest = MessageDigest.getInstance("SHA-256");
             // Parsed bundle semantics changed while the unreleased wire/cache version remains 1.
-            // Salt the source digest so old payloads that discarded PBR companions are rebuilt.
+            // Rebuild old payloads that discarded PBR companions or Molang sources.
             digest.update(MODEL_BUNDLE_SCHEMA);
             digest.update(modelId.getBytes(StandardCharsets.UTF_8));
             if (located.archive()) {
@@ -193,6 +195,8 @@ public final class LocalModelRepository {
             bundle.scales(decimal(properties, "width_scale", 0.7F),
                     decimal(properties, "height_scale", 0.7F));
             bundle.defaultTexture(string(properties, "default_texture", ""));
+            bundle.mergeMultilineExpressions(properties.has("merge_multiline_expr")
+                    && properties.get("merge_multiline_expr").getAsBoolean());
         }
         JsonObject files = object(manifest, "files");
         JsonObject player = object(files, "player");
@@ -211,13 +215,81 @@ public final class LocalModelRepository {
             for (JsonElement location : animations.asMap().values()) {
                 Path file = confine(directory, location.getAsString());
                 if (Files.isRegularFile(file, LinkOption.NOFOLLOW_LINKS)) {
-                    readAnimationFile(file, bundle.animations());
+                    readAnimationFile(file, bundle.animations(), bundle.mergeMultilineExpressions());
                 }
             }
         }
         readControllerDeclarations(directory, player.get("animation_controllers"), bundle);
         readTextures(directory, player.get("texture"), bundle);
+        readFunctions(directory, string(files, "function_path", "functions"), bundle);
         return bundle.geometry() == null ? null : bundle;
+    }
+
+    private static void readFunctions(Path directory, String relative, ModelBundle bundle)
+            throws IOException {
+        Path functionRoot = confine(directory, relative);
+        rejectLinkedAncestors(functionRoot);
+        if (!Files.exists(functionRoot, LinkOption.NOFOLLOW_LINKS)) {
+            return;
+        }
+        if (!Files.isDirectory(functionRoot, LinkOption.NOFOLLOW_LINKS)) {
+            throw new IOException("Molang function path is not a directory");
+        }
+        List<Path> functionFiles = new ArrayList<>();
+        try (Stream<Path> paths = Files.walk(functionRoot, 16)) {
+            var iterator = paths.iterator();
+            int entries = 0;
+            while (iterator.hasNext()) {
+                Path file = iterator.next();
+                if (++entries > ModelFunctionAssets.MAX_FUNCTIONS * 2) {
+                    throw new IOException("Too many Molang directory entries");
+                }
+                BasicFileAttributes attributes = Files.readAttributes(
+                        file, BasicFileAttributes.class, LinkOption.NOFOLLOW_LINKS);
+                if (attributes.isSymbolicLink() || attributes.isOther()) {
+                    throw new IOException("Linked Molang paths are not accepted");
+                }
+                if (attributes.isRegularFile() && file.getFileName().toString()
+                        .toLowerCase(java.util.Locale.ROOT).endsWith(".molang")) {
+                    functionFiles.add(file);
+                    if (functionFiles.size() > ModelFunctionAssets.MAX_FUNCTIONS) {
+                        throw new IOException("Too many Molang functions");
+                    }
+                }
+            }
+        }
+        functionFiles.sort(Comparator.comparing(path -> slashPath(functionRoot.relativize(path))));
+        long totalBytes = 0;
+        for (Path file : functionFiles) {
+            rejectLinkedAncestors(file);
+            byte[] bytes;
+            try (var input = Files.newInputStream(file, LinkOption.NOFOLLOW_LINKS)) {
+                bytes = input.readNBytes(ModelFunctionAssets.MAX_SOURCE_BYTES + 1);
+            }
+            totalBytes += bytes.length;
+            if (totalBytes > ModelFunctionAssets.MAX_TOTAL_SOURCE_BYTES) {
+                throw new IOException("Molang sources exceed their total size limit");
+            }
+            String name = ModelFunctionAssets.canonicalName(file.getFileName().toString());
+            String source = ModelFunctionAssets.decodeSource(bytes);
+            if (bundle.functions().putIfAbsent(name, source) != null) {
+                throw new IOException("Duplicate Molang function name");
+            }
+        }
+    }
+
+    private static void rejectLinkedAncestors(Path path) throws IOException {
+        for (Path current = path.toAbsolutePath().normalize(); current != null;
+             current = current.getParent()) {
+            if (!Files.exists(current, LinkOption.NOFOLLOW_LINKS)) {
+                continue;
+            }
+            BasicFileAttributes attributes = Files.readAttributes(
+                    current, BasicFileAttributes.class, LinkOption.NOFOLLOW_LINKS);
+            if (attributes.isSymbolicLink() || attributes.isOther()) {
+                throw new IOException("Linked Molang paths are not accepted");
+            }
+        }
     }
 
     private static ModelBundle readArchive(String modelId, Path archive) throws IOException {
@@ -264,6 +336,11 @@ public final class LocalModelRepository {
     }
 
     private static void readAnimationFile(Path file, Map<String, AnimationClip> target) {
+        readAnimationFile(file, target, false);
+    }
+
+    private static void readAnimationFile(Path file, Map<String, AnimationClip> target,
+                                          boolean mergeMultiline) {
         try {
             JsonObject root = JsonParser.parseString(textBounded(file, MAX_ANIMATION)).getAsJsonObject();
             JsonObject animations = object(root, "animations");
@@ -275,8 +352,13 @@ public final class LocalModelRepository {
                     // A model can reuse an animation name in a later, specialized file
                     // (for example fp_arm). The manifest order is the precedence order:
                     // keep the main definition instead of replacing it with a partial one.
-                    target.putIfAbsent(entry.getKey(), BedrockAnimationParser.parse(
-                            entry.getKey(), entry.getValue().getAsJsonObject()));
+                    AnimationClip clip = BedrockAnimationParser.parse(
+                            entry.getKey(), entry.getValue().getAsJsonObject());
+                    if (mergeMultiline) {
+                        clip.timeline().replaceAll(event -> new AnimationClip.TimelineEvent(
+                                event.time(), List.of(String.join("\n", event.statements()))));
+                    }
+                    target.putIfAbsent(entry.getKey(), clip);
                 }
             }
         } catch (Exception ignored) {

@@ -35,6 +35,8 @@ public final class ModelBundle {
     private final Map<String, PbrTextures> pbrTextures = new LinkedHashMap<>();
     private final Map<String, AnimationClip> animations = new LinkedHashMap<>();
     private final Map<String, AnimationController> animationControllers = new LinkedHashMap<>();
+    private final Map<String, String> functions = new LinkedHashMap<>();
+    private boolean mergeMultilineExpressions;
     private float widthScale = 0.7F;
     private float heightScale = 0.7F;
     private String defaultTexture = "";
@@ -105,6 +107,19 @@ public final class ModelBundle {
 
     public Map<String, AnimationController> animationControllers() {
         return animationControllers;
+    }
+
+    /** Canonical file basenames (including @subscriptions), without the .molang suffix. */
+    public Map<String, String> functions() {
+        return functions;
+    }
+
+    public boolean mergeMultilineExpressions() {
+        return mergeMultilineExpressions;
+    }
+
+    public void mergeMultilineExpressions(boolean value) {
+        mergeMultilineExpressions = value;
     }
 
     public float widthScale() {
