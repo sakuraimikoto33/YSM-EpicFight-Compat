@@ -21,6 +21,107 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class AuxiliaryPoseMatricesTest {
     @Test
+    void keepsAllHeadAndItsNeckGeometryOnTheChestWhileTheHeadTurns() {
+        AuxiliaryBoneLayout layout = neckAndMovingHeadLayout();
+        for (float[] angles : new float[][]{{0.0F, 35.0F}, {-25.0F, 0.0F}, {-25.0F, 35.0F}}) {
+            OpenMatrix4f[] poses = AuxiliaryPoseMatrices.allocate(HumanoidRig.EPIC_JOINT_COUNT);
+            OpenMatrix4f[] toOrigin = AuxiliaryPoseMatrices.allocate(HumanoidRig.EPIC_JOINT_COUNT);
+            poses[HumanoidRig.CHEST].translate(1.0F, 2.0F, -3.0F)
+                    .rotateDeg(12.0F, Vec3f.Z_AXIS);
+            poses[HumanoidRig.HEAD].load(poses[HumanoidRig.CHEST])
+                    .translate(0.0F, 0.5F, 0.0F)
+                    .rotateDeg(angles[1], Vec3f.Y_AXIS)
+                    .rotateDeg(angles[0], Vec3f.X_AXIS);
+            toOrigin[HumanoidRig.CHEST].translate(0.0F, -1.0F, 0.0F);
+            toOrigin[HumanoidRig.HEAD].translate(0.0F, -1.5F, 0.0F);
+            OpenMatrix4f[] originalPoses = copy(poses);
+            OpenMatrix4f[] originalOrigins = copy(toOrigin);
+            OpenMatrix4f[] output = AuxiliaryPoseMatrices.allocate(layout.totalPoseCount());
+
+            AuxiliaryPoseMatrices.compose(poses, toOrigin, layout, output, null, null);
+
+            OpenMatrix4f chestSkin = new OpenMatrix4f(poses[HumanoidRig.CHEST])
+                    .mulBack(toOrigin[HumanoidRig.CHEST]);
+            OpenMatrix4f headSkin = new OpenMatrix4f(poses[HumanoidRig.HEAD])
+                    .mulBack(toOrigin[HumanoidRig.HEAD]);
+            assertBoneMatrices(layout, output, chestSkin,
+                    "AllHead", "Neck", "CustomCollar");
+            assertBoneMatrices(layout, output, headSkin,
+                    "MHead", "Head", "CustomJaw", "Hair");
+            assertEpicInputsAndSlotsUnchanged(
+                    originalPoses, originalOrigins, poses, toOrigin, output);
+        }
+    }
+
+    @Test
+    void keepsTheNeckOnTheRetargetedChestInsteadOfTheRetargetedHead() {
+        AuxiliaryBoneLayout layout = neckAndMovingHeadLayout();
+        OpenMatrix4f[] poses = translatedMatrices(HumanoidRig.EPIC_JOINT_COUNT, 0.25F);
+        OpenMatrix4f[] toOrigin = translatedMatrices(HumanoidRig.EPIC_JOINT_COUNT, -0.125F);
+        OpenMatrix4f[] originalPoses = copy(poses);
+        OpenMatrix4f[] originalOrigins = copy(toOrigin);
+        OpenMatrix4f[] retargeted = AuxiliaryPoseMatrices.allocate(HumanoidRig.EPIC_JOINT_COUNT);
+        retargeted[HumanoidRig.CHEST].translate(-2.0F, 4.0F, 5.0F)
+                .rotateDeg(9.0F, Vec3f.Z_AXIS);
+        retargeted[HumanoidRig.HEAD].load(retargeted[HumanoidRig.CHEST])
+                .translate(0.0F, 0.75F, 0.0F)
+                .rotateDeg(42.0F, Vec3f.Y_AXIS)
+                .rotateDeg(-31.0F, Vec3f.X_AXIS);
+        OpenMatrix4f[] originalRetargeted = copy(retargeted);
+        OpenMatrix4f[] output = AuxiliaryPoseMatrices.allocate(layout.totalPoseCount());
+
+        AuxiliaryPoseMatrices.compose(poses, toOrigin, layout, output,
+                null, null, retargeted);
+
+        assertBoneMatrices(layout, output, retargeted[HumanoidRig.CHEST],
+                "AllHead", "Neck", "CustomCollar");
+        assertBoneMatrices(layout, output, retargeted[HumanoidRig.HEAD],
+                "MHead", "Head", "CustomJaw", "Hair");
+        assertEpicInputsAndSlotsUnchanged(
+                originalPoses, originalOrigins, poses, toOrigin, output);
+        for (int joint = 0; joint < retargeted.length; joint++) {
+            assertMatrixEquals(originalRetargeted[joint], retargeted[joint]);
+        }
+    }
+
+    @Test
+    void fullYsmReplacementKeepsAuthoredNeckAndHeadPosesWithoutEpicAnchors() {
+        AuxiliaryBoneLayout layout = neckAndMovingHeadLayout();
+        OpenMatrix4f[] poses = translatedMatrices(HumanoidRig.EPIC_JOINT_COUNT, 2.0F);
+        OpenMatrix4f[] toOrigin = translatedMatrices(HumanoidRig.EPIC_JOINT_COUNT, 0.5F);
+        OpenMatrix4f[] originalPoses = copy(poses);
+        OpenMatrix4f[] originalOrigins = copy(toOrigin);
+        OpenMatrix4f[] retargeted = translatedMatrices(HumanoidRig.EPIC_JOINT_COUNT, 7.0F);
+        retargeted[HumanoidRig.HEAD].rotateDeg(75.0F, Vec3f.Y_AXIS);
+        OpenMatrix4f authoredChest = new OpenMatrix4f().translate(0.25F, -0.5F, 0.75F)
+                .rotateDeg(21.0F, Vec3f.Z_AXIS);
+        OpenMatrix4f authoredHead = new OpenMatrix4f(authoredChest)
+                .rotateDeg(-46.0F, Vec3f.Y_AXIS)
+                .rotateDeg(32.0F, Vec3f.X_AXIS);
+        OpenMatrix4f[] wholeModel = AuxiliaryPoseMatrices.allocate(layout.entries().size());
+        setBoneMatrices(layout, wholeModel, authoredChest,
+                "UpperBody", "AllHead", "Neck", "CustomCollar");
+        setBoneMatrices(layout, wholeModel, authoredHead,
+                "MHead", "Head", "CustomJaw", "Hair");
+        OpenMatrix4f[] parallel = AuxiliaryPoseMatrices.allocate(layout.entries().size());
+        OpenMatrix4f hairMotion = new OpenMatrix4f().rotateDeg(8.0F, Vec3f.Z_AXIS);
+        setBoneMatrices(layout, parallel, hairMotion, "Hair");
+        OpenMatrix4f[] output = AuxiliaryPoseMatrices.allocate(layout.totalPoseCount());
+
+        AuxiliaryPoseMatrices.compose(poses, toOrigin, layout, output,
+                parallel, wholeModel, retargeted, true);
+
+        assertBoneMatrices(layout, output, authoredChest,
+                "AllHead", "Neck", "CustomCollar");
+        assertBoneMatrices(layout, output, authoredHead,
+                "MHead", "Head", "CustomJaw");
+        assertBoneMatrices(layout, output,
+                new OpenMatrix4f(authoredHead).mulBack(hairMotion), "Hair");
+        assertEpicInputsAndSlotsUnchanged(
+                originalPoses, originalOrigins, poses, toOrigin, output);
+    }
+
+    @Test
     void appliesWholeBodyRouletteDeltaOutsideTheEpicHeadPose() {
         GeometryDocument geometry = new GeometryDocument();
         GeometryDocument.Bone head = new GeometryDocument.Bone("head");
@@ -1433,6 +1534,67 @@ class AuxiliaryPoseMatricesTest {
                     armature.searchJointById(joint).getToOrigin(), poses[joint]);
         }
         return poses;
+    }
+
+    private static AuxiliaryBoneLayout neckAndMovingHeadLayout() {
+        GeometryDocument geometry = new GeometryDocument();
+        GeometryDocument.Bone root = new GeometryDocument.Bone("Root");
+        GeometryDocument.Bone chest = new GeometryDocument.Bone("UpperBody");
+        chest.parentName("Root");
+        chest.pivot(0.0F, 1.0F, 0.0F);
+        // The direct AllHead face is neck geometry, not part of the rotating head.
+        GeometryDocument.Bone allHead = faceBone("AllHead", -0.08F, 0.08F, 1.35F, 1.5F);
+        allHead.parentName("UpperBody");
+        allHead.pivot(0.0F, 1.5F, 0.0F);
+        GeometryDocument.Bone neck = faceBone("Neck", -0.05F, 0.05F, 1.3F, 1.35F);
+        neck.parentName("AllHead");
+        GeometryDocument.Bone collar = faceBone("CustomCollar", -0.2F, 0.2F, 1.3F, 1.32F);
+        collar.parentName("AllHead");
+        GeometryDocument.Bone movingHead = new GeometryDocument.Bone("MHead");
+        movingHead.parentName("AllHead");
+        movingHead.pivot(0.0F, 1.5F, 0.0F);
+        GeometryDocument.Bone head = faceBone("Head", -0.2F, 0.2F, 1.5F, 1.9F);
+        head.parentName("MHead");
+        head.pivot(0.0F, 1.5F, 0.0F);
+        GeometryDocument.Bone jaw = faceBone("CustomJaw", -0.1F, 0.1F, 1.5F, 1.6F);
+        jaw.parentName("MHead");
+        GeometryDocument.Bone hair = faceBone("Hair", -0.25F, 0.25F, 1.9F, 2.0F);
+        hair.parentName("MHead");
+        for (GeometryDocument.Bone entry : new GeometryDocument.Bone[]{
+                root, chest, allHead, neck, collar, movingHead, head, jaw, hair}) {
+            geometry.add(entry);
+        }
+        geometry.linkHierarchy();
+        return AuxiliaryBoneLayout.create(geometry);
+    }
+
+    private static void assertBoneMatrices(AuxiliaryBoneLayout layout, OpenMatrix4f[] matrices,
+                                           OpenMatrix4f expected, String... names) {
+        for (String name : names) {
+            AuxiliaryBoneLayout.Entry entry = layout.entryForBoneName(name);
+            assertNotNull(entry, name);
+            assertMatrixEquals(expected, matrices[entry.poseIndex()]);
+        }
+    }
+
+    private static void setBoneMatrices(AuxiliaryBoneLayout layout, OpenMatrix4f[] matrices,
+                                        OpenMatrix4f value, String... names) {
+        for (String name : names) {
+            AuxiliaryBoneLayout.Entry entry = layout.entryForBoneName(name);
+            assertNotNull(entry, name);
+            matrices[entry.auxiliaryIndex()].load(value);
+        }
+    }
+
+    private static void assertEpicInputsAndSlotsUnchanged(
+            OpenMatrix4f[] expectedPoses, OpenMatrix4f[] expectedOrigins,
+            OpenMatrix4f[] poses, OpenMatrix4f[] toOrigin, OpenMatrix4f[] output) {
+        for (int joint = 0; joint < HumanoidRig.EPIC_JOINT_COUNT; joint++) {
+            assertMatrixEquals(expectedPoses[joint], poses[joint]);
+            assertMatrixEquals(expectedOrigins[joint], toOrigin[joint]);
+            assertMatrixEquals(new OpenMatrix4f(expectedPoses[joint])
+                    .mulBack(expectedOrigins[joint]), output[joint]);
+        }
     }
 
     private static OpenMatrix4f[] copy(OpenMatrix4f[] source) {

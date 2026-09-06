@@ -11,6 +11,27 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 
 class AuxiliaryBoneLayoutTest {
     @Test
+    void headAttachmentsUseTheMovingHeadOnlyWhenTheTerminalHeadIsMissing() {
+        GeometryDocument geometry = new GeometryDocument();
+        add(geometry, "UpperBody", null, 0.0F, 12.0F, 0.0F);
+        add(geometry, "AllHead", "UpperBody", 0.0F, 15.0F, 0.0F);
+        geometry.linkHierarchy();
+        assertNull(AuxiliaryBoneLayout.create(geometry).attachmentEntry(HumanoidRig.HEAD),
+                "the stationary neck container is not a head attachment source");
+
+        add(geometry, "MHead", "AllHead", 0.0F, 17.0F, 0.0F);
+        geometry.linkHierarchy();
+        assertEquals("MHead", AuxiliaryBoneLayout.create(geometry)
+                .attachmentEntry(HumanoidRig.HEAD).bone().name());
+
+        add(geometry, "Head", "MHead", 0.0F, 18.0F, 0.0F);
+        geometry.linkHierarchy();
+        assertEquals("Head", AuxiliaryBoneLayout.create(geometry)
+                .attachmentEntry(HumanoidRig.HEAD).bone().name(),
+                "attachments must retain authored terminal Head animation");
+    }
+
+    @Test
     void selectsOnlyAUniqueElytraLocator() {
         GeometryDocument geometry = new GeometryDocument();
         add(geometry, "UpperBody", null, 0.0F, 12.0F, 0.0F);

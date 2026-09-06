@@ -28,7 +28,9 @@ final class ModelJointPivots {
         DOWN_BODY,
         EXPLICIT_TORSO,
         UPPER_BODY,
-        HEAD_BASE
+        HEAD_BASE,
+        MOVING_HEAD,
+        TERMINAL_HEAD
     }
 
     private record Visit(GeometryDocument.Bone bone, Matrix4f parentTransform) {
@@ -350,12 +352,12 @@ final class ModelJointPivots {
         float centralTolerance = CENTRAL_PAIR_TOLERANCE
                 * Math.max(horizontalScale, verticalScale);
         Vector3f torso = selectTorsoPivot(centralControls, centralTolerance);
-        Vector3f head = centralValue(centralControls, CentralRole.HEAD_BASE);
+        Vector3f headBase = centralValue(centralControls, CentralRole.HEAD_BASE);
         Vector3f chest = selectChestPivot(
-                centralControls, torso, head, centralTolerance);
+                centralControls, torso, headBase, centralTolerance);
         put(result, HumanoidRig.TORSO, torso);
         put(result, HumanoidRig.CHEST, chest);
-        put(result, HumanoidRig.HEAD, head);
+        put(result, HumanoidRig.HEAD, selectHeadPivot(centralControls));
         putPair(result, HumanoidRig.RIGHT_SHOULDER, HumanoidRig.RIGHT_ARM,
                 topOf(topRings, HumanoidRig.RIGHT_ARM));
         putPair(result, HumanoidRig.LEFT_SHOULDER, HumanoidRig.LEFT_ARM,
@@ -399,6 +401,21 @@ final class ModelJointPivots {
     private static Vector3f pivotValue(Map<Integer, PivotCluster> pivots, int joint) {
         PivotCluster cluster = pivots.get(joint);
         return cluster == null ? null : cluster.value();
+    }
+
+    private static Vector3f selectHeadPivot(Map<CentralRole, PivotCluster> controls) {
+        // The neck base still bounds chest estimation, but it must not override
+        // the pivot of the separately skinned moving head. Keep each rank in its
+        // own cluster: AllHead, MHead and Head legitimately have different pivots.
+        for (CentralRole role : new CentralRole[]{CentralRole.MOVING_HEAD,
+                CentralRole.TERMINAL_HEAD, CentralRole.HEAD_BASE}) {
+            PivotCluster cluster = controls.get(role);
+            if (cluster != null && cluster.present()) {
+                // An ambiguous preferred control must not select a lower-rank seam.
+                return cluster.value();
+            }
+        }
+        return null;
     }
 
     private static Vector3f selectTorsoPivot(
@@ -486,6 +503,8 @@ final class ModelJointPivots {
                     CentralRole.EXPLICIT_TORSO;
             case "upperbody", "chest" -> CentralRole.UPPER_BODY;
             case "allhead", "neck" -> CentralRole.HEAD_BASE;
+            case "mhead" -> CentralRole.MOVING_HEAD;
+            case "head" -> CentralRole.TERMINAL_HEAD;
             default -> null;
         };
     }

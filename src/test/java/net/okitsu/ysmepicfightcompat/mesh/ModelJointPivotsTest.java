@@ -12,6 +12,77 @@ import static org.junit.jupiter.api.Assertions.assertSame;
 
 class ModelJointPivotsTest {
     @Test
+    void usesMovingHeadPivotWithoutMovingTheNeckBaseUsedForChestEstimation() {
+        GeometryDocument geometry = new GeometryDocument();
+        geometry.add(bone("AllBody", "", 0.0F, 1.0F, 0.0F));
+        geometry.add(bone("UpBody", "AllBody", 0.0F, 1.2F, 0.0F));
+        geometry.add(bone("DownBody", "AllBody", 0.0F, 1.2F, 0.0F));
+        geometry.add(bone("AllHead", "UpBody", 0.0F, 1.5F, 0.0F));
+        geometry.add(bone("MHead", "AllHead", 0.1F, 1.7F, 0.2F));
+        geometry.add(bone("Head", "MHead", 0.1F, 1.8F, 0.2F));
+        geometry.linkHierarchy();
+
+        Map<Integer, Vector3f> pivots = ModelJointPivots.estimate(geometry, 2.0F, 3.0F);
+
+        assertVectorEquals(new Vector3f(0.0F, 3.6F, 0.0F), pivots.get(HumanoidRig.CHEST));
+        assertVectorEquals(new Vector3f(0.2F, 5.1F, 0.4F), pivots.get(HumanoidRig.HEAD));
+    }
+
+    @Test
+    void fallsBackToTheTerminalHeadPivotWhenThereIsNoMovingHeadControl() {
+        GeometryDocument geometry = new GeometryDocument();
+        geometry.add(bone("UpperBody", "", 0.0F, 1.2F, 0.0F));
+        geometry.add(bone("AllHead", "UpperBody", 0.0F, 1.5F, 0.0F));
+        geometry.add(bone("Head", "AllHead", 0.0F, 1.8F, 0.1F));
+        geometry.linkHierarchy();
+
+        assertVectorEquals(new Vector3f(0.0F, 1.8F, 0.1F),
+                ModelJointPivots.estimate(geometry, 1.0F, 1.0F).get(HumanoidRig.HEAD));
+    }
+
+    @Test
+    void transformsThePrimaryMovingHeadPivotThroughItsParentBind() {
+        GeometryDocument geometry = new GeometryDocument();
+        GeometryDocument.Bone body = bone("UpperBody", "", 0.0F, 0.0F, 0.0F);
+        body.rotation(0.0F, 0.0F, (float) Math.toRadians(90.0D));
+        geometry.add(body);
+        geometry.add(bone("AllHead_Default", "UpperBody", 1.5F, 0.0F, 0.0F));
+        geometry.add(bone("MHead_Default", "AllHead_Default", 1.7F, 0.0F, 0.0F));
+        geometry.add(bone("MHead2", "UpperBody", 20.0F, 0.0F, 0.0F));
+        geometry.linkHierarchy();
+
+        assertVectorEquals(new Vector3f(0.0F, 5.1F, 0.0F),
+                ModelJointPivots.estimate(geometry, 2.0F, 3.0F).get(HumanoidRig.HEAD));
+    }
+
+    @Test
+    void rejectsAmbiguousMovingHeadPivotsInsteadOfUsingTheNeckBase() {
+        GeometryDocument geometry = new GeometryDocument();
+        geometry.add(bone("UpperBody", "", 0.0F, 1.2F, 0.0F));
+        geometry.add(bone("AllHead", "UpperBody", 0.0F, 1.5F, 0.0F));
+        geometry.add(bone("MHead", "AllHead", 0.0F, 1.7F, 0.0F));
+        geometry.add(bone("M_Head", "AllHead", 0.0F, 2.7F, 0.0F));
+        geometry.linkHierarchy();
+
+        assertFalse(ModelJointPivots.estimate(geometry, 1.0F, 1.0F)
+                .containsKey(HumanoidRig.HEAD));
+    }
+
+    @Test
+    void doesNotUseALimbMountedHeadAsThePrimaryHeadPivot() {
+        GeometryDocument geometry = new GeometryDocument();
+        geometry.add(bone("UpperBody", "", 0.0F, 1.2F, 0.0F));
+        geometry.add(bone("AllHead", "UpperBody", 0.0F, 1.5F, 0.0F));
+        geometry.add(bone("RightArm", "UpperBody", 0.4F, 1.2F, 0.0F));
+        geometry.add(bone("MHead", "RightArm", 1.0F, 0.8F, 0.0F));
+        geometry.add(bone("Head", "MHead", 1.0F, 0.9F, 0.0F));
+        geometry.linkHierarchy();
+
+        assertVectorEquals(new Vector3f(0.0F, 1.5F, 0.0F),
+                ModelJointPivots.estimate(geometry, 1.0F, 1.0F).get(HumanoidRig.HEAD));
+    }
+
+    @Test
     void derivesScaledCentralPivotsFromOfficialBodyControls() {
         GeometryDocument geometry = new GeometryDocument();
         geometry.add(bone("AllBody", "", 0.1F, 1.5F, 0.2F));

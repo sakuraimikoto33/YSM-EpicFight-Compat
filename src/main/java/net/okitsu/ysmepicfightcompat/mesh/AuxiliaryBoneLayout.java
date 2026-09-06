@@ -219,7 +219,9 @@ public final class AuxiliaryBoneLayout {
         if (!chestSelection.present()) {
             chest = preferred(entries, HumanoidRig.CHEST, "upbody").entry();
         }
-        Entry head = preferred(entries, HumanoidRig.HEAD, "head", "allhead").entry();
+        // Attachments retain the terminal Head's authored motion. AllHead is a
+        // chest-anchored neck container, not a fallback for the rotating head.
+        Entry head = preferred(entries, HumanoidRig.HEAD, "head", "mhead").entry();
         Entry rightArm = preferred(entries, HumanoidRig.RIGHT_ARM,
                 "rightarm", "armright").entry();
         Entry leftArm = preferred(entries, HumanoidRig.LEFT_ARM,

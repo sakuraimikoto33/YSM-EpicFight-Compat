@@ -90,8 +90,11 @@ public final class HumanoidRig {
         bind(result, TORSO, "allbody", "body", "waist", "torso", "downbody", "hip",
                 "hips", "pelvis", "skirt", "leg");
         bind(result, CHEST, "upbody", "upperbody", "chest", "breast", "boob", "collar",
-                "backpack", "cape", "elytra", "elytralocator", "arm");
-        bind(result, HEAD, "allhead", "head");
+                "backpack", "cape", "elytra", "elytralocator", "arm", "allhead");
+        // AllHead contains the stationary neck as well as the moving head branch.
+        // Start head skinning at MHead (or Head in models without that wrapper),
+        // otherwise looking up/down rotates the neck geometry with the skull.
+        bind(result, HEAD, "mhead", "head");
         bind(result, LEFT_ARM, "leftarm", "armleft");
         bind(result, RIGHT_ARM, "rightarm", "armright");
         bind(result, LEFT_HAND, "leftforearm", "forearmleft", "lefthand", "handleft");
@@ -110,8 +113,8 @@ public final class HumanoidRig {
         bind(result, ROOT, "root", "center");
         bind(result, TORSO, "allbody", "body", "waist", "torso", "downbody", "hip",
                 "hips", "pelvis", "leg");
-        bind(result, CHEST, "upbody", "upperbody", "chest", "arm");
-        bind(result, HEAD, "allhead", "head");
+        bind(result, CHEST, "upbody", "upperbody", "chest", "arm", "allhead");
+        bind(result, HEAD, "mhead", "head");
         bind(result, LEFT_ARM, "leftarm", "armleft");
         bind(result, RIGHT_ARM, "rightarm", "armright");
         bind(result, LEFT_HAND, "leftforearm", "forearmleft", "lefthand", "handleft");
