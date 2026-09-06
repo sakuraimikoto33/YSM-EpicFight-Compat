@@ -108,6 +108,16 @@ final class EntityAnimationEnvironment implements MolangScriptRuntime.Host {
         roamingVariables = OfficialRoamingVariables.view(entity);
     }
 
+    /** A single dereference sample; never advances scripts, physics, particles or pose clocks. */
+    static EntityAnimationEnvironment referenceView(Player target, float partialTick) {
+        EntityAnimationEnvironment view = new EntityAnimationEnvironment(
+                target, new java.util.HashMap<>(), new java.util.HashSet<>());
+        view.partialTick = Float.isFinite(partialTick)
+                ? Math.max(0.0F, Math.min(1.0F, partialTick)) : 0.0F;
+        view.lifeTime = (target.tickCount + view.partialTick) / 20.0D;
+        return view;
+    }
+
     void update(float partialTick, boolean firstPerson, double deltaTime) {
         physics.update(deltaTime);
         this.partialTick = partialTick;
@@ -481,6 +491,7 @@ final class EntityAnimationEnvironment implements MolangScriptRuntime.Host {
             if (scripted != MolangScriptRuntime.UNHANDLED) return scripted;
         }
         return switch (ExpressionEngine.slotName(slot)) {
+            case "ysm.projectile_owner" -> OfficialEntityReferences.projectileOwner(entity);
             case "ysm.texture_name" -> selectedTextureName();
             case "ysm.dimension_name" -> entity.level().dimension().location().toString();
             case "ysm.entity_type" -> entity instanceof Player ? "player"

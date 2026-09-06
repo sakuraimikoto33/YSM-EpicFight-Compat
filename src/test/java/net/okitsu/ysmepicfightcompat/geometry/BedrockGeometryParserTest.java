@@ -11,6 +11,37 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class BedrockGeometryParserTest {
     @Test
+    void subpixelProbeCubesKeepAllFacesWithExplicitInteriorPaletteUvs() {
+        for (String size : new String[]{"[3,0.7,0.5]", "[0.2,7,0.2]", "[7,0.2,0.2]"}) {
+            GeometryDocument geometry = BedrockGeometryParser.parse("""
+                    {"minecraft:geometry":[{
+                      "description":{"texture_width":128,"texture_height":128},
+                      "bones":[{"name":"pointer","cubes":[{
+                        "origin":[0,0,0],"size":%s,
+                        "uv":{
+                          "north":{"uv":[72,40],"uv_size":[1,1]},
+                          "south":{"uv":[72,40],"uv_size":[1,1]},
+                          "east":{"uv":[72,40],"uv_size":[1,1]},
+                          "west":{"uv":[72,40],"uv_size":[1,1]},
+                          "up":{"uv":[72,40],"uv_size":[1,1]},
+                          "down":{"uv":[72,40],"uv_size":[1,1]}
+                        }
+                      }]}]
+                    }]}
+                    """.formatted(size));
+            assertNotNull(geometry);
+            var faces = geometry.bones().get("pointer").faces();
+            assertEquals(6, faces.size(), size);
+            for (var face : faces) {
+                for (float[] coordinate : face.textureCoordinates()) {
+                    assertTrue(coordinate[0] >= 72.0F / 128 && coordinate[0] <= 73.0F / 128);
+                    assertTrue(coordinate[1] >= 40.0F / 128 && coordinate[1] <= 41.0F / 128);
+                }
+            }
+        }
+    }
+
+    @Test
     void buildsTheBoneTreeAndAllSixCubeFaces() {
         GeometryDocument geometry = BedrockGeometryParser.parse("""
                 {"minecraft:geometry":[{

@@ -14,6 +14,20 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class DefaultPoseProgramTest {
     @Test
+    void absentEntityReferencesKeepTheNeutralFallbackInsteadOfBakingHiddenBones() {
+        GeometryDocument geometry = new GeometryDocument();
+        geometry.add(new GeometryDocument.Bone("tail"));
+        geometry.linkHierarchy();
+        AnimationClip clip = BedrockAnimationParser.parse("parallel0",
+                JsonParser.parseString("""
+                        {"bones":{"tail":{"scale":"ysm.projectile_owner ?? 1"}}}
+                        """).getAsJsonObject());
+
+        DefaultPoseProgram program = new DefaultPoseProgram(geometry, Map.of(clip.name(), clip));
+        assertEquals(0, program.hiddenBoneCount());
+    }
+
+    @Test
     void retainsOrderedBedrockSoundEffects() {
         AnimationClip clip = BedrockAnimationParser.parse("parallel.sound",
                 JsonParser.parseString("""

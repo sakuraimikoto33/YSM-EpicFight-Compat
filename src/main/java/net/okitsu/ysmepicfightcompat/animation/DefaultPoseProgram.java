@@ -212,6 +212,12 @@ public final class DefaultPoseProgram {
         }
 
         @Override
+        public Object readQueryValue(int slot) {
+            // Conversion has no entity context; preserve ?? for absent references.
+            return ExpressionEngine.slotName(slot).equals("ysm.projectile_owner") ? null : readQuery(slot);
+        }
+
+        @Override
         public double invoke(String name, double[] arguments) {
             return 0.0D;
         }

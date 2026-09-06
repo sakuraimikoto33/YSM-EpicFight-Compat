@@ -24,6 +24,18 @@ public final class ExpressionEngine {
     private static final int MAX_VALUE_ELEMENTS = 4_096;
     private static final Object[] NO_ARGUMENTS = new Object[0];
 
+    /**
+     * An opaque, host-created entity handle. Model data cannot create an instance, inspect its
+     * members, or use it to mutate the referenced entity. A host must invalidate a handle when
+     * its entity or owning world is no longer available, and expose only read-only target calls.
+     */
+    public interface EntityReference {
+        boolean isValid();
+
+        /** Returns the referenced entity's read-only environment, or null if it is unavailable. */
+        Environment resolve();
+    }
+
     public interface Environment {
         double readVariable(int slot);
         boolean hasVariable(int slot);
@@ -76,6 +88,92 @@ public final class ExpressionEngine {
 
         default Object[] arguments() {
             return NO_ARGUMENTS;
+        }
+    }
+
+    /** Entity-owned values change under ->; expression-local state never changes owner. */
+    private record ReferenceEnvironment(Environment origin, Environment target) implements Environment {
+        private ReferenceEnvironment {
+            if (origin instanceof ReferenceEnvironment redirected) {
+                origin = redirected.origin();
+            }
+        }
+
+        private Environment variables(int slot) {
+            return slotName(slot).startsWith("t.") ? origin : target;
+        }
+
+        private Environment queries(int slot) {
+            return localContext(slotName(slot)) ? origin : target;
+        }
+
+        private Environment functions(String name) {
+            return localContext(name) ? origin : target;
+        }
+
+        @Override
+        public double readVariable(int slot) {
+            return variables(slot).readVariable(slot);
+        }
+
+        @Override
+        public Object readVariableValue(int slot) {
+            return variables(slot).readVariableValue(slot);
+        }
+
+        @Override
+        public boolean hasVariable(int slot) {
+            return variables(slot).hasVariable(slot);
+        }
+
+        @Override
+        public void writeVariable(int slot, double value) {
+            if (slotName(slot).startsWith("t.")) {
+                origin.writeVariable(slot, value);
+            }
+        }
+
+        @Override
+        public void writeVariableValue(int slot, Object value) {
+            if (slotName(slot).startsWith("t.")) {
+                origin.writeVariableValue(slot, value);
+            }
+        }
+
+        @Override
+        public double readQuery(int slot) {
+            return queries(slot).readQuery(slot);
+        }
+
+        @Override
+        public Object readQueryValue(int slot) {
+            return queries(slot).readQueryValue(slot);
+        }
+
+        @Override
+        public double invoke(String name, double[] arguments) {
+            return functions(name).invoke(name, arguments);
+        }
+
+        @Override
+        public double invokeWithText(String name, String[] arguments) {
+            return functions(name).invokeWithText(name, arguments);
+        }
+
+        @Override
+        public double invokeWithMixedArguments(String name, String[] textArguments,
+                                               double[] numericArguments) {
+            return functions(name).invokeWithMixedArguments(name, textArguments, numericArguments);
+        }
+
+        @Override
+        public Object invokeValue(String name, Object[] arguments) {
+            return functions(name).invokeValue(name, arguments);
+        }
+
+        @Override
+        public Object[] arguments() {
+            return origin.arguments();
         }
     }
 
@@ -538,7 +636,8 @@ public final class ExpressionEngine {
                 continue;
             }
             if (token.kind() == Kind.SYMBOL
-                    && (token.text().equals("{") || token.text().equals("["))) {
+                    && (token.text().equals("{") || token.text().equals("[")
+                    || token.text().equals("->"))) {
                 writes = true; // Typed/context programs cannot use numeric worker snapshots.
             }
             if (token.kind() != Kind.IDENTIFIER) {
@@ -547,7 +646,8 @@ public final class ExpressionEngine {
             String name = token.text().toLowerCase(Locale.ROOT);
             if (Set.of("return", "break", "continue", "loop", "for_each", "args").contains(name)
                     || name.startsWith("fn.") || name.startsWith("ctrl.")
-                    || name.startsWith("context.") || name.startsWith("c.")) {
+                    || name.startsWith("context.") || name.startsWith("c.")
+                    || name.equals("ysm.projectile_owner")) {
                 writes = true;
             }
             if (Set.of("true", "false", "null", "return", "break", "continue", "args")
@@ -697,7 +797,7 @@ public final class ExpressionEngine {
                 continue;
             }
             String two = cursor + 1 < source.length() ? source.substring(cursor, cursor + 2) : "";
-            if (Set.of("==", "!=", "<=", ">=", "&&", "||", "??", "+=", "-=", "*=", "/=", "%=")
+            if (Set.of("==", "!=", "<=", ">=", "&&", "||", "??", "+=", "-=", "*=", "/=", "%=", "->")
                     .contains(two)) {
                 result.add(new Token(Kind.SYMBOL, two, 0.0D));
                 cursor += 2;
@@ -946,6 +1046,18 @@ public final class ExpressionEngine {
         }
 
         private Node combine(String operator, Node left, Node right) {
+            if (operator.equals("->")) {
+                return operation(environment -> {
+                    Object value = left.value(environment);
+                    if (!(value instanceof EntityReference reference) || !validReference(reference)) {
+                        return 0.0D;
+                    }
+                    Environment target = resolveReference(reference);
+                    // A missing reference is numeric zero, and its RHS must not run at all.
+                    return target == null ? 0.0D
+                            : right.value(new ReferenceEnvironment(environment, target));
+                }, left, right);
+            }
             if (isAssignment(operator)) {
                 Writable target = writable(left);
                 return operation(environment -> {
@@ -1071,6 +1183,7 @@ public final class ExpressionEngine {
             case "<", ">", "<=", ">=" -> 7;
             case "+", "-" -> 8;
             case "*", "/", "%" -> 9;
+            case "->" -> 12; // Binds more tightly than prefix unary (11); chains associate left.
             default -> -1;
         };
     }
@@ -1096,6 +1209,10 @@ public final class ExpressionEngine {
                 || prefix.equals("temp") || prefix.equals("t");
     }
 
+    private static boolean localContext(String name) {
+        return name.startsWith("context.") || name.startsWith("c.");
+    }
+
     private static String canonicalVariableName(String name) {
         if (name == null) {
             return null;
@@ -1119,10 +1236,16 @@ public final class ExpressionEngine {
     }
 
     private static boolean truth(Object value) {
-        return number(value) != 0.0D;
+        return value instanceof EntityReference reference ? validReference(reference)
+                : number(value) != 0.0D;
     }
 
     private static boolean equal(Object first, Object second) {
+        if (first instanceof EntityReference || second instanceof EntityReference) {
+            return first instanceof EntityReference a && validReference(a)
+                    && second instanceof EntityReference b && validReference(b)
+                    && Objects.equals(a, b);
+        }
         if (first instanceof String a && second instanceof String b) {
             return a.equals(b);
         }
@@ -1152,13 +1275,16 @@ public final class ExpressionEngine {
         return -1.0E18D - slot("text:" + text) * 4096.0D;
     }
 
-    /** Copies query/function data to bounded immutable numeric/string/list/struct values. */
+    /** Copies host data to bounded immutable values, preserving only opaque valid entity handles. */
     public static Object boundedValue(Object value) {
         if (value == null || value instanceof Number || value instanceof Boolean) {
             return value == null ? null : number(value);
         }
         if (value instanceof String text) {
             return text.length() <= MAX_SOURCE_LENGTH / 4 ? text : null;
+        }
+        if (value instanceof EntityReference reference) {
+            return validReference(reference) ? reference : null;
         }
         return boundedValue(value, 0, new int[]{MAX_VALUE_ELEMENTS});
     }
@@ -1167,7 +1293,8 @@ public final class ExpressionEngine {
         if (remaining[0]-- <= 0 || depth > 16) {
             return null;
         }
-        if (value == null || value instanceof Number || value instanceof Boolean || value instanceof String) {
+        if (value == null || value instanceof Number || value instanceof Boolean || value instanceof String
+                || value instanceof EntityReference) {
             return boundedValue(value);
         }
         if (value instanceof Object[] array) {
@@ -1196,6 +1323,26 @@ public final class ExpressionEngine {
             return Collections.unmodifiableMap(result);
         }
         return null;
+    }
+
+    private static boolean validReference(EntityReference reference) {
+        try {
+            return reference.isValid();
+        } catch (EvaluationLimitException limit) {
+            throw limit;
+        } catch (RuntimeException unavailable) {
+            return false;
+        }
+    }
+
+    private static Environment resolveReference(EntityReference reference) {
+        try {
+            return reference.resolve();
+        } catch (EvaluationLimitException limit) {
+            throw limit;
+        } catch (RuntimeException unavailable) {
+            return null;
+        }
     }
 
     private static Object member(Object container, Object index) {
