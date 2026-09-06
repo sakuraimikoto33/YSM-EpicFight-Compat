@@ -858,6 +858,9 @@ public final class ParallelAnimationProgram {
                 automaticSelector.select(entity, now, state.automaticState,
                         synchronizedMovement);
         state.environment.update(stablePartialTick, firstPerson, deltaTime);
+        // Publish the same official snapshot used above, before init/update/sync and
+        // Controller selection. A missing local roulette clip must not change this flag.
+        state.scripts.playingExtraAnimation(roulette.playing());
         state.environment.movement(selected.movement());
         state.environment.fullBodyReferenceYaw(epicModelYaw);
         state.environment.customBowAim(null, null);

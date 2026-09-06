@@ -1,5 +1,6 @@
 package net.okitsu.ysmepicfightcompat.animation;
 
+import com.google.gson.JsonParser;
 import net.okitsu.ysmepicfightcompat.geometry.GeometryDocument;
 import net.okitsu.ysmepicfightcompat.mesh.AuxiliaryBoneLayout;
 import org.junit.jupiter.api.Test;
@@ -15,6 +16,70 @@ import static org.junit.jupiter.api.Assertions.*;
 
 /** Exercises script hooks through selection and pose composition, without a Minecraft entity. */
 class ScriptAnimationIntegrationTest {
+    @Test
+    void rouletteStateSuppressesAndRestoresJsonControllerIdleWithoutFunctionFiles() {
+        Map<String, AnimationController> controllers = BedrockAnimationControllerParser.parse(
+                JsonParser.parseString("""
+                        {"animation_controllers":{"player.post_main":{
+                          "initial_state":"quiet",
+                          "states":{
+                            "quiet":{"transitions":[{"gesture":"!ctrl.playing_extra_animation"}]},
+                            "gesture":{
+                              "animations":["idle_gesture"],
+                              "on_entry":["v.gestures+=1;"],
+                              "transitions":[{"quiet":"ctrl.playing_extra_animation"}]
+                            }
+                          }
+                        }}}
+                        """).getAsJsonObject());
+        Fixture fixture = fixture(List.of(rotationClip("idle_gesture", "ear", 25)),
+                controllers, Map.of());
+        AnimationControllerProgram.RuntimeState state = new AnimationControllerProgram.RuntimeState();
+        assertTrue(fixture.scripts.isEmpty());
+
+        fixture.scripts.playingExtraAnimation(true);
+        assertIdentity(fixture.program.sampleControllersAt(0, fixture.environment, state)
+                .parallelDeltas()[1]);
+        assertEquals(0.0D, fixture.environment.value("v.gestures"));
+
+        fixture.scripts.playingExtraAnimation(false);
+        assertRotationZ(25, fixture.program.sampleControllersAt(1, fixture.environment, state)
+                .parallelDeltas()[1]);
+        assertEquals(1.0D, fixture.environment.value("v.gestures"));
+
+        fixture.scripts.playingExtraAnimation(true);
+        assertIdentity(fixture.program.sampleControllersAt(2, fixture.environment, state)
+                .parallelDeltas()[1]);
+        fixture.program.sampleControllersAt(3, fixture.environment, state);
+        assertEquals(1.0D, fixture.environment.value("v.gestures"));
+
+        fixture.scripts.playingExtraAnimation(false);
+        assertRotationZ(25, fixture.program.sampleControllersAt(4, fixture.environment, state)
+                .parallelDeltas()[1]);
+        assertEquals(2.0D, fixture.environment.value("v.gestures"));
+    }
+
+    @Test
+    void workerSnapshotCapturesRouletteQueryWithoutHoldingLiveRuntimeState() {
+        Fixture fixture = fixture(List.of(), Map.of(), Map.of());
+        ExpressionEngine.Expression expression = ExpressionEngine.compile("ctrl.playing_extra_animation");
+        assertTrue(expression.isValid());
+        Set<Integer> queries = expression.dependencies().querySlots();
+        assertEquals(Set.of(ExpressionEngine.querySlot("ctrl.playing_extra_animation")), queries);
+
+        fixture.scripts.playingExtraAnimation(true);
+        SnapshotExpressionEnvironment playing = SnapshotExpressionEnvironment.capture(
+                fixture.environment, Set.of(), queries);
+        fixture.scripts.playingExtraAnimation(false);
+        SnapshotExpressionEnvironment stopped = SnapshotExpressionEnvironment.capture(
+                fixture.environment, Set.of(), queries);
+
+        assertEquals(1.0D, expression.evaluate(playing));
+        assertEquals(0.0D, expression.evaluate(stopped));
+        fixture.scripts.reset();
+        assertEquals(1.0D, expression.evaluate(playing));
+    }
+
     @Test
     void arbitraryNamedMainClipOwnsTheWholeBodyOnlyWhenMovementIsEnabled() {
         AnimationClip walk = rotationClip("walk", "head", 5);

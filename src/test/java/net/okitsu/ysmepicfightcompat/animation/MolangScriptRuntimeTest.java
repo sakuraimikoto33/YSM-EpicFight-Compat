@@ -141,6 +141,138 @@ class MolangScriptRuntimeTest {
     }
 
     @Test
+    void exposesExtraAnimationPlaybackWithoutAnyScriptsOrActiveScriptController() {
+        FakeEnvironment environment = environment(Map.of());
+        assertTrue(environment.runtime.isEmpty());
+        assertFalse(environment.runtime.playingExtraAnimation());
+        assertEquals(0.0D, number(environment.runtime.read(
+                "ctrl.playing_extra_animation", environment)), EPSILON);
+
+        environment.runtime.playingExtraAnimation(true);
+        assertTrue(environment.runtime.playingExtraAnimation());
+        assertEquals(1.0D, number(evaluate("ctrl.playing_extra_animation", environment)), EPSILON);
+        assertFalse(sample(environment, 0.0D).overridden());
+        assertTrue(environment.runtime.playingExtraAnimation());
+
+        environment.runtime.playingExtraAnimation(false);
+        assertFalse(environment.runtime.playingExtraAnimation());
+        assertEquals(0.0D, number(evaluate("ctrl.playing_extra_animation", environment)), EPSILON);
+
+        environment.runtime.playingExtraAnimation(true);
+        environment.runtime.reset();
+        assertFalse(environment.runtime.playingExtraAnimation());
+        assertEquals(0.0D, number(evaluate("ctrl.playing_extra_animation", environment)), EPSILON);
+        assertTrue(environment.runtime.isEmpty());
+    }
+
+    @Test
+    void extraAnimationPlaybackIsIsolatedBetweenRuntimesIncludingReset() {
+        FakeEnvironment first = environment(Map.of());
+        FakeEnvironment second = environment(Map.of());
+        first.runtime.playingExtraAnimation(true);
+        assertEquals(1.0D, number(evaluate("ctrl.playing_extra_animation", first)), EPSILON);
+        assertEquals(0.0D, number(evaluate("ctrl.playing_extra_animation", second)), EPSILON);
+
+        second.runtime.playingExtraAnimation(true);
+        first.runtime.reset();
+        assertFalse(first.runtime.playingExtraAnimation());
+        assertTrue(second.runtime.playingExtraAnimation());
+        second.runtime.playingExtraAnimation(false);
+        assertFalse(first.runtime.playingExtraAnimation());
+        assertFalse(second.runtime.playingExtraAnimation());
+    }
+
+    @Test
+    void extraAnimationPlaybackIsVisibleToEventsAndFunctionsWithoutRepeatingSameFrame() {
+        FakeEnvironment environment = environment(Map.of(
+                "flag", "return ctrl.playing_extra_animation;",
+                "a@player_init", """
+                        v.init_count+=1;
+                        v.init_direct=ctrl.playing_extra_animation;
+                        v.init_function=fn.flag;
+                        """,
+                "b@player_update", """
+                        v.update_count+=1;
+                        v.update_direct=ctrl.playing_extra_animation;
+                        v.update_function=fn.flag();
+                        """,
+                "c@sync", """
+                        v.sync_count+=1;
+                        v.sync_direct=ctrl.playing_extra_animation;
+                        v.sync_function=fn.flag;
+                        """));
+        environment.runtime.playingExtraAnimation(true);
+        environment.runtime.enqueueSync(new double[0]);
+        environment.runtime.frame(1.0D, environment);
+        environment.runtime.frame(1.0D, environment);
+
+        for (String event : List.of("init", "update", "sync")) {
+            assertEquals(1.0D, environment.number("v." + event + "_count"), EPSILON, event);
+            assertEquals(1.0D, environment.number("v." + event + "_direct"), EPSILON, event);
+            assertEquals(1.0D, environment.number("v." + event + "_function"), EPSILON, event);
+        }
+
+        environment.runtime.playingExtraAnimation(false);
+        assertEquals(0.0D, number(evaluate("fn.flag", environment)), EPSILON);
+        environment.runtime.enqueueSync(new double[0]);
+        environment.runtime.frame(1.0D, environment);
+        assertEquals(1.0D, environment.number("v.update_count"), EPSILON);
+        assertEquals(1.0D, environment.number("v.sync_count"), EPSILON);
+        assertEquals(1.0D, environment.number("v.update_direct"), EPSILON);
+        assertEquals(1.0D, environment.number("v.sync_direct"), EPSILON);
+
+        environment.runtime.frame(1.1D, environment);
+        environment.runtime.frame(1.1D, environment);
+        assertEquals(1.0D, environment.number("v.init_count"), EPSILON);
+        assertEquals(1.0D, environment.number("v.init_direct"), EPSILON);
+        for (String event : List.of("update", "sync")) {
+            assertEquals(2.0D, environment.number("v." + event + "_count"), EPSILON, event);
+            assertEquals(0.0D, environment.number("v." + event + "_direct"), EPSILON, event);
+            assertEquals(0.0D, environment.number("v." + event + "_function"), EPSILON, event);
+        }
+    }
+
+    @Test
+    void extraAnimationPredicateCanPauseAndResumeScriptControllerWithoutRestartingItsClock() {
+        FakeEnvironment environment = environment(Map.of(
+                "flag", "return ctrl.playing_extra_animation;",
+                "@player_ctrl_main", """
+                        ctrl.set_animation('looping');
+                        v.extra_direct=ctrl.playing_extra_animation;
+                        v.extra_function=fn.flag;
+                        return ctrl.playing_extra_animation ? ctrl.state_pause : ctrl.state_continue;
+                        """));
+        MolangScriptRuntime.Output started = sample(environment, 0.0D);
+        assertTrue(started.visible());
+        assertFalse(environment.runtime.playingExtraAnimation());
+        assertEquals(0.0D, environment.number("v.extra_direct"), EPSILON);
+
+        environment.runtime.playingExtraAnimation(true);
+        MolangScriptRuntime.Output paused = sample(environment, 0.25D);
+        assertTrue(paused.overridden());
+        assertFalse(paused.visible());
+        assertEquals("looping", paused.name());
+        assertEquals(0.0F, paused.weight());
+        assertEquals(0.25D, paused.elapsed(), EPSILON);
+        assertEquals(started.generation(), paused.generation());
+        assertEquals(1.0D, environment.number("v.extra_direct"), EPSILON);
+        assertEquals(1.0D, environment.number("v.extra_function"), EPSILON);
+        MolangScriptRuntime.Output pausedAfterLoop = sample(environment, 1.25D);
+        assertFalse(pausedAfterLoop.visible());
+        assertEquals(0.25D, pausedAfterLoop.elapsed(), EPSILON);
+        assertEquals(started.generation(), pausedAfterLoop.generation());
+
+        environment.runtime.playingExtraAnimation(false);
+        MolangScriptRuntime.Output resumed = sample(environment, 1.5D);
+        assertTrue(resumed.visible());
+        assertEquals("looping", resumed.name());
+        assertEquals(0.5D, resumed.elapsed(), EPSILON);
+        assertEquals(started.generation(), resumed.generation());
+        assertEquals(0.0D, environment.number("v.extra_direct"), EPSILON);
+        assertEquals(0.0D, environment.number("v.extra_function"), EPSILON);
+    }
+
+    @Test
     void repeatingSameClipDoesNotRestartAndExplicitReloadDoes() {
         FakeEnvironment environment = environment(Map.of("@player_ctrl_main", """
                 v.invocations+=1;

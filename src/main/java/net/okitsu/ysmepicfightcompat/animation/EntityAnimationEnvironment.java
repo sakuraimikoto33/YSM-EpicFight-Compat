@@ -298,6 +298,10 @@ final class EntityAnimationEnvironment implements MolangScriptRuntime.Host {
     @Override
     public double readQuery(int slot) {
         String name = ExpressionEngine.slotName(slot);
+        // Numeric snapshots must see the same frame flag as typed/script queries.
+        if (name.equals("ctrl.playing_extra_animation")) {
+            return flag(scripts != null && scripts.playingExtraAnimation());
+        }
         if (movementResolved) {
             Boolean control = MovementAnimationType.controlValue(name, movement);
             if (control != null) {

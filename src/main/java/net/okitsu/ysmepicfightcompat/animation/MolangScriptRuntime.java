@@ -54,6 +54,7 @@ public final class MolangScriptRuntime {
     private Consumer<double[]> syncSender = ignored -> { };
     private boolean initialized;
     private boolean handlingSync;
+    private boolean playingExtraAnimation;
     private double lastFrame = Double.NaN;
     private int depth;
     private Control currentControl;
@@ -83,6 +84,11 @@ public final class MolangScriptRuntime {
     public boolean isEmpty() { return functions.isEmpty() && hooks.isEmpty() && events.isEmpty(); }
     public Set<String> controllers() { return Set.copyOf(hooks.keySet()); }
     public boolean hasController(String channel) { return hooks.containsKey(normalize(channel)); }
+
+    /** Official playback state for this entity/model, not whether a local clip was resolved. */
+    void playingExtraAnimation(boolean playing) { playingExtraAnimation = playing; }
+    boolean playingExtraAnimation() { return playingExtraAnimation; }
+
     public void syncSender(Consumer<double[]> sender) {
         syncSender = sender == null ? ignored -> { } : sender;
     }
@@ -140,6 +146,7 @@ public final class MolangScriptRuntime {
             case "ctrl.loop" -> 1.0D;
             case "ctrl.play_once" -> 0.0D;
             case "ctrl.hold_on_last_frame" -> 3.0D;
+            case "ctrl.playing_extra_animation" -> playingExtraAnimation ? 1.0D : 0.0D;
             case "ctrl.reset", "ctrl.indicate_reload" -> invoke(key, new Object[0], environment);
             default -> UNHANDLED;
         };
@@ -263,6 +270,7 @@ public final class MolangScriptRuntime {
         controls.clear();
         pendingSyncs.clear();
         initialized = false;
+        playingExtraAnimation = false;
         lastFrame = Double.NaN;
         currentControl = null;
         depth = 0;
