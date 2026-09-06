@@ -28,7 +28,8 @@ function Require-Text {
 }
 
 Require-Text 'gradle.properties' ("^minecraft_version=" + [regex]::Escape($minecraftVersion) + "$") "Minecraft target must match branch '$branch'."
-Require-Text 'gradle.properties' '^forge_version=47\.4\.20$' 'Forge baseline changed unexpectedly.'
+Require-Text 'gradle.properties' '^forge_version=47\.4\.10$' 'Forge baseline must remain 47.4.10, matching YSM-Mapping-API.'
+Require-Text 'gradle.properties' '^forge_version_range=\[47\.4\.10,\)$' 'Forge loader dependency floor must remain 47.4.10.'
 Require-Text 'gradle.properties' '^ysm_mapping_api_version=0\.1\.6$' 'Mapping API selection version must remain 0.1.6.'
 Require-Text 'gradle.properties' '^ysm_mapping_api_version_range=0\.1\.6$' 'Mapping API loader dependency floor must remain 0.1.6.'
 Require-Text 'settings.gradle' "apply from: 'gradle/ysm-mapping-api\.settings\.gradle'" 'Settings must apply the Mapping API resolver.'
