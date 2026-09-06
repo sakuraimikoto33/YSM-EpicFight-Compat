@@ -72,6 +72,44 @@ dependencies {
     testRuntimeOnly "net.okitsu.ysmmapping:api:${ysmMappingApiDependencyVersion}"
 }
 
+// Vanilla accessors need a static named-to-SRG refmap in production. YSM aliases
+// continue to be resolved independently by the Mapping API refmap wrapper.
+def mixinRefmapName = 'ysm_epicfight_compat.refmap.json'
+def mixinSrgFile = layout.buildDirectory.file('mixinMappings/named-to-srg.srg')
+def mixinDevSrgFile = layout.buildDirectory.file('mixinMappings/srg-to-named.srg')
+def generateMixinSrg = tasks.register('generateMixinSrg') {
+    def sourceMappings = tasks.named('createMcpToSrg').flatMap { it.output }
+    dependsOn 'createMcpToSrg'
+    inputs.file(sourceMappings)
+    outputs.files(mixinSrgFile, mixinDevSrgFile)
+    doLast {
+        // Mixin 0.8.5's searge processor reads SRG, whereas ForgeGradle emits TSRG2.
+        // Reuse ForgeGradle's mapping library without adding a build dependency.
+        def mappings = net.minecraftforge.srgutils.IMappingFile.load(sourceMappings.get().asFile)
+        java.nio.file.Files.createDirectories(mixinSrgFile.get().asFile.parentFile.toPath())
+        mappings.write(mixinSrgFile.get().asFile.toPath(),
+                net.minecraftforge.srgutils.IMappingFile.Format.SRG, false)
+        mappings.reverse().write(mixinDevSrgFile.get().asFile.toPath(),
+                net.minecraftforge.srgutils.IMappingFile.Format.SRG, false)
+    }
+}
+
+tasks.named('compileJava', JavaCompile).configure {
+    dependsOn generateMixinSrg
+    inputs.file(mixinSrgFile)
+    def refmap = destinationDirectory.file(mixinRefmapName)
+    options.compilerArgs.addAll([
+            "-AreobfSrgFile=${mixinSrgFile.get().asFile.absolutePath}",
+            "-AoutRefMapFile=${refmap.get().asFile.absolutePath}",
+            '-AdefaultObfuscationEnv=searge'
+    ])
+}
+
+minecraft.runs.configureEach {
+    property 'mixin.env.remapRefMap', 'true'
+    property 'mixin.env.refMapRemappingFile', mixinDevSrgFile.get().asFile.absolutePath
+}
+
 tasks.named('processResources', ProcessResources).configure {
     def replaceProperties = [
             minecraft_version_range: minecraft_version_range,
@@ -125,6 +163,7 @@ tasks.register('verifyDistributions') {
         new java.util.zip.ZipFile(archive).withCloseable { zip ->
             ['META-INF/mods.toml', 'META-INF/ysm-mapping-api/requests-v1.json',
              'ysm_epicfight_compat.mixins.json',
+             mixinRefmapName,
              'net/okitsu/ysmepicfightcompat/CompatMod.class',
              'net/okitsu/ysmepicfightcompat/integration/configured/ConfiguredHeldItemRules.class',
              'net/okitsu/ysmepicfightcompat/mixin/ConfiguredForgeConfigMixin.class',
@@ -253,6 +292,54 @@ tasks.register('verifyDistributions') {
             }
             def mixinJson = new groovy.json.JsonSlurper().parse(
                     zip.getInputStream(zip.getEntry('ysm_epicfight_compat.mixins.json')))
+            if (mixinJson.refmap != mixinRefmapName) {
+                throw new GradleException('Vanilla accessors must use the packaged SRG refmap')
+            }
+            def refmapJson = new groovy.json.JsonSlurper().parse(
+                    zip.getInputStream(zip.getEntry(mixinRefmapName)))
+            def vanillaAccessors = [
+                    'CompositeRenderStateAccessor$State': [
+                            owner: 'net/minecraft/client/renderer/RenderType$CompositeState',
+                            fields: ['textureState', 'shaderState', 'transparencyState',
+                                     'depthTestState', 'cullState', 'lightmapState', 'overlayState',
+                                     'layeringState', 'outputState', 'texturingState',
+                                     'writeMaskState', 'lineState', 'colorLogicState']
+                    ],
+                    CompositeRenderTypeAccessor: [
+                            owner: 'net/minecraft/client/renderer/RenderType$CompositeRenderType',
+                            fields: ['state']
+                    ],
+                    RenderTypeSortingAccessor: [
+                            owner: 'net/minecraft/client/renderer/RenderType',
+                            fields: ['sortOnUpload']
+                    ],
+                    OutlineBufferSourceAccessor: [
+                            owner: 'net/minecraft/client/renderer/OutlineBufferSource',
+                            fields: ['bufferSource']
+                    ]
+            ]
+            def vanillaMappings = net.minecraftforge.srgutils.IMappingFile.load(
+                    mixinSrgFile.get().asFile)
+            vanillaAccessors.each { mixin, target ->
+                if (!(mixinJson.client ?: []).contains(mixin)) {
+                    throw new GradleException("Vanilla accessor is not registered: ${mixin}")
+                }
+                def mixinClass = mixinJson.package.replace('.', '/') + '/' + mixin
+                target.fields.each { field ->
+                    def srgName = vanillaMappings.getClass(target.owner)?.remapField(field)
+                    if (!srgName || srgName == field) {
+                        throw new GradleException("Missing SRG field mapping: ${target.owner}.${field}")
+                    }
+                    [refmapJson.mappings, refmapJson.data?.searge].each { context ->
+                        def reference = context?.get(mixinClass)?.get(field)
+                        if (!(reference instanceof String) ||
+                                !(reference ==~ /(?:L[^;]+;)?${java.util.regex.Pattern.quote(srgName)}:.+/)) {
+                            throw new GradleException(
+                                    "Packaged refmap does not remap vanilla accessor ${mixin}.${field} to SRG")
+                        }
+                    }
+                }
+            }
             def requestJson = new groovy.json.JsonSlurper().parse(
                     zip.getInputStream(zip.getEntry(
                             'META-INF/ysm-mapping-api/requests-v1.json')))

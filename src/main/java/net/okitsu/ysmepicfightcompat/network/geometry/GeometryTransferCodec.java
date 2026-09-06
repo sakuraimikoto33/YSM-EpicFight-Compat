@@ -74,6 +74,8 @@ public final class GeometryTransferCodec {
             writeControllers(output, model.animationControllers());
             writeTextures(output, model);
             writeFunctions(output, model);
+            output.writeBoolean(model.allCutout());
+            output.writeBoolean(model.renderLayersFirst());
         }
         byte[] payload = target.toByteArray();
         if (payload.length > MAX_COMPRESSED_BYTES) {
@@ -103,6 +105,8 @@ public final class GeometryTransferCodec {
             TextureResult textures = readTextures(input);
             boolean mergeMultiline = input.readBoolean();
             Map<String, String> functions = readFunctions(input);
+            boolean allCutout = readFlag(input);
+            boolean renderLayersFirst = readFlag(input);
             if (input.read() != -1) {
                 throw new IOException("Trailing bytes in model transfer");
             }
@@ -113,6 +117,8 @@ public final class GeometryTransferCodec {
             result.pbrTextures().putAll(textures.pbr());
             result.functions().putAll(functions);
             result.mergeMultilineExpressions(mergeMultiline);
+            result.allCutout(allCutout);
+            result.renderLayersFirst(renderLayersFirst);
             return result;
         } catch (RuntimeException exception) {
             throw new IOException("Invalid model transfer", exception);
@@ -869,6 +875,14 @@ public final class GeometryTransferCodec {
         if (state.size() != geometry.bones().size()) {
             throw new IOException("Disconnected or cyclic model hierarchy");
         }
+    }
+
+    private static boolean readFlag(DataInputStream input) throws IOException {
+        int value = input.readUnsignedByte();
+        if (value > 1) {
+            throw new IOException("Invalid model render flag");
+        }
+        return value != 0;
     }
 
     private static void string(DataOutputStream output, String value) throws IOException {

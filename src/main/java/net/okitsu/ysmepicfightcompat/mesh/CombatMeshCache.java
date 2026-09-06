@@ -420,6 +420,7 @@ public final class CombatMeshCache {
             ENTITY_MODELS.clear();
         }
         OfficialTextureResolver.clear();
+        net.okitsu.ysmepicfightcompat.render.ModelRenderTypes.clear();
         ParallelAnimationProgram.clearSoundOutput();
     }
 
@@ -487,7 +488,8 @@ public final class CombatMeshCache {
                 source.widthScale(), source.heightScale());
         CompatHumanoidMesh mesh = new CompatHumanoidMesh(source.modelId(), pose, parallel,
                 baked.auxiliaryBones(),
-                baked.arrays(), baked.parts(), baked.glowParts(), null, properties);
+                baked.arrays(), baked.parts(), baked.glowParts(), null, properties,
+                source.allCutout(), source.renderLayersFirst());
         List<TextureSource> textures = new ArrayList<>();
         source.textures().forEach((name, bytes) -> textures.add(new TextureSource(
                 name, fallbackLocation(source.modelId(), name), bytes,

@@ -502,16 +502,16 @@ public final class BinaryPackageParser {
         }
         result.defaultTexture(input.text());
         input.text();
-        input.varUInt("property flag");
+        input.varUInt("free model property");
         if (format > 4) {
-            input.varUInt("property flag");
+            result.renderLayersFirst(readBooleanProperty(input, "render layers first"));
         }
         if (format >= 15) {
-            input.varUInt("property flag");
-            input.varUInt("property flag");
+            result.allCutout(readBooleanProperty(input, "all cutout"));
+            input.varUInt("disable preview rotation property");
         }
         if (format > 15) {
-            input.varUInt("property flag");
+            input.varUInt("GUI lighting property");
             if (format >= 32) {
                 int merge = input.varUInt("merge multiline expressions");
                 require(merge <= 1, "Invalid multiline expression property");
@@ -534,6 +534,12 @@ public final class BinaryPackageParser {
                 }
             });
         }
+    }
+
+    private static boolean readBooleanProperty(Cursor input, String name) {
+        int value = input.varUInt(name);
+        require(value <= 1, "Invalid " + name + " property");
+        return value != 0;
     }
 
     private static void skipSubEntity(Cursor input, int format) {

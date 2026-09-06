@@ -32,7 +32,7 @@ import java.util.stream.Stream;
 /** Reads official YSM model sources while leaving all generated state in YSM's own folders. */
 public final class LocalModelRepository {
     private static final byte[] MODEL_BUNDLE_SCHEMA =
-            "ysm-ef-model-bundle:pbr-materials:molang-sources:multiline-timelines-v1:first-clip-wins"
+            "ysm-ef-model-bundle:pbr-materials:molang-sources:multiline-timelines-v1:first-clip-wins:render-flags-v1"
                     .getBytes(StandardCharsets.UTF_8);
     private static final Path DEFAULT_ROOT = Path.of("config", "yes_steve_model");
     private static final List<String> CATALOGS = List.of("builtin", "built", "custom", "auth");
@@ -164,8 +164,8 @@ public final class LocalModelRepository {
             LocatedModel located = source.get();
             MessageDigest digest = MessageDigest.getInstance("SHA-256");
             // Parsed bundle semantics changed while the unreleased wire/cache version remains 1.
-            // Rebuild old payloads that discarded material/script data or ignored
-            // package and inherited-animation multiline settings.
+            // Rebuild old payloads that discarded material/script/render flags or
+            // ignored package and inherited-animation multiline settings.
             digest.update(MODEL_BUNDLE_SCHEMA);
             digest.update(modelId.getBytes(StandardCharsets.UTF_8));
             if (located.archive()) {
@@ -196,6 +196,8 @@ public final class LocalModelRepository {
             bundle.scales(decimal(properties, "width_scale", 0.7F),
                     decimal(properties, "height_scale", 0.7F));
             bundle.defaultTexture(string(properties, "default_texture", ""));
+            bundle.allCutout(flag(properties, "all_cutout"));
+            bundle.renderLayersFirst(flag(properties, "render_layers_first"));
             bundle.mergeMultilineExpressions(properties.has("merge_multiline_expr")
                     && properties.get("merge_multiline_expr").getAsBoolean());
         }
@@ -547,6 +549,17 @@ public final class LocalModelRepository {
 
     private static float decimal(JsonObject source, String name, float fallback) {
         return source.has(name) ? source.get(name).getAsFloat() : fallback;
+    }
+
+    private static boolean flag(JsonObject source, String name) throws IOException {
+        JsonElement value = source.get(name);
+        if (value == null) {
+            return false;
+        }
+        if (!value.isJsonPrimitive() || !value.getAsJsonPrimitive().isBoolean()) {
+            throw new IOException("Invalid model flag: " + name);
+        }
+        return value.getAsBoolean();
     }
 
     private static String string(JsonObject source, String name, String fallback) {

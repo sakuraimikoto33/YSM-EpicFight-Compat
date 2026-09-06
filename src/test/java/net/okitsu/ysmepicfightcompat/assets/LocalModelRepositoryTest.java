@@ -3,6 +3,7 @@ package net.okitsu.ysmepicfightcompat.assets;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
 import org.junit.jupiter.params.provider.ValueSource;
 
 import java.io.IOException;
@@ -23,6 +24,66 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class LocalModelRepositoryTest {
+    @ParameterizedTest
+    @CsvSource({"false,false", "false,true", "true,false", "true,true"})
+    void readsModelRenderFlagsIndependently(
+            boolean allCutout, boolean renderLayersFirst, @TempDir Path root) throws Exception {
+        Path model = writeFunctionModel(root, null);
+        Files.writeString(model.resolve("ysm.json"), """
+                {"properties":{"all_cutout":%s,"render_layers_first":%s},
+                 "files":{"player":{"model":{"main":"main.json"}}}}
+                """.formatted(allCutout, renderLayersFirst));
+
+        ModelBundle loaded = LocalModelRepository.load(root, "function-model");
+        assertNotNull(loaded);
+        assertEquals(allCutout, loaded.allCutout());
+        assertEquals(renderLayersFirst, loaded.renderLayersFirst());
+    }
+
+    @Test
+    void absentModelRenderFlagsRemainDisabled(@TempDir Path root) throws Exception {
+        Path model = writeFunctionModel(root, null);
+        ModelBundle absentProperties = LocalModelRepository.load(root, "function-model");
+        assertNotNull(absentProperties);
+        assertFalse(absentProperties.allCutout());
+        assertFalse(absentProperties.renderLayersFirst());
+        Files.writeString(model.resolve("ysm.json"), """
+                {"properties":{},"files":{"player":{"model":{"main":"main.json"}}}}
+                """);
+        ModelBundle emptyProperties = LocalModelRepository.load(root, "function-model");
+        assertNotNull(emptyProperties);
+        assertFalse(emptyProperties.allCutout());
+        assertFalse(emptyProperties.renderLayersFirst());
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"all_cutout", "render_layers_first"})
+    void individualRenderFlagDoesNotEnableTheOtherAndInvalidatesCachedSource(
+            String flag, @TempDir Path root) throws Exception {
+        Path model = writeFunctionModel(root, null);
+        byte[] before = LocalModelRepository.contentDigest(root, "function-model");
+        Files.writeString(model.resolve("ysm.json"), """
+                {"properties":{"%s":true},"files":{"player":{"model":{"main":"main.json"}}}}
+                """.formatted(flag));
+        ModelBundle loaded = LocalModelRepository.load(root, "function-model");
+        assertNotNull(loaded);
+        assertEquals(flag.equals("all_cutout"), loaded.allCutout());
+        assertEquals(flag.equals("render_layers_first"), loaded.renderLayersFirst());
+        assertFalse(Arrays.equals(before, LocalModelRepository.contentDigest(root, "function-model")));
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"null", "1", "[]", "{}", "\"true\""})
+    void rejectsNonBooleanModelRenderFlags(String value, @TempDir Path root) throws Exception {
+        Path model = writeFunctionModel(root, null);
+        for (String flag : java.util.List.of("all_cutout", "render_layers_first")) {
+            Files.writeString(model.resolve("ysm.json"), """
+                    {"properties":{"%s":%s},"files":{"player":{"model":{"main":"main.json"}}}}
+                    """.formatted(flag, value));
+            assertNull(LocalModelRepository.load(root, "function-model"));
+        }
+    }
+
     @Test
     void retainsFunctionsAndSubscriptionsFromManifestFolder(@TempDir Path root) throws Exception {
         Path model = writeFunctionModel(root, "scripts");
@@ -111,8 +172,9 @@ class LocalModelRepositoryTest {
 
     @ParameterizedTest
     @ValueSource(strings = {"ysm-ef-model-bundle:pbr-materials:molang-sources-v1",
-            "ysm-ef-model-bundle:pbr-materials:molang-sources:multiline-timelines-v1"})
-    void invalidatesCachesCreatedBeforePackageAndInheritedMultilineSupport(
+            "ysm-ef-model-bundle:pbr-materials:molang-sources:multiline-timelines-v1",
+            "ysm-ef-model-bundle:pbr-materials:molang-sources:multiline-timelines-v1:first-clip-wins"})
+    void invalidatesCachesCreatedBeforeMultilineAndRenderFlagSupport(
             String previousSchema, @TempDir Path root)
             throws Exception {
         Path model = writeFunctionModel(root, null);
@@ -322,6 +384,8 @@ class LocalModelRepositoryTest {
         assertEquals("skin", loaded.defaultTexture());
         assertEquals(0.8F, loaded.widthScale(), 0.0001F);
         assertEquals(0.9F, loaded.heightScale(), 0.0001F);
+        assertFalse(loaded.allCutout());
+        assertFalse(loaded.renderLayersFirst());
     }
 
     @Test

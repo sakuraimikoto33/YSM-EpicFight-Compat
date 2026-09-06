@@ -28,6 +28,7 @@ public final class RenderFrameContext {
         @Nullable
         private final MovementAnimationType ysmMovement;
         private CompatHumanoidMesh mesh;
+        private ModelLayerOrder layerOrder;
         private OpenMatrix4f[] inputPoses;
         private Vector3f rightFist;
         private Vector3f leftFist;
@@ -181,6 +182,48 @@ public final class RenderFrameContext {
         }
         frame.mesh = mesh;
         return true;
+    }
+
+    /** Scopes the normal body draw; decoration overlays never enter this scope. */
+    @Nullable
+    public static ModelLayerOrder beginBodyDraw(LivingEntity entity,
+                                                CompatHumanoidMesh mesh,
+                                                @Nullable Runnable earlyLayers) {
+        Frame frame = current();
+        if (frame == null || frame.entity != entity || frame.firstPerson
+                || !frame.isBoundTo(mesh)
+                || frame.layerOrder != null && frame.layerOrder.bodyActive()) {
+            return null;
+        }
+        frame.layerOrder = new ModelLayerOrder(earlyLayers);
+        return frame.layerOrder;
+    }
+
+    /** Runs before any body/glow vertices are emitted, with the final pose available. */
+    public static void renderLayersBeforeBody(CompatHumanoidMesh mesh) {
+        Frame frame = current();
+        if (frame != null && frame.isBoundTo(mesh) && frame.layerOrder != null) {
+            frame.layerOrder.beforeBodyGeometry();
+        }
+    }
+
+    public static boolean hasPendingEarlyLayers(CompatHumanoidMesh mesh) {
+        Frame frame = current();
+        return frame != null && frame.isBoundTo(mesh) && frame.layerOrder != null
+                && frame.layerOrder.hasPendingLayers();
+    }
+
+    public static boolean layersAlreadyRendered(LivingEntity entity) {
+        Frame frame = current();
+        return frame != null && frame.entity == entity
+                && frame.layerOrder != null && frame.layerOrder.layersRendered();
+    }
+
+    public static boolean isPrimaryBodyDraw(CompatHumanoidMesh mesh) {
+        Frame frame = current();
+        return frame != null && frame.isBoundTo(mesh)
+                && (frame.firstPerson || frame.layerOrder != null
+                && frame.layerOrder.bodyActive());
     }
 
     /** Publishes copies of the final attachment state produced by this exact body draw. */

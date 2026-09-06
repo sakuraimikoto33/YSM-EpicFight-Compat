@@ -19,8 +19,43 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.fail;
 
 class RenderFrameContextTest {
+    @Test
+    void bodyOrderIsIsolatedFromNestedFramesAndDecorationPasses() {
+        RenderFrameContext.Frame outer = RenderFrameContext.pushThirdPerson(null);
+        java.util.concurrent.atomic.AtomicInteger layers =
+                new java.util.concurrent.atomic.AtomicInteger();
+        ModelLayerOrder order = RenderFrameContext.beginBodyDraw(
+                null, null, layers::incrementAndGet);
+        assertNotNull(order);
+        assertTrue(RenderFrameContext.isPrimaryBodyDraw(null));
+        assertNull(RenderFrameContext.beginBodyDraw(null, null, () -> fail()));
+        RenderFrameContext.Frame inner = RenderFrameContext.pushThirdPerson(null);
+        assertFalse(RenderFrameContext.isPrimaryBodyDraw(null));
+        RenderFrameContext.renderLayersBeforeBody(null);
+        assertEquals(0, layers.get());
+        RenderFrameContext.pop(inner);
+        RenderFrameContext.renderLayersBeforeBody(null);
+        assertEquals(1, layers.get());
+        assertTrue(RenderFrameContext.layersAlreadyRendered(null));
+        order.finishBody();
+        assertFalse(RenderFrameContext.isPrimaryBodyDraw(null));
+        RenderFrameContext.renderLayersBeforeBody(null);
+        assertEquals(1, layers.get());
+        RenderFrameContext.pop(outer);
+        assertFalse(RenderFrameContext.layersAlreadyRendered(null));
+    }
+
+    @Test
+    void firstPersonKeepsMaterialFlagsButDoesNotReorderThirdPersonLayers() {
+        RenderFrameContext.pushFirstPerson(null, Map.of(), true);
+        assertTrue(RenderFrameContext.isPrimaryBodyDraw(null));
+        assertNull(RenderFrameContext.beginBodyDraw(null, null, () -> fail()));
+        assertFalse(RenderFrameContext.layersAlreadyRendered(null));
+    }
+
     @AfterEach
     void clearContext() {
         RenderFrameContext.clear();

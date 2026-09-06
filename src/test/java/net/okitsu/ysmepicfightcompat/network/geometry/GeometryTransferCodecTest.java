@@ -12,6 +12,7 @@ import org.joml.Vector3f;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
 import org.junit.jupiter.params.provider.ValueSource;
 
 import java.io.ByteArrayInputStream;
@@ -35,6 +36,47 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class GeometryTransferCodecTest {
+    @ParameterizedTest
+    @CsvSource({"false,false", "false,true", "true,false", "true,true"})
+    void preservesIndependentRenderFlagsAcrossTransferAndEveryCacheRegion(
+            boolean allCutout, boolean renderLayersFirst, @TempDir Path root) throws IOException {
+        ModelBundle model = functionModel();
+        model.allCutout(allCutout);
+        model.renderLayersFirst(renderLayersFirst);
+        byte[] payload = GeometryTransferCodec.encode(model);
+        byte[] digest = ModelDiskCache.sha256(payload);
+        for (String region : List.of("client", "remote", "server")) {
+            Path directory = root.resolve(region);
+            assertTrue(ModelDiskCache.write(directory, "model",
+                    new ModelDiskCache.Entry(digest, digest, payload), 1024 * 1024));
+            ModelBundle decoded = GeometryTransferCodec.decode("model",
+                    ModelDiskCache.read(directory, "model", 1024 * 1024).orElseThrow().payload());
+            assertEquals(allCutout, decoded.allCutout());
+            assertEquals(renderLayersFirst, decoded.renderLayersFirst());
+            ModelBundle second = GeometryTransferCodec.decode("model", GeometryTransferCodec.encode(decoded));
+            assertEquals(allCutout, second.allCutout());
+            assertEquals(renderLayersFirst, second.renderLayersFirst());
+        }
+    }
+
+    @Test
+    void rejectsPreRenderFlagPayloadsAndInvalidFlagValues() throws IOException {
+        byte[] expanded;
+        try (var gzip = new GZIPInputStream(new ByteArrayInputStream(
+                GeometryTransferCodec.encode(functionModel())))) {
+            expanded = gzip.readAllBytes();
+        }
+        byte[] previous = Arrays.copyOf(expanded, expanded.length - 2);
+        assertThrows(IOException.class, () -> GeometryTransferCodec.decode("old", gzip(previous)));
+        byte[] truncated = Arrays.copyOf(expanded, expanded.length - 1);
+        assertThrows(IOException.class, () -> GeometryTransferCodec.decode("truncated", gzip(truncated)));
+        for (int offset = 1; offset <= 2; offset++) {
+            byte[] invalid = expanded.clone();
+            invalid[invalid.length - offset] = 2;
+            assertThrows(IOException.class, () -> GeometryTransferCodec.decode("invalid", gzip(invalid)));
+        }
+    }
+
     @ParameterizedTest
     @ValueSource(booleans = {false, true})
     void preservesMultilineEvaluationBoundariesAcrossTransferAndCaches(
@@ -148,7 +190,7 @@ class GeometryTransferCodecTest {
                 GeometryTransferCodec.encode(functionModel())))) {
             baseline = gzip.readAllBytes();
         }
-        byte[] prefix = Arrays.copyOf(baseline, baseline.length - 5);
+        byte[] prefix = Arrays.copyOf(baseline, baseline.length - 7);
         assertThrows(IOException.class, () -> GeometryTransferCodec.decode("old", gzip(prefix)));
         assertThrows(IOException.class, () -> GeometryTransferCodec.decode("too-many",
                 withFunctionSection(prefix, output -> {
@@ -204,6 +246,8 @@ class GeometryTransferCodecTest {
         buffer.write(prefix);
         try (DataOutputStream output = new DataOutputStream(buffer)) {
             writer.write(output);
+            output.writeBoolean(false);
+            output.writeBoolean(false);
         }
         return gzip(buffer.toByteArray());
     }

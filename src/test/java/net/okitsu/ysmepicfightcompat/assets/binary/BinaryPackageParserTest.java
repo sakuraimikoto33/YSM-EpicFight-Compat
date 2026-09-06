@@ -17,6 +17,129 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 
 class BinaryPackageParserTest {
     @Test
+    void retainsRenderPropertyCombinationsAcrossPackageVersionBoundaries() {
+        for (int format : List.of(3, 4, 5, 9, 10, 14, 15, 16, 25, 26, 31, 32)) {
+            for (int flags = 0; flags < 4; flags++) {
+                boolean cutout = (flags & 1) != 0;
+                boolean layersFirst = (flags & 2) != 0;
+                ModelBundle model = BinaryPackageParser.parse("render-properties",
+                        renderPropertyPackage(format, cutout ? 1 : 0,
+                                layersFirst ? 1 : 0, false));
+                String context = "format=" + format + ", flags=" + flags;
+                assertEquals(format >= 15 && cutout, model.allCutout(), context);
+                assertEquals(format > 4 && layersFirst, model.renderLayersFirst(), context);
+                assertFalse(model.mergeMultilineExpressions(), context);
+                assertEquals(format < 4 ? "" : "skin", model.defaultTexture(), context);
+            }
+        }
+    }
+
+    @Test
+    void unrelatedPackagePropertiesDoNotEnableRenderFlags() {
+        for (int format : List.of(4, 5, 14, 15, 16, 31, 32)) {
+            ModelBundle model = BinaryPackageParser.parse("unrelated-properties",
+                    renderPropertyPackage(format, 0, 0, true));
+            assertFalse(model.allCutout(), "format=" + format);
+            assertFalse(model.renderLayersFirst(), "format=" + format);
+            assertEquals(format >= 32, model.mergeMultilineExpressions());
+        }
+    }
+
+    @Test
+    void rejectsNonBooleanRenderProperties() {
+        assertThrows(IllegalStateException.class, () -> BinaryPackageParser.parse(
+                "invalid-cutout", renderPropertyPackage(32, 2, 0, false)));
+        assertThrows(IllegalStateException.class, () -> BinaryPackageParser.parse(
+                "invalid-layers-first", renderPropertyPackage(32, 0, 2, false)));
+    }
+
+    /** Minimal authored fixture; no official model bytes are embedded. */
+    private static byte[] renderPropertyPackage(int format, int cutout,
+                                                int layersFirst, boolean otherFlags) {
+        ByteArrayOutputStream output = new ByteArrayOutputStream();
+        writeInt(output, format);
+        if (format <= 15) {
+            writeVarUInt(output, 0); // Header bytes.
+            writeVarUInt(output, 1); // Models.
+            writeVarUInt(output, 1); // Player model.
+            writeVarUInt(output, 1); // Model marker.
+            writeEmptyGeometry(output);
+            writeVarUInt(output, 0); // Animation blocks.
+            if (format > 9) {
+                writeVarUInt(output, 0); // Controllers.
+                writeVarUInt(output, 0); // Controller lookup.
+            }
+            writeVarUInt(output, 0); // Textures.
+            if (format > 9) {
+                writeVarUInt(output, 0); // Sounds.
+                writeVarUInt(output, 0); // Sound lookup.
+            }
+            if (format >= 4) {
+                writeVarUInt(output, 0); // Extra textures.
+            }
+            writeVarUInt(output, 0); // Model lookup.
+            writeVarUInt(output, 0); // Animation lookup.
+            writeVarUInt(output, 0); // Texture lookup.
+            if (format < 4) {
+                writeText(output, ""); // Legacy metadata; no render properties exist yet.
+                return output.toByteArray();
+            }
+        } else {
+            writeVarUInt(output, 0); // Sounds.
+            writeVarUInt(output, 0); // Functions.
+            writeVarUInt(output, 0); // Languages.
+            writeVarUInt(output, 0); // Sub-entities (<26) or vehicles (>=26).
+            writeVarUInt(output, 0); // Separator (<26) or projectiles (>=26).
+            writeVarUInt(output, 1); // Entity marker.
+            writeVarUInt(output, 0); // Animation files.
+            writeVarUInt(output, 0); // Controllers.
+            writeVarUInt(output, 0); // Textures.
+            writeVarUInt(output, 1); // Models.
+            writeVarUInt(output, 1); // Player model.
+            writeText(output, "main.json");
+            writeEmptyGeometry(output);
+        }
+        writeText(output, "");
+        writeVarUInt(output, 1); // Properties belong to the manifest metadata form.
+        if (format <= 15) {
+            writeVarUInt(output, 0); // Legacy metadata flag.
+        }
+        for (int field = 0; field < 4; field++) {
+            writeText(output, "");
+        }
+        writeVarUInt(output, 0); // Authors.
+        writeVarUInt(output, 0); // Model links.
+        writeFloat(output, 1.0F);
+        writeFloat(output, 1.0F);
+        writeVarUInt(output, 0); // Extra animations.
+        if (format > 9) {
+            writeVarUInt(output, 0); // Animation buttons.
+            writeVarUInt(output, 0); // Animation classifications.
+        }
+        writeText(output, "skin");
+        writeText(output, "idle");
+        writeVarUInt(output, otherFlags ? 1 : 0); // Free model.
+        if (format > 4) {
+            writeVarUInt(output, layersFirst);
+        }
+        if (format >= 15) {
+            writeVarUInt(output, cutout);
+            writeVarUInt(output, otherFlags ? 1 : 0); // Disable preview rotation.
+        }
+        if (format > 15) {
+            writeVarUInt(output, otherFlags ? 1 : 0); // GUI lighting.
+            if (format >= 32) {
+                writeVarUInt(output, otherFlags ? 1 : 0); // Merge multiline expressions.
+            }
+            writeText(output, "foreground.png");
+            writeText(output, "background.png");
+            writeVarUInt(output, 0); // Avatars.
+            writeVarUInt(output, 0); // Backgrounds.
+        }
+        return output.toByteArray();
+    }
+
+    @Test
     void mergesModernTimelineOnlyAfterReadingThePackageProperties() {
         ModelBundle model = BinaryPackageParser.parse("multiline", multilinePackage(32, true));
         assertTrue(model.mergeMultilineExpressions());

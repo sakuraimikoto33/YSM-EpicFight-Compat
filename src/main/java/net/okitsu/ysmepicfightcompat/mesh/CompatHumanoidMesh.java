@@ -16,6 +16,7 @@ import net.okitsu.ysmepicfightcompat.animation.DefaultPoseProgram;
 import net.okitsu.ysmepicfightcompat.animation.ParallelAnimationProgram;
 import net.okitsu.ysmepicfightcompat.integration.tlm.TouhouMaidRenderBridge;
 import net.okitsu.ysmepicfightcompat.render.RenderFrameContext;
+import net.okitsu.ysmepicfightcompat.render.ModelRenderTypes;
 import org.joml.Vector3f;
 import yesman.epicfight.api.client.model.Mesh;
 import yesman.epicfight.api.client.model.MeshPart;
@@ -44,6 +45,8 @@ public final class CompatHumanoidMesh extends HumanoidMesh {
     private static final AtomicBoolean AUXILIARY_FALLBACK_LOGGED = new AtomicBoolean();
 
     private final String modelId;
+    private final boolean allCutout;
+    private final boolean renderLayersFirst;
     private final DefaultPoseProgram poseProgram;
     private final ParallelAnimationProgram parallelAnimations;
     private final AuxiliaryPoseMatrices auxiliaryPoses;
@@ -60,9 +63,12 @@ public final class CompatHumanoidMesh extends HumanoidMesh {
                               Map<String, Number[]> arrays,
                               Map<MeshPartDefinition, List<VertexBuilder>> parts,
                               Map<MeshPartDefinition, List<VertexBuilder>> glowParts,
-                              @Nullable SkinnedMesh parent, RenderProperties properties) {
+                              @Nullable SkinnedMesh parent, RenderProperties properties,
+                              boolean allCutout, boolean renderLayersFirst) {
         super(arrays, parts, parent, properties);
         this.modelId = modelId;
+        this.allCutout = allCutout;
+        this.renderLayersFirst = renderLayersFirst;
         this.poseProgram = poseProgram;
         this.parallelAnimations = parallelAnimations;
         hasBaseGeometry = hasGeometry(parts);
@@ -79,6 +85,14 @@ public final class CompatHumanoidMesh extends HumanoidMesh {
 
     public String modelId() {
         return modelId;
+    }
+
+    public boolean allCutout() {
+        return allCutout;
+    }
+
+    public boolean renderLayersFirst() {
+        return renderLayersFirst;
     }
 
     public void texture(ResourceLocation value) {
@@ -302,6 +316,22 @@ public final class CompatHumanoidMesh extends HumanoidMesh {
                 : getRenderProperties() == null ? null : getRenderProperties().customTexturePath();
         RenderType actualType = selectedTexture == null ? requestedType
                 : EpicFightRenderTypes.replaceTexture(selectedTexture, requestedType);
+        actualType = ModelRenderTypes.withBackfaceCulling(actualType,
+                allCutout && RenderFrameContext.isPrimaryBodyDraw(this));
+        // This must follow attachment publication, but precede both body emission
+        // and the mesh-only maid scale. Layers already use the scaled pose snapshot.
+        if (RenderFrameContext.hasPendingEarlyLayers(this)) {
+            // An equipment layer may render another entity using this shared mesh.
+            // Preserve this draw's reusable pose array and part visibility while it
+            // runs; do not sample animations a second time to recover the outer pose.
+            MeshDrawSnapshot snapshot = new MeshDrawSnapshot(poses, allParts);
+            poses = snapshot.poses();
+            try {
+                RenderFrameContext.renderLayersBeforeBody(this);
+            } finally {
+                snapshot.restoreParts();
+            }
+        }
         boolean restoreScale = meshScale != 1.0F;
         if (restoreScale) {
             matrices.pushPose();

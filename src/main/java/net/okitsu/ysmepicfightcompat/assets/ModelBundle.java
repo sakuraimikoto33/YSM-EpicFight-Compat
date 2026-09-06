@@ -37,6 +37,8 @@ public final class ModelBundle {
     private final Map<String, AnimationController> animationControllers = new LinkedHashMap<>();
     private final Map<String, String> functions = new LinkedHashMap<>();
     private boolean mergeMultilineExpressions;
+    private boolean allCutout;
+    private boolean renderLayersFirst;
     private float widthScale = 0.7F;
     private float heightScale = 0.7F;
     private String defaultTexture = "";
@@ -120,6 +122,22 @@ public final class ModelBundle {
 
     public void mergeMultilineExpressions(boolean value) {
         mergeMultilineExpressions = value;
+    }
+
+    public boolean allCutout() {
+        return allCutout;
+    }
+
+    public void allCutout(boolean value) {
+        allCutout = value;
+    }
+
+    public boolean renderLayersFirst() {
+        return renderLayersFirst;
+    }
+
+    public void renderLayersFirst(boolean value) {
+        renderLayersFirst = value;
     }
 
     public float widthScale() {
