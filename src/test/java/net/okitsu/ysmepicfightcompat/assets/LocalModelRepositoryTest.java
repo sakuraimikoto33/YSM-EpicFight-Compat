@@ -2,6 +2,8 @@ package net.okitsu.ysmepicfightcompat.assets;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 
 import java.io.IOException;
 import java.nio.file.Files;
@@ -65,6 +67,67 @@ class LocalModelRepositoryTest {
         assertEquals("v.frame=1;", loaded.functions().get("setup@player_update"));
         assertEquals(java.util.List.of("v.ready ? {\nv.value=fn.compute();\n};"),
                 loaded.animations().get("parallel0").timeline().get(0).statements());
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"true", "false", "absent"})
+    void appliesMergingOnlyToCommandKeyframes(String mode, @TempDir Path root) throws Exception {
+        Path model = writeFunctionModel(root, null);
+        String properties = mode.equals("absent") ? "" :
+                "\"properties\":{\"merge_multiline_expr\":" + mode + "},";
+        Files.writeString(model.resolve("ysm.json"), "{" + properties + """
+                "files":{"player":{
+                  "model":{"main":"main.json"},"animation":{"main":"anim.json"},
+                  "animation_controllers":["controller.json"]
+                }}}
+                """);
+        Files.writeString(model.resolve("anim.json"), """
+                {"animations":{"parallel0":{
+                  "bones":{"root":{"rotation":["v.x","v.y","v.z"]}},
+                  "timeline":{"0.0":["return 1;","v.after=1;"],"1.0":[],"2.0":"v.later=1;"}
+                }}}
+                """);
+        Files.writeString(model.resolve("controller.json"), """
+                {"animation_controllers":{"player.parallel_0":{"states":{"default":{
+                  "on_entry":["return 1;","v.entered=1;"],
+                  "on_exit":["return 2;","v.exited=1;"]
+                }}}}}
+                """);
+        ModelBundle loaded = LocalModelRepository.load(root, "function-model");
+        assertNotNull(loaded);
+        assertEquals(mode.equals("true"), loaded.mergeMultilineExpressions());
+        var clip = loaded.animations().get("parallel0");
+        assertEquals(mode.equals("true") ? java.util.List.of("return 1;\nv.after=1;")
+                        : java.util.List.of("return 1;", "v.after=1;"),
+                clip.timeline().get(0).statements());
+        assertEquals(java.util.List.of(), clip.timeline().get(1).statements());
+        assertEquals(java.util.List.of("v.later=1;"), clip.timeline().get(2).statements());
+        assertEquals("v.y", clip.boneTracks().get("root").rotation()
+                .keyframes().get(0).value().expression(1));
+        var state = loaded.animationControllers().get("player.parallel_0").states().get("default");
+        assertEquals(java.util.List.of("return 1;", "v.entered=1;"), state.onEntry());
+        assertEquals(java.util.List.of("return 2;", "v.exited=1;"), state.onExit());
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"ysm-ef-model-bundle:pbr-materials:molang-sources-v1",
+            "ysm-ef-model-bundle:pbr-materials:molang-sources:multiline-timelines-v1"})
+    void invalidatesCachesCreatedBeforePackageAndInheritedMultilineSupport(
+            String previousSchema, @TempDir Path root)
+            throws Exception {
+        Path model = writeFunctionModel(root, null);
+        MessageDigest oldDigest = MessageDigest.getInstance("SHA-256");
+        oldDigest.update(previousSchema.getBytes(StandardCharsets.UTF_8));
+        oldDigest.update("function-model".getBytes(StandardCharsets.UTF_8));
+        for (String name : java.util.List.of("main.json", "ysm.json")) {
+            byte[] bytes = Files.readAllBytes(model.resolve(name));
+            oldDigest.update(name.getBytes(StandardCharsets.UTF_8));
+            oldDigest.update(ByteBuffer.allocate(Long.BYTES).putLong(bytes.length).array());
+            oldDigest.update(bytes);
+        }
+        OfficialDefaultAnimationLibrary.contributeDigest(root, oldDigest);
+        assertFalse(Arrays.equals(oldDigest.digest(),
+                LocalModelRepository.contentDigest(root, "function-model")));
     }
 
     @Test

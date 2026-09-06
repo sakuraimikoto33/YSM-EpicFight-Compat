@@ -43,6 +43,11 @@ public final class BinaryPackageParser {
         if (result.geometry() == null) {
             throw new IllegalStateException("YSM package has no player geometry");
         }
+        // Package properties follow the animation section. Apply the author setting
+        // only after it has been read, before compilation, inheritance or transfer.
+        if (result.mergeMultilineExpressions()) {
+            result.animations().values().forEach(AnimationClip::mergeTimelineExpressions);
+        }
         return result;
     }
 
@@ -370,7 +375,11 @@ public final class BinaryPackageParser {
                 });
             }
             if (retain) {
-                result.animations().put(name, clip);
+                // Match folder loading: later specialized files (such as fp_arm)
+                // may repeat main clip names, including intentionally empty clips.
+                // Keep the first definition as a whole, without mixing timelines
+                // or bone tracks from another animation file into it.
+                result.animations().putIfAbsent(name, clip);
             }
         });
     }
@@ -504,10 +513,9 @@ public final class BinaryPackageParser {
         if (format > 15) {
             input.varUInt("property flag");
             if (format >= 32) {
-                // Its semantic identity has not been verified against a matched
-                // official folder/package fixture. Do not infer multiline merging
-                // from the introduction version alone; keep the bundle default.
-                input.varUInt("property flag");
+                int merge = input.varUInt("merge multiline expressions");
+                require(merge <= 1, "Invalid multiline expression property");
+                result.mergeMultilineExpressions(merge != 0);
             }
             input.text();
             input.text();

@@ -240,6 +240,25 @@ public final class AnimationClip {
         return timeline;
     }
 
+    /** Join Blockbench command lines, never vector axes or separate keyframes. */
+    public void mergeTimelineExpressions() {
+        timeline.replaceAll(event -> {
+            if (event.statements().size() < 2) {
+                return event;
+            }
+            long length = event.statements().size() - 1L;
+            for (String statement : event.statements()) {
+                length += statement.length();
+                if (length > ExpressionEngine.MAX_SOURCE_LENGTH) {
+                    throw new IllegalArgumentException("Merged Molang timeline exceeds its source limit");
+                }
+            }
+            // A newline preserves // comments and split blocks. Inserting semicolons
+            // would change the model's code, and joining neighboring events changes timing.
+            return new TimelineEvent(event.time(), List.of(String.join("\n", event.statements())));
+        });
+    }
+
     public List<SoundEvent> soundEffects() {
         return soundEffects;
     }

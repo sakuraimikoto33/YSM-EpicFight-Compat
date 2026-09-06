@@ -7,13 +7,116 @@ import org.junit.jupiter.api.Test;
 
 import java.io.ByteArrayOutputStream;
 import java.nio.charset.StandardCharsets;
+import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 class BinaryPackageParserTest {
+    @Test
+    void mergesModernTimelineOnlyAfterReadingThePackageProperties() {
+        ModelBundle model = BinaryPackageParser.parse("multiline", multilinePackage(32, true));
+        assertTrue(model.mergeMultilineExpressions());
+        var timeline = model.animations().get("parallel0").timeline();
+        assertEquals(List.of("v.enabled ? {\nv.result=7; // comment\n};"),
+                timeline.get(0).statements());
+        assertEquals(0.0F, timeline.get(0).time());
+        assertEquals(List.of("return 1;", "v.next=1;"), List.of(
+                timeline.get(1).statements().get(0), timeline.get(2).statements().get(0)));
+        assertEquals(1.0F, timeline.get(1).time());
+        assertEquals(2.0F, timeline.get(2).time());
+    }
+
+    @Test
+    void keepsIndependentStatementsWhenPackageSettingIsFalseOrAbsent() {
+        for (int format : List.of(28, 31, 32)) {
+            ModelBundle model = BinaryPackageParser.parse("independent",
+                    multilinePackage(format, false));
+            assertFalse(model.mergeMultilineExpressions());
+            assertEquals(List.of("v.enabled ? {", "v.result=7; // comment", "};"),
+                    model.animations().get("parallel0").timeline().get(0).statements());
+        }
+    }
+
+    @Test
+    void laterFirstPersonClipsDoNotReplacePlayerMultilineTimelines() {
+        for (int format : List.of(28, 31, 32)) {
+            for (boolean merge : List.of(false, true)) {
+                ModelBundle model = BinaryPackageParser.parse("duplicate-clips",
+                        multilinePackage(format, merge, true));
+                var timeline = model.animations().get("parallel0").timeline();
+                assertEquals(3, timeline.size(), "Player timeline must survive later empty clips");
+                assertEquals(format >= 32 && merge ? 1 : 3,
+                        timeline.get(0).statements().size());
+                assertEquals(2.0F, model.animations().get("parallel0").duration());
+            }
+        }
+    }
+
+    private static byte[] multilinePackage(int format, boolean merge) {
+        return multilinePackage(format, merge, false);
+    }
+
+    private static byte[] multilinePackage(int format, boolean merge, boolean duplicate) {
+        ByteArrayOutputStream output = new ByteArrayOutputStream();
+        writeInt(output, format);
+        writeVarUInt(output, 0); // Sounds.
+        writeVarUInt(output, 0); // Functions.
+        writeVarUInt(output, 0); // Languages.
+        writeVarUInt(output, 0); // Vehicles.
+        writeVarUInt(output, 0); // Projectiles.
+        writeVarUInt(output, 1); // Entity marker.
+        writeVarUInt(output, duplicate ? 2 : 1); // Animation files.
+        writeVarUInt(output, 1); // Main file id.
+        writeText(output, "main.animation.json");
+        writeVarUInt(output, 1); // Animations.
+        writeText(output, "parallel0");
+        writeFloat(output, 40.0F);
+        writeVarUInt(output, 0); // Playback.
+        for (int i = 0; i < 4; i++) {
+            writeVarUInt(output, 0); // Blend flags, weight count, trailing flag.
+        }
+        writeVarUInt(output, 0); // Bone tracks.
+        writeVarUInt(output, 3); // Timeline events.
+        writeVarUInt(output, 3);
+        for (String line : List.of("v.enabled ? {", "v.result=7; // comment", "};")) {
+            writeText(output, line);
+        }
+        writeFloat(output, 0.0F);
+        writeVarUInt(output, 1);
+        writeText(output, "return 1;");
+        writeFloat(output, 20.0F);
+        writeVarUInt(output, 1);
+        writeText(output, "v.next=1;");
+        writeFloat(output, 40.0F);
+        writeVarUInt(output, 0); // Animation sounds.
+        if (duplicate) {
+            writeVarUInt(output, 11); // First-person animation file.
+            writeText(output, "fp.arm.animation.json");
+            writeVarUInt(output, 1); // Animations.
+            writeText(output, "parallel0");
+            writeFloat(output, 0.0F);
+            writeVarUInt(output, 0); // Playback.
+            for (int i = 0; i < 4; i++) {
+                writeVarUInt(output, 0); // Blend flags, weight count, trailing flag.
+            }
+            writeVarUInt(output, 0); // Bone tracks.
+            writeVarUInt(output, 0); // Timeline events.
+            writeVarUInt(output, 0); // Animation sounds.
+        }
+        writeVarUInt(output, 0); // Controllers.
+        writeVarUInt(output, 0); // Textures.
+        writeVarUInt(output, 1); // Models.
+        writeVarUInt(output, 1); // Player.
+        writeText(output, "main.json");
+        writeEmptyGeometry(output);
+        writeModernEmptyProperties(output, format, merge);
+        return output.toByteArray();
+    }
+
     @Test
     void retainsModernMolangSourceAndSubscriptionBasenames() {
         ByteArrayOutputStream output = functionHeader(2);
@@ -296,11 +399,18 @@ class BinaryPackageParserTest {
     }
 
     private static void writeModernEmptyProperties(ByteArrayOutputStream output) {
+        writeModernEmptyProperties(output, 32, false);
+    }
+
+    private static void writeModernEmptyProperties(ByteArrayOutputStream output,
+                                                   int format, boolean merge) {
         writeEmptyProperties(output);
         writeVarUInt(output, 0); // Two additional >=15 property flags.
         writeVarUInt(output, 0);
         writeVarUInt(output, 0); // >15 property flag.
-        writeVarUInt(output, 0); // >=32 property flag.
+        if (format >= 32) {
+            writeVarUInt(output, merge ? 1 : 0); // merge_multiline_expr.
+        }
         writeText(output, "");
         writeText(output, "");
         writeVarUInt(output, 0); // Avatars.

@@ -29,12 +29,13 @@ final class OfficialDefaultAnimationLibrary {
             "assets/yes_steve_model/builtin/default/";
     private static final String MANIFEST = "ysm.json";
     private static final byte[] CACHE_REVISION =
-            "official-primary-animation-inheritance-v2".getBytes(
+            "official-primary-animation-inheritance-v3".getBytes(
                     java.nio.charset.StandardCharsets.UTF_8);
     private static final int MAX_MANIFEST_BYTES = 4 * 1024 * 1024;
     private static final int MAX_ANIMATION_BYTES = 64 * 1024 * 1024;
 
-    private record Source(Map<String, byte[]> animations, byte[] digest) {
+    private record Source(Map<String, byte[]> animations, byte[] digest,
+                          boolean mergeMultilineExpressions) {
         private Source {
             animations = Collections.unmodifiableMap(new LinkedHashMap<>(animations));
             digest = digest.clone();
@@ -85,7 +86,7 @@ final class OfficialDefaultAnimationLibrary {
         if (known != null && MessageDigest.isEqual(known.digest(), source.digest())) {
             return known;
         }
-        Snapshot parsed = new Snapshot(source.digest(), parseAnimations(source.animations()));
+        Snapshot parsed = new Snapshot(source.digest(), parseAnimations(source));
         cached = parsed;
         return parsed;
     }
@@ -180,16 +181,25 @@ final class OfficialDefaultAnimationLibrary {
                 digest.update(group.getBytes(java.nio.charset.StandardCharsets.UTF_8));
                 digest.update(bytes);
             }
-            return new Source(animations, digest.digest());
+            JsonObject root = JsonParser.parseString(
+                    new String(manifest, java.nio.charset.StandardCharsets.UTF_8))
+                    .getAsJsonObject();
+            JsonObject properties = object(root, "properties");
+            JsonElement mergeMultiline = properties == null
+                    ? null : properties.get("merge_multiline_expr");
+            boolean mergeMultilineExpressions = mergeMultiline != null
+                    && mergeMultiline.isJsonPrimitive()
+                    && mergeMultiline.getAsJsonPrimitive().isBoolean()
+                    && mergeMultiline.getAsBoolean();
+            return new Source(animations, digest.digest(), mergeMultilineExpressions);
         } catch (NoSuchAlgorithmException impossible) {
             throw new IllegalStateException(impossible);
         }
     }
 
-    private static Map<String, AnimationClip> parseAnimations(
-            Map<String, byte[]> sources) {
+    private static Map<String, AnimationClip> parseAnimations(Source source) {
         Map<String, AnimationClip> result = new LinkedHashMap<>();
-        for (byte[] bytes : sources.values()) {
+        for (byte[] bytes : source.animations().values()) {
             try {
                 JsonObject root = JsonParser.parseString(
                         new String(bytes, java.nio.charset.StandardCharsets.UTF_8))
@@ -200,8 +210,14 @@ final class OfficialDefaultAnimationLibrary {
                 }
                 for (Map.Entry<String, JsonElement> entry : animations.entrySet()) {
                     if (entry.getValue().isJsonObject()) {
-                        result.putIfAbsent(entry.getKey(), BedrockAnimationParser.parse(
-                                entry.getKey(), entry.getValue().getAsJsonObject()));
+                        AnimationClip clip = BedrockAnimationParser.parse(
+                                entry.getKey(), entry.getValue().getAsJsonObject());
+                        // A primary clip keeps its author's expression mode even when
+                        // the consuming model selects the opposite mode for its own clips.
+                        if (source.mergeMultilineExpressions()) {
+                            clip.mergeTimelineExpressions();
+                        }
+                        result.putIfAbsent(entry.getKey(), clip);
                     }
                 }
             } catch (RuntimeException ignored) {

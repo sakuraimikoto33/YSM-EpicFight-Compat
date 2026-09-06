@@ -11,6 +11,8 @@ import net.okitsu.ysmepicfightcompat.network.CompatNetwork;
 import org.joml.Vector3f;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
@@ -22,6 +24,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Arrays;
 import java.util.Map;
+import java.util.List;
 import java.util.zip.GZIPInputStream;
 import java.util.zip.GZIPOutputStream;
 
@@ -32,6 +35,66 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class GeometryTransferCodecTest {
+    @ParameterizedTest
+    @ValueSource(booleans = {false, true})
+    void preservesMultilineEvaluationBoundariesAcrossTransferAndCaches(
+            boolean merge, @TempDir Path root) throws IOException {
+        ModelBundle model = functionModel();
+        model.mergeMultilineExpressions(merge);
+        AnimationClip own = new AnimationClip("parallel0");
+        own.timeline().add(new AnimationClip.TimelineEvent(0, List.of("return 1;", "v.after=1;")));
+        if (merge) {
+            own.mergeTimelineExpressions();
+        }
+        model.animations().put(own.name(), own);
+        // Inherited clips retain their source model's setting, independently of
+        // the consuming bundle flag. Decoding must not normalize all clips again.
+        AnimationClip inherited = new AnimationClip("inherited");
+        inherited.timeline().add(new AnimationClip.TimelineEvent(0, List.of("return 2;", "v.after=2;")));
+        if (!merge) {
+            inherited.mergeTimelineExpressions();
+        }
+        model.animations().put(inherited.name(), inherited);
+        byte[] payload = GeometryTransferCodec.encode(model);
+        byte[] digest = ModelDiskCache.sha256(payload);
+        for (String region : List.of("client", "remote", "server")) {
+            Path directory = root.resolve(region);
+            assertTrue(ModelDiskCache.write(directory, "model",
+                    new ModelDiskCache.Entry(digest, digest, payload), 1024 * 1024));
+            ModelBundle decoded = GeometryTransferCodec.decode("model",
+                    ModelDiskCache.read(directory, "model", 1024 * 1024).orElseThrow().payload());
+            assertEquals(merge, decoded.mergeMultilineExpressions());
+            assertEquals(own.timeline(), decoded.animations().get(own.name()).timeline());
+            assertEquals(inherited.timeline(), decoded.animations().get(inherited.name()).timeline());
+            ModelBundle second = GeometryTransferCodec.decode("model", GeometryTransferCodec.encode(decoded));
+            assertEquals(own.timeline(), second.animations().get(own.name()).timeline());
+            assertEquals(inherited.timeline(), second.animations().get(inherited.name()).timeline());
+        }
+    }
+
+    @Test
+    void supportsLongMergedTimelineWithoutRelaxingIdentifierLimits() throws IOException {
+        ModelBundle model = functionModel();
+        model.mergeMultilineExpressions(true);
+        AnimationClip clip = new AnimationClip("parallel0");
+        String commentLine = "//" + "雪".repeat(8_000);
+        clip.timeline().add(new AnimationClip.TimelineEvent(0,
+                List.of(commentLine, commentLine, "return 7;")));
+        clip.mergeTimelineExpressions();
+        model.animations().put(clip.name(), clip);
+        ModelBundle restored = GeometryTransferCodec.decode("model", GeometryTransferCodec.encode(model));
+        assertEquals(clip.timeline(), restored.animations().get(clip.name()).timeline());
+        assertTrue(net.okitsu.ysmepicfightcompat.animation.ExpressionEngine
+                .compile(restored.animations().get(clip.name()).timeline().get(0).statements().get(0))
+                .isValid());
+        model.defaultTexture("x".repeat(16 * 1024 + 1));
+        assertThrows(IOException.class, () -> GeometryTransferCodec.encode(model));
+        model.defaultTexture("");
+        clip.timeline().clear();
+        clip.timeline().add(new AnimationClip.TimelineEvent(0, List.of("x".repeat(3 * 65_536 + 1))));
+        assertThrows(IOException.class, () -> GeometryTransferCodec.encode(model));
+    }
+
     @Test
     void roundTripsFunctionSourcesThroughEveryCacheRegion(@TempDir Path root) throws IOException {
         ModelBundle model = functionModel();

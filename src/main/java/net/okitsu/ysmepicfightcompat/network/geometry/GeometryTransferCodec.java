@@ -3,6 +3,7 @@ package net.okitsu.ysmepicfightcompat.network.geometry;
 import net.okitsu.ysmepicfightcompat.animation.AnimationClip;
 import net.okitsu.ysmepicfightcompat.animation.AnimationController;
 import net.okitsu.ysmepicfightcompat.animation.DeclarativeParticleEffect;
+import net.okitsu.ysmepicfightcompat.animation.ExpressionEngine;
 import net.okitsu.ysmepicfightcompat.assets.ModelBundle;
 import net.okitsu.ysmepicfightcompat.assets.ModelFunctionAssets;
 import net.okitsu.ysmepicfightcompat.geometry.GeometryDocument;
@@ -46,6 +47,9 @@ public final class GeometryTransferCodec {
     private static final int MAX_SINGLE_TEXTURE_BYTES = 128 * 1024 * 1024;
     private static final long MAX_TEXTURE_BYTES = 128L * 1024 * 1024;
     private static final int MAX_STRING_BYTES = 16 * 1024;
+    // A joined timeline can exceed the ordinary per-line/name limit. UTF-8 uses
+    // at most three bytes per Java char; the evaluator still caps source length.
+    private static final int MAX_TIMELINE_SOURCE_BYTES = ExpressionEngine.MAX_SOURCE_LENGTH * 3;
 
     private GeometryTransferCodec() {
     }
@@ -384,7 +388,7 @@ public final class GeometryTransferCodec {
                     throw new IOException("Model has too many animation statements");
                 }
                 for (String statement : event.statements()) {
-                    string(output, statement);
+                    string(output, statement, MAX_TIMELINE_SOURCE_BYTES);
                 }
             }
             output.writeInt(clip.soundEffects().size());
@@ -502,7 +506,7 @@ public final class GeometryTransferCodec {
                 }
                 java.util.List<String> code = new java.util.ArrayList<>(statementCount);
                 for (int statement = 0; statement < statementCount; statement++) {
-                    code.add(string(input));
+                    code.add(string(input, MAX_TIMELINE_SOURCE_BYTES));
                 }
                 clip.timeline().add(new AnimationClip.TimelineEvent(time, code));
             }
@@ -868,8 +872,12 @@ public final class GeometryTransferCodec {
     }
 
     private static void string(DataOutputStream output, String value) throws IOException {
+        string(output, value, MAX_STRING_BYTES);
+    }
+
+    private static void string(DataOutputStream output, String value, int maximum) throws IOException {
         byte[] bytes = (value == null ? "" : value).getBytes(StandardCharsets.UTF_8);
-        if (bytes.length > MAX_STRING_BYTES) {
+        if (bytes.length > maximum) {
             throw new IOException("Model transfer string is too long");
         }
         output.writeInt(bytes.length);
@@ -877,7 +885,11 @@ public final class GeometryTransferCodec {
     }
 
     private static String string(DataInputStream input) throws IOException {
-        int length = bounded(input.readInt(), MAX_STRING_BYTES, "string byte");
+        return string(input, MAX_STRING_BYTES);
+    }
+
+    private static String string(DataInputStream input, int maximum) throws IOException {
+        int length = bounded(input.readInt(), maximum, "string byte");
         byte[] bytes = input.readNBytes(length);
         if (bytes.length != length) {
             throw new IOException("Truncated model transfer string");
