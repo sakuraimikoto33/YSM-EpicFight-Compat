@@ -327,6 +327,11 @@ public final class MolangScriptRuntime {
                 new Transition(state.transitionGeneration, progress, state.discardPrevious, paused));
     }
 
+    /** Leave a built-in provider without resetting model variables or frame events. */
+    void deactivateController(String channel) {
+        controls.remove(normalize(channel));
+    }
+
     public void reset() {
         controls.clear();
         pendingSyncs.clear();

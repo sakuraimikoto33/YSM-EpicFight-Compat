@@ -3,6 +3,8 @@ package net.okitsu.ysmepicfightcompat.animation;
 import com.google.gson.JsonParser;
 import net.okitsu.ysmepicfightcompat.geometry.GeometryDocument;
 import net.okitsu.ysmepicfightcompat.mesh.AuxiliaryBoneLayout;
+import net.okitsu.ysmepicfightcompat.mesh.HumanoidRig;
+import org.joml.Vector3f;
 import org.junit.jupiter.api.Test;
 import yesman.epicfight.api.utils.math.OpenMatrix4f;
 
@@ -16,6 +18,251 @@ import static org.junit.jupiter.api.Assertions.*;
 
 /** Exercises script hooks through selection and pose composition, without a Minecraft entity. */
 class ScriptAnimationIntegrationTest {
+    @Test
+    void builtinScalesSwitchImmediatelyButTheCustomStateKeepsItsScaleBlend() {
+        AnimationController controller = builtinController("player.parallel0", 0.2F);
+        Fixture fixture = fixture(List.of(scaleClip("parallel0", "ear", 0),
+                scaleClip("custom_pose", "ear", 1)), Map.of(controller.name(), controller), Map.of());
+        ParallelAnimationProgram.Frame initial = fixture.sample(0, emptySelection(), false);
+        assertUniformScale(0, initial.parallelDeltas()[1]);
+        assertTrue(initial.hiddenBones().contains("ear"));
+
+        fixture.environment.writeVariable(ExpressionEngine.slot("v.custom"), 1);
+        assertUniformScale(0, fixture.sample(1, emptySelection(), false).parallelDeltas()[1]);
+        ParallelAnimationProgram.Frame halfway = fixture.sample(1.1, emptySelection(), false);
+        assertUniformScale(0.5, halfway.parallelDeltas()[1]);
+        assertFalse(halfway.hiddenBones().contains("ear"));
+        assertUniformScale(1, fixture.sample(1.2, emptySelection(), false).parallelDeltas()[1]);
+
+        fixture.environment.writeVariable(ExpressionEngine.slot("v.custom"), 0);
+        ParallelAnimationProgram.Frame returned = fixture.sample(2, emptySelection(), false);
+        assertUniformScale(0, returned.parallelDeltas()[1]);
+        assertTrue(returned.hiddenBones().contains("ear"),
+                "Returning to the native provider must not fade hidden geometry into view");
+    }
+
+    @Test
+    void departingBuiltinScaleFadesToTheLivePrecedingLayerWhenTheCustomClipHasNoScale() {
+        AnimationController controller = builtinController("player.parallel0", 0.2F);
+        Fixture fixture = fixture(List.of(scaleClip("pre_parallel0", "ear", 2),
+                scaleClip("parallel0", "ear", 0), rotationClip("custom_pose", "ear", 0)),
+                Map.of(controller.name(), controller), Map.of());
+        assertUniformScale(0, fixture.sample(0, emptySelection(), false).parallelDeltas()[1]);
+        fixture.environment.writeVariable(ExpressionEngine.slot("v.custom"), 1);
+        assertUniformScale(0, fixture.sample(1, emptySelection(), false).parallelDeltas()[1]);
+        assertUniformScale(1, fixture.sample(1.1, emptySelection(), false).parallelDeltas()[1]);
+        assertUniformScale(2, fixture.sample(1.2, emptySelection(), false).parallelDeltas()[1]);
+    }
+
+    @Test
+    void builtinHeldSlotKeepsToolAttachmentMetadataWhileOnlyTheCustomPoseRuns() {
+        GeometryDocument geometry = new GeometryDocument();
+        GeometryDocument.Bone arm = new GeometryDocument.Bone("RightArm");
+        GeometryDocument.Bone locator = new GeometryDocument.Bone("RightHandLocator");
+        GeometryDocument.Bone prop = new GeometryDocument.Bone("test_tool");
+        locator.parentName(arm.name());
+        prop.parentName(locator.name());
+        prop.faces().add(new GeometryDocument.Face(new Vector3f[]{
+                new Vector3f(0, 0, 0), new Vector3f(1, 0, 0),
+                new Vector3f(1, 1, 0), new Vector3f(0, 1, 0)},
+                new float[][]{{0, 0}, {1, 0}, {1, 1}, {0, 1}}, new Vector3f(0, 0, 1)));
+        geometry.add(arm);
+        geometry.add(locator);
+        geometry.add(prop);
+        geometry.linkHierarchy();
+        int propIndex = AuxiliaryBoneLayout.create(geometry).entryForBoneName(prop.name()).auxiliaryIndex();
+        AnimationClip nativeHold = scaleClip("hold_mainhand:sword", prop.name(), 1);
+        nativeHold.boneTracks().get(prop.name()).rotation(
+                rotationClip("unused", prop.name(), 20).boneTracks().get(prop.name()).rotation());
+        nativeHold.boneTracks().get(prop.name()).rotation().keyframes().get(0).value()
+                .setExpression(0, "v.native_calls+=1;return 0;");
+        AnimationClip custom = scaleClip("custom_pose", prop.name(), 1);
+        custom.boneTracks().get(prop.name()).rotation(
+                rotationClip("unused", prop.name(), 60).boneTracks().get(prop.name()).rotation());
+        AnimationController controller = builtinController("player.hold_mainhand", 0.2F);
+        Fixture fixture = fixture(geometry,
+                List.of(scaleClip("pre_parallel0", prop.name(), 0), nativeHold, custom),
+                Map.of(controller.name(), controller), Map.of());
+        AutomaticAnimationSelector.Selection selected = new AutomaticAnimationSelector.Selection(
+                List.of(active(nativeHold.name())), null, null, Set.of());
+
+        assertHeldTool(20, propIndex, fixture.sample(0, selected, false));
+        fixture.environment.writeVariable(ExpressionEngine.slot("v.custom"), 1);
+        assertHeldTool(20, propIndex, fixture.sample(1, selected, false));
+        assertHeldTool(40, propIndex, fixture.sample(1.1, selected, false));
+        assertHeldTool(60, propIndex, fixture.sample(1.2, selected, false));
+        assertEquals(1.0D, fixture.environment.value("v.native_calls"),
+                "Copying attachment descriptors must not reevaluate the suppressed native pose");
+        fixture.environment.writeVariable(ExpressionEngine.slot("v.custom"), 0);
+        assertHeldTool(60, propIndex, fixture.sample(2, selected, false));
+        assertHeldTool(40, propIndex, fixture.sample(2.1, selected, false));
+        assertHeldTool(20, propIndex, fixture.sample(2.2, selected, false));
+    }
+
+    @Test
+    void builtinStateDelegatesNativeParallelOnceAndIgnoresItsAnimationReferences() {
+        AnimationController controller = builtinController("player.parallel_0", 0.2F);
+        Fixture fixture = fixture(List.of(
+                countedRotationClip("parallel0", 10, "v.native_calls"),
+                countedRotationClip("custom_pose", 50, "v.custom_calls"),
+                countedRotationClip("ignored_pose", 120, "v.ignored_calls")),
+                Map.of(controller.name(), controller), Map.of());
+
+        assertRotationZ(10, fixture.sample(0, emptySelection(), false).parallelDeltas()[1]);
+        assertEquals(1.0D, fixture.environment.value("v.native_calls"));
+        assertEquals(0.0D, fixture.environment.value("v.custom_calls"));
+        fixture.environment.writeVariable(ExpressionEngine.slot("v.custom"), 1);
+        assertRotationZ(10, fixture.sample(1, emptySelection(), false).parallelDeltas()[1]);
+        assertRotationZ(30, fixture.sample(1.1, emptySelection(), false).parallelDeltas()[1]);
+        assertRotationZ(50, fixture.sample(1.2, emptySelection(), false).parallelDeltas()[1]);
+        assertEquals(1.0D, fixture.environment.value("v.native_calls"),
+                "The outgoing native clip must not run again to obtain the blend source");
+        assertEquals(3.0D, fixture.environment.value("v.custom_calls"));
+
+        fixture.environment.writeVariable(ExpressionEngine.slot("v.custom"), 0);
+        assertRotationZ(50, fixture.sample(2, emptySelection(), false).parallelDeltas()[1]);
+        assertRotationZ(30, fixture.sample(2.1, emptySelection(), false).parallelDeltas()[1]);
+        assertRotationZ(10, fixture.sample(2.2, emptySelection(), false).parallelDeltas()[1]);
+        assertEquals(4.0D, fixture.environment.value("v.native_calls"));
+        assertEquals(3.0D, fixture.environment.value("v.custom_calls"),
+                "Returning to native playback must use the saved custom pose, not reevaluate it");
+        assertEquals(0.0D, fixture.environment.value("v.ignored_calls"));
+        assertEquals(0.0D, fixture.environment.value("v.ignored_weight"));
+        assertEquals(2.0D, fixture.environment.value("v.builtin_entries"));
+        assertEquals(1.0D, fixture.environment.value("v.builtin_exits"));
+        assertEquals(1.0D, fixture.environment.value("v.custom_entries"));
+        assertEquals(1.0D, fixture.environment.value("v.custom_exits"));
+    }
+
+    @Test
+    void builtinStateRunsItsScriptOncePerSampleAndComposesScriptAndStateEntryBlends() {
+        AnimationController controller = builtinController("player.parallel_0", 0.2F);
+        Fixture fixture = fixture(List.of(
+                countedRotationClip("parallel0", 10, "v.native_calls"),
+                countedRotationClip("custom_pose", 50, "v.custom_calls"),
+                countedRotationClip("scripted_pose", 30, "v.script_pose_calls")),
+                Map.of(controller.name(), controller),
+                Map.of("provider@player_ctrl_parallel_0", """
+                        v.callback_calls+=1;
+                        ctrl.set_beginning_transition_length(0.2);
+                        v.bypass ? {return ctrl.state_bypass;};
+                        ctrl.set_animation('scripted_pose');return ctrl.state_continue;
+                        """));
+
+        assertRotationZ(0, fixture.sample(0, emptySelection(), false).parallelDeltas()[1]);
+        assertRotationZ(15, fixture.sample(0.1, emptySelection(), false).parallelDeltas()[1]);
+        assertRotationZ(15, fixture.sample(0.1, emptySelection(), false).parallelDeltas()[1]);
+        assertEquals(2.0D, fixture.environment.value("v.callback_calls"));
+        assertRotationZ(30, fixture.sample(0.2, emptySelection(), false).parallelDeltas()[1]);
+        assertEquals(0.0D, fixture.environment.value("v.native_calls"));
+
+        fixture.environment.writeVariable(ExpressionEngine.slot("v.bypass"), 1);
+        assertRotationZ(30, fixture.sample(1, emptySelection(), false).parallelDeltas()[1]);
+        assertRotationZ(20, fixture.sample(1.1, emptySelection(), false).parallelDeltas()[1]);
+        assertRotationZ(10, fixture.sample(1.2, emptySelection(), false).parallelDeltas()[1]);
+        assertEquals(6.0D, fixture.environment.value("v.callback_calls"));
+        assertEquals(3.0D, fixture.environment.value("v.native_calls"));
+
+        fixture.environment.writeVariable(ExpressionEngine.slot("v.custom"), 1);
+        assertRotationZ(10, fixture.sample(2, emptySelection(), false).parallelDeltas()[1]);
+        assertRotationZ(30, fixture.sample(2.1, emptySelection(), false).parallelDeltas()[1]);
+        assertRotationZ(50, fixture.sample(2.2, emptySelection(), false).parallelDeltas()[1]);
+        assertEquals(6.0D, fixture.environment.value("v.callback_calls"),
+                "A non-builtin state owns the slot and must not invoke the script provider");
+
+        fixture.environment.writeVariable(ExpressionEngine.slot("v.custom"), 0);
+        fixture.environment.writeVariable(ExpressionEngine.slot("v.bypass"), 0);
+        assertRotationZ(50, fixture.sample(3, emptySelection(), false).parallelDeltas()[1]);
+        // The inner script is halfway to 30, and the outer state blends 50 toward that 15.
+        assertRotationZ(32.5, fixture.sample(3.1, emptySelection(), false).parallelDeltas()[1]);
+        assertRotationZ(30, fixture.sample(3.2, emptySelection(), false).parallelDeltas()[1]);
+        assertEquals(9.0D, fixture.environment.value("v.callback_calls"));
+        assertEquals(3.0D, fixture.environment.value("v.native_calls"));
+        assertEquals(3.0D, fixture.environment.value("v.custom_calls"));
+    }
+
+    @Test
+    void builtinMainDelegationPreservesMovementSettingsAndEpicFightBodyOwnership() {
+        AnimationController controller = builtinController("player.main", 0);
+        Map<String, String> functions = Map.of("provider@player_ctrl_main",
+                "ctrl.set_animation('scripted_pose');return ctrl.state_continue;");
+        List<AnimationClip> clips = List.of(rotationClip("walk", "head", 5),
+                rotationClip("scripted_pose", "head", 40),
+                rotationClip("custom_pose", "head", 80));
+        for (boolean movementEnabled : new boolean[]{true, false}) {
+            Fixture fixture = fixture(clips, Map.of(controller.name(), controller), functions);
+            ParallelAnimationProgram.Frame builtin = fixture.sample(0, selection("walk"), movementEnabled);
+            assertEquals(movementEnabled, builtin.replaceEpicFightPose());
+            assertRotationZ(movementEnabled ? 40 : 0, builtin.wholeModelDeltas()[0]);
+            assertIdentity(builtin.parallelDeltas()[0]);
+
+            fixture.environment.writeVariable(ExpressionEngine.slot("v.custom"), 1);
+            ParallelAnimationProgram.Frame custom = fixture.sample(1, selection("walk"), movementEnabled);
+            assertEquals(movementEnabled, custom.replaceEpicFightPose());
+            assertRotationZ(movementEnabled ? 80 : 0, custom.wholeModelDeltas()[0]);
+            assertIdentity(custom.parallelDeltas()[0]);
+        }
+        Fixture noMovement = fixture(clips, Map.of(controller.name(), controller), functions);
+        ParallelAnimationProgram.Frame frame = noMovement.sample(0, emptySelection(), true);
+        assertFalse(frame.replaceEpicFightPose());
+        assertIdentity(frame.wholeModelDeltas()[0]);
+        assertIdentity(frame.parallelDeltas()[0]);
+    }
+
+    @Test
+    void builtinDoesNotDelegateUnsupportedChildControllersOrTreatReferencesAsSlots() {
+        AnimationController parent = builtinController("player.parallel0", 0);
+        AnimationController.State builtin = new AnimationController.State("ysm-builtin",
+                List.of(new AnimationController.AnimationReference("ignored_pose", "1")),
+                List.of(), List.of(), List.of(),
+                new AnimationController.BlendTransition(0, List.of()), false);
+        AnimationController child = new AnimationController("controller.animation.child", "ysm-builtin",
+                Map.of("ysm-builtin", builtin));
+        AnimationController.State parentBuiltin = new AnimationController.State("ysm-builtin",
+                List.of(new AnimationController.AnimationReference(child.name(), "1")),
+                List.of(), List.of(), List.of(),
+                new AnimationController.BlendTransition(0, List.of()), false);
+        parent = new AnimationController(parent.name(), "ysm-builtin",
+                Map.of("ysm-builtin", parentBuiltin));
+        Fixture fixture = fixture(List.of(
+                countedRotationClip("parallel0", 10, "v.native_calls"),
+                countedRotationClip("ignored_pose", 120, "v.child_calls")),
+                Map.of(parent.name(), parent, child.name(), child), Map.of());
+
+        assertRotationZ(10, fixture.sample(0, emptySelection(), false).parallelDeltas()[1]);
+        assertEquals(1.0D, fixture.environment.value("v.native_calls"));
+        assertEquals(0.0D, fixture.environment.value("v.child_calls"));
+    }
+
+    @Test
+    void builtinUseAndSwingSlotsKeepBothNativeHandProvidersWithoutDuplicatingThem() {
+        for (Map.Entry<String, List<String>> entry : Map.of(
+                "player.use", List.of("use_mainhand", "use_offhand"),
+                "player.swing", List.of("swing_hand", "swing_offhand")).entrySet()) {
+            AnimationController controller = builtinController(entry.getKey(), 0);
+            Fixture fixture = fixture(List.of(
+                    countedRotationClip(entry.getValue().get(0), 10, "v.mainhand_calls"),
+                    countedRotationClip(entry.getValue().get(1), 20, "v.offhand_calls")),
+                    Map.of(controller.name(), controller), Map.of());
+            AutomaticAnimationSelector.Selection selected = new AutomaticAnimationSelector.Selection(
+                    entry.getValue().stream().map(ScriptAnimationIntegrationTest::active).toList(),
+                    null, null, Set.of());
+
+            fixture.sample(0, selected, false);
+            assertEquals(1.0D, fixture.environment.value("v.mainhand_calls"), entry.getKey());
+            assertEquals(1.0D, fixture.environment.value("v.offhand_calls"), entry.getKey());
+            fixture.environment.writeVariable(ExpressionEngine.slot("v.custom"), 1);
+            fixture.sample(1, selected, false);
+            fixture.sample(1.1, selected, false);
+            assertEquals(1.0D, fixture.environment.value("v.mainhand_calls"), entry.getKey());
+            assertEquals(1.0D, fixture.environment.value("v.offhand_calls"), entry.getKey());
+            fixture.environment.writeVariable(ExpressionEngine.slot("v.custom"), 0);
+            fixture.sample(2, selected, false);
+            assertEquals(2.0D, fixture.environment.value("v.mainhand_calls"), entry.getKey());
+            assertEquals(2.0D, fixture.environment.value("v.offhand_calls"), entry.getKey());
+        }
+    }
+
     @Test
     void naturalLadderMirroringUsesTheMainTransitionWithoutOverwritingItsHistory() {
         Fixture fixture = fixture(List.of(rotationClip("ladder_up", "LeftArm", 40),
@@ -467,6 +714,12 @@ class ScriptAnimationIntegrationTest {
         geometry.add(new GeometryDocument.Bone("LeftArm"));
         geometry.add(new GeometryDocument.Bone("RightArm"));
         geometry.linkHierarchy();
+        return fixture(geometry, clips, controllers, functions);
+    }
+
+    private static Fixture fixture(GeometryDocument geometry, List<AnimationClip> clips,
+                                   Map<String, AnimationController> controllers,
+                                   Map<String, String> functions) {
         Map<String, AnimationClip> animations = new LinkedHashMap<>();
         Map<String, MolangScriptRuntime.Clip> metadata = new LinkedHashMap<>();
         clips.forEach(clip -> {
@@ -477,11 +730,13 @@ class ScriptAnimationIntegrationTest {
                 "script_test", geometry, animations, controllers, functions,
                 AuxiliaryBoneLayout.create(geometry), 1, 1);
         MolangScriptRuntime scripts = new MolangScriptRuntime(functions, metadata);
-        return new Fixture(program, scripts, new HostEnvironment(scripts));
+        return new Fixture(program, scripts, new HostEnvironment(scripts),
+                new AnimationControllerProgram.RuntimeState());
     }
 
     private record Fixture(ParallelAnimationProgram program, MolangScriptRuntime scripts,
-                           HostEnvironment environment) {
+                           HostEnvironment environment,
+                           AnimationControllerProgram.RuntimeState controllerState) {
         ParallelAnimationProgram.Frame sample(AutomaticAnimationSelector.Selection selection,
                                                boolean movementEnabled) {
             return sample(0, selection, movementEnabled);
@@ -490,13 +745,13 @@ class ScriptAnimationIntegrationTest {
         ParallelAnimationProgram.Frame sample(double now, AutomaticAnimationSelector.Selection selection,
                                                boolean movementEnabled) {
             return program.sampleScriptControllersAt(now, selection, environment, scripts,
-                    new AnimationControllerProgram.RuntimeState(), movementEnabled);
+                    controllerState, movementEnabled);
         }
 
         ParallelAnimationProgram.Frame sample(double now, AutomaticAnimationSelector.Selection selection,
                                                boolean movementEnabled, boolean naturalLadderRequested) {
             return program.sampleScriptControllersAt(now, selection, environment, scripts,
-                    new AnimationControllerProgram.RuntimeState(), movementEnabled, naturalLadderRequested);
+                    controllerState, movementEnabled, naturalLadderRequested);
         }
     }
 
@@ -541,6 +796,39 @@ class ScriptAnimationIntegrationTest {
         return clip;
     }
 
+    private static AnimationClip countedRotationClip(String name, double degrees, String counter) {
+        AnimationClip clip = scriptClip(name, counter + "+=1;return 0;");
+        clip.boneTracks().get("ear").rotation().keyframes().get(0).value().setConstant(2, degrees);
+        return clip;
+    }
+
+    private static AnimationClip scaleClip(String name, String bone, double scale) {
+        AnimationClip clip = new AnimationClip(name);
+        clip.playback(AnimationClip.Playback.REPEAT);
+        AnimationClip.VectorValue value = new AnimationClip.VectorValue();
+        for (int axis = 0; axis < 3; axis++) value.setConstant(axis, scale);
+        AnimationClip.BoneTracks boneTracks = new AnimationClip.BoneTracks();
+        boneTracks.scale(tracks(value).rotation());
+        clip.boneTracks().put(bone, boneTracks);
+        return clip;
+    }
+
+    private static AnimationController builtinController(String channel, float blendSeconds) {
+        AnimationController.BlendTransition blend = new AnimationController.BlendTransition(
+                blendSeconds, List.of());
+        AnimationController.State builtin = new AnimationController.State("ysm-builtin",
+                List.of(new AnimationController.AnimationReference("ignored_pose",
+                        "v.ignored_weight+=1;return 1;")),
+                List.of(new AnimationController.Transition("custom", "v.custom")),
+                List.of("v.builtin_entries+=1;"), List.of("v.builtin_exits+=1;"), blend, false);
+        AnimationController.State custom = new AnimationController.State("custom",
+                List.of(new AnimationController.AnimationReference("custom_pose", "1")),
+                List.of(new AnimationController.Transition("ysm-builtin", "!v.custom")),
+                List.of("v.custom_entries+=1;"), List.of("v.custom_exits+=1;"), blend, false);
+        return new AnimationController(channel, "ysm-builtin",
+                Map.of("ysm-builtin", builtin, "custom", custom));
+    }
+
     private static AnimationClip.BoneTracks tracks(AnimationClip.VectorValue value) {
         AnimationClip.Track rotation = new AnimationClip.Track();
         rotation.keyframes().add(new AnimationClip.Keyframe(
@@ -563,6 +851,22 @@ class ScriptAnimationIntegrationTest {
         assertEquals(0, actual.m30, 0.0001F);
         assertEquals(0, actual.m31, 0.0001F);
         assertEquals(0, actual.m32, 0.0001F);
+    }
+
+    private static void assertUniformScale(double scale, OpenMatrix4f actual) {
+        assertNotNull(actual);
+        assertEquals(scale, actual.m00, 0.0001D);
+        assertEquals(scale, actual.m11, 0.0001D);
+        assertEquals(scale, actual.m22, 0.0001D);
+    }
+
+    private static void assertHeldTool(double degrees, int index, ParallelAnimationProgram.Frame frame) {
+        assertFalse(frame.replaceEpicFightPose());
+        assertTrue(frame.replaceEpicFightAnchors()[index]);
+        assertTrue(frame.suppressParallelDeltas()[index]);
+        assertEquals(HumanoidRig.RIGHT_TOOL, frame.heldItemAnchorJoints()[index]);
+        assertRotationZ(degrees, frame.heldItemDeltas()[index]);
+        assertFalse(frame.hiddenBones().contains("test_tool"));
     }
 
     private static void assertLadderArms(double leftDegrees, ParallelAnimationProgram.Frame frame) {

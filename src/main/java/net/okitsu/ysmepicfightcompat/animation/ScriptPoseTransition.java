@@ -19,6 +19,7 @@ final class ScriptPoseTransition {
     private boolean initialized;
     private boolean collecting;
     private float progress;
+    private boolean shortestRotation;
 
     ScriptPoseTransition(int boneCount) {
         if (boneCount < 0 || boneCount > MAX_BONES) {
@@ -31,11 +32,16 @@ final class ScriptPoseTransition {
 
     /** Start one sample. The source stays frozen until a new generation or an explicit discard. */
     void begin(long generation, float progress, boolean discardPrevious) {
+        begin(generation, progress, discardPrevious, false);
+    }
+
+    void begin(long generation, float progress, boolean discardPrevious, boolean shortestRotation) {
         if (!initialized || this.generation != generation || discardPrevious) {
             rotation.freezeSource(discardPrevious);
             position.freezeSource(discardPrevious);
         }
         this.generation = generation;
+        this.shortestRotation = shortestRotation;
         initialized = true;
         this.progress = Float.isFinite(progress) ? Math.max(0.0F, Math.min(1.0F, progress)) : 1.0F;
         rotation.incoming.reset();
@@ -76,8 +82,8 @@ final class ScriptPoseTransition {
             throw new IllegalArgumentException("Transition pose dimensions do not match");
         }
         float boundedWeight = Math.max(0.0F, Math.min(1.0F, finite(outputWeight)));
-        boolean appliedRotation = rotation.apply(rotations, hasRotation, progress, boundedWeight);
-        boolean appliedPosition = position.apply(positions, hasPosition, progress, boundedWeight);
+        boolean appliedRotation = rotation.apply(rotations, hasRotation, progress, boundedWeight, shortestRotation);
+        boolean appliedPosition = position.apply(positions, hasPosition, progress, boundedWeight, false);
         collecting = false;
         return appliedRotation || appliedPosition;
     }
@@ -90,6 +96,21 @@ final class ScriptPoseTransition {
     /** Whether this layer contributed the position track in the most recent apply. */
     boolean hasPosition(int index) {
         return position.displayed.specified[index];
+    }
+
+    /**
+     * Append this layer's last displayed effect after the destination's collected
+     * effects, without resampling a pose or changing this layer's transition history.
+     * The destination must have begun a sample and use the same bone layout size.
+     */
+    void appendDisplayedTo(ScriptPoseTransition destination) {
+        Objects.requireNonNull(destination, "Transition destination");
+        if (destination.boneCount != boneCount) {
+            throw new IllegalArgumentException("Transition bone counts do not match");
+        }
+        destination.requireCollecting();
+        rotation.appendDisplayedTo(destination.rotation);
+        position.appendDisplayedTo(destination.position);
     }
 
     private void requireCollecting() {
@@ -165,7 +186,26 @@ final class ScriptPoseTransition {
             incoming.specified[index] = true;
         }
 
-        private boolean apply(float[][] values, boolean[] present, float progress, float outputWeight) {
+        private void appendDisplayedTo(Track destination) {
+            for (int index = 0; index < displayed.specified.length; index++) {
+                if (!displayed.specified[index]) {
+                    continue;
+                }
+                float coefficient = displayed.coefficient[index];
+                destination.incoming.coefficient[index] = finite(
+                        coefficient * destination.incoming.coefficient[index]);
+                for (int axis = 0; axis < 3; axis++) {
+                    int component = index * 3 + axis;
+                    destination.incoming.offset[component] = finite((float) (
+                            (double) coefficient * destination.incoming.offset[component]
+                                    + displayed.offset[component]));
+                }
+                destination.incoming.specified[index] = true;
+            }
+        }
+
+        private boolean apply(float[][] values, boolean[] present, float progress, float outputWeight,
+                              boolean shortestRotation) {
             boolean applied = false;
             for (int index = 0; index < incoming.specified.length; index++) {
                 boolean specified = incoming.specified[index]
@@ -184,10 +224,18 @@ final class ScriptPoseTransition {
                 displayed.coefficient[index] = coefficient;
                 for (int axis = 0; axis < 3; axis++) {
                     int component = index * 3 + axis;
-                    float offset = mix(0.0F,
-                            mix(source.offset[component], incoming.offset[component], progress), outputWeight);
-                    displayed.offset[component] = offset;
                     float base = present[index] ? finite(values[index][axis]) : 0.0F;
+                    float incomingOffset = incoming.offset[component];
+                    if (shortestRotation && progress > 0.0F && progress < 1.0F) {
+                        double from = (double) base * source.coefficient[index] + source.offset[component];
+                        double to = (double) base * incoming.coefficient[index] + incomingOffset;
+                        double difference = Math.IEEEremainder(to - from, Math.PI * 2.0D);
+                        incomingOffset = finite((float) (from + difference
+                                - (double) base * incoming.coefficient[index]));
+                    }
+                    float offset = mix(0.0F,
+                            mix(source.offset[component], incomingOffset, progress), outputWeight);
+                    displayed.offset[component] = offset;
                     values[index][axis] = finite((float) ((double) base * coefficient + offset));
                 }
                 present[index] = true;

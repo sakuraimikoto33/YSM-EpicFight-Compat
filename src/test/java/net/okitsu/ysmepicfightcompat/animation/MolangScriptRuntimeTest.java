@@ -24,6 +24,24 @@ class MolangScriptRuntimeTest {
             "held", new MolangScriptRuntime.Clip(1.0D, AnimationClip.Playback.HOLD_LAST_FRAME));
 
     @Test
+    void leavingABuiltinSlotReleasesOnlyItsPlaybackWithoutReinitializingTheModel() {
+        FakeEnvironment environment = environment(Map.of(
+                "init@player_init", "v.initializations+=1;",
+                "main@player_ctrl_main", "ctrl.set_animation('looping');return ctrl.state_continue;",
+                "post@player_ctrl_post_main", "ctrl.set_animation('held');return ctrl.state_continue;"));
+        environment.runtime.frame(0, environment);
+        environment.runtime.controller("player.main", "", 0, 0, environment);
+        environment.runtime.controller("player.post_main", "", 0, 0, environment);
+        environment.set("v.saved", 7.0D);
+        environment.runtime.deactivateController("player.main");
+        environment.runtime.frame(0.5, environment);
+        assertEquals(0, environment.runtime.controller("player.main", "", 0, 0.5, environment).elapsed(), EPSILON);
+        assertEquals(0.5, environment.runtime.controller("player.post_main", "", 0, 0.5, environment).elapsed(), EPSILON);
+        assertEquals(7, environment.number("v.saved"), EPSILON);
+        assertEquals(1, environment.number("v.initializations"), EPSILON);
+    }
+
+    @Test
     void directFunctionApiStartsAnEvaluationBudgetOnAFreshThread() throws Exception {
         FakeEnvironment environment = environment(Map.of(
                 "sum", "return args[0]+args[1];",

@@ -13,6 +13,8 @@ import java.util.function.Predicate;
 /** Per-entity state-machine evaluator for the supported YSM controller subset. */
 final class AnimationControllerProgram {
     private static final double EPSILON = 0.0001D;
+    private static final String BUILTIN_STATE = "ysm-builtin";
+    private static final int MAX_EMPTY_STATE_TRANSITIONS = 256;
     private static final int ANY_FINISHED = ExpressionEngine.querySlot(
             "query.any_animation_finished");
     private static final int ALL_FINISHED = ExpressionEngine.querySlot(
@@ -24,10 +26,25 @@ final class AnimationControllerProgram {
         }
     }
 
+    /** A current-state provider selection; old poses are snapshots, not executable clips. */
+    record BuiltinSlot(String controllerName, String stateName, long generation,
+                       float progress, boolean builtin, List<ActiveAnimation> animations) {
+        BuiltinSlot {
+            animations = animations == null ? List.of() : List.copyOf(animations);
+        }
+    }
+
     record ActiveAnimation(String controllerName, String instanceKey,
                            String name, double elapsed,
                            float weight, boolean blendViaShortestPath,
-                           Map<Integer, Double> stateVariables) {
+                           Map<Integer, Double> stateVariables, BuiltinSlot builtinSlot) {
+        ActiveAnimation(String controllerName, String instanceKey, String name,
+                        double elapsed, float weight, boolean blendViaShortestPath,
+                        Map<Integer, Double> stateVariables) {
+            this(controllerName, instanceKey, name, elapsed, weight,
+                    blendViaShortestPath, stateVariables, null);
+        }
+
         ActiveAnimation {
             stateVariables = stateVariables == null ? Map.of() : Map.copyOf(stateVariables);
         }
@@ -221,6 +238,7 @@ final class AnimationControllerProgram {
     }
 
     private final Map<String, AnimationController> controllers;
+    private final Set<String> builtinControllers;
     private final Map<String, ClipInfo> clips;
 
     AnimationControllerProgram(Map<String, AnimationController> controllers,
@@ -246,6 +264,11 @@ final class AnimationControllerProgram {
             });
         }
         this.controllers = Collections.unmodifiableMap(new LinkedHashMap<>(retained));
+        builtinControllers = retained.entrySet().stream()
+                .filter(entry -> ParallelAnimationProgram.supportsScriptController(entry.getKey())
+                        && entry.getValue().states().containsKey(BUILTIN_STATE))
+                .map(Map.Entry::getKey)
+                .collect(java.util.stream.Collectors.toUnmodifiableSet());
         this.clips = clips == null ? Map.of()
                 : Collections.unmodifiableMap(new LinkedHashMap<>(clips));
     }
@@ -255,9 +278,42 @@ final class AnimationControllerProgram {
     }
 
     boolean hasController(String name) {
-        String normalized = normalize(name).replaceAll("_(\\d+)$", "$1");
+        String normalized = channelKey(name);
         return controllers.keySet().stream().anyMatch(key ->
-                normalize(key).replaceAll("_(\\d+)$", "$1").equals(normalized));
+                channelKey(key).equals(normalized));
+    }
+
+    boolean hasBuiltinController(String name) {
+        if (builtinControllers.isEmpty()) return false;
+        String normalized = channelKey(name);
+        return builtinControllers.stream().anyMatch(key -> channelKey(key).equals(normalized));
+    }
+
+    boolean hasBuiltinControllers() {
+        return !builtinControllers.isEmpty();
+    }
+
+    boolean builtinActive(String name, RuntimeState runtimeState) {
+        if (runtimeState == null) return false;
+        String normalized = channelKey(name);
+        return builtinControllers.stream().anyMatch(key -> {
+            ControllerRuntime runtime = runtimeState.controllers.get(key);
+            return channelKey(key).equals(normalized) && runtime != null
+                    && isBuiltin(runtime.current);
+        });
+    }
+
+    /** Resolve managed state machines before their same-slot script providers run. */
+    void prepareBuiltins(double now, ExpressionEngine.Environment environment,
+                         RuntimeState runtimeState, Predicate<String> outputsEnabled) {
+        if (builtinControllers.isEmpty()) return;
+        ControllerEnvironment controllerEnvironment = new ControllerEnvironment(environment);
+        for (Map.Entry<String, AnimationController> entry : controllers.entrySet()) {
+            if (builtinControllers.contains(entry.getKey())) {
+                prepareController(entry.getKey(), entry.getValue(), now,
+                        controllerEnvironment, runtimeState, outputsEnabled);
+            }
+        }
     }
 
     List<ActiveAnimation> select(double now, ExpressionEngine.Environment environment,
@@ -283,17 +339,9 @@ final class AnimationControllerProgram {
         for (Map.Entry<String, AnimationController> entry : controllers.entrySet()) {
             String controllerName = entry.getKey();
             AnimationController controller = entry.getValue();
-            boolean enabled = outputsEnabled == null
-                    || outputsEnabled.test(normalize(controllerName));
-            controllerEnvironment.outputsEnabled(enabled);
-            controllerEnvironment.soundScope("controller/" + controllerName);
-            ControllerRuntime runtime = runtimeState.controllers.computeIfAbsent(
-                    controllerName, ignored -> new ControllerRuntime());
-            if (runtime.current == null) {
-                runtime.initialize(controller, now, controllerEnvironment);
-            } else if (now > runtime.lastStepAt + EPSILON) {
-                advance(controller, runtime, now, controllerEnvironment);
-            }
+            ControllerRuntime runtime = prepareController(controllerName, controller, now,
+                    controllerEnvironment, runtimeState, outputsEnabled);
+            boolean enabled = controllerEnvironment.outputsEnabled;
             int first = observed.size();
             appendActive(observed, controllerName, runtime, now, controllerEnvironment);
             if (enabled && observed.size() > first) {
@@ -303,6 +351,21 @@ final class AnimationControllerProgram {
         return new Selection(output, observed);
     }
 
+    private ControllerRuntime prepareController(String name, AnimationController controller,
+            double now, ControllerEnvironment environment, RuntimeState runtimeState,
+            Predicate<String> outputsEnabled) {
+        environment.outputsEnabled(outputsEnabled == null || outputsEnabled.test(normalize(name)));
+        environment.soundScope("controller/" + name);
+        ControllerRuntime runtime = runtimeState.controllers.computeIfAbsent(
+                name, ignored -> new ControllerRuntime());
+        if (runtime.current == null) {
+            runtime.initialize(controller, now, environment);
+        } else if (now > runtime.lastStepAt + EPSILON) {
+            advance(controller, runtime, now, environment, builtinControllers.contains(name));
+        }
+        return runtime;
+    }
+
     Set<String> activeKeys(List<ActiveAnimation> active) {
         Set<String> result = new LinkedHashSet<>();
         active.forEach(animation -> result.add(animation.instanceKey()));
@@ -310,23 +373,32 @@ final class AnimationControllerProgram {
     }
 
     private void advance(AnimationController controller, ControllerRuntime runtime,
-                         double now, ControllerEnvironment environment) {
+                         double now, ControllerEnvironment environment, boolean chainEmptyStates) {
         runtime.lastStepAt = now;
         if (runtime.previous != null
                 && now - runtime.previous.transitionStartedAt()
                 >= runtime.previous.blend().duration()) {
             runtime.previous = null;
         }
-        environment.beginState(runtime.current);
-        Completion completion = completion(runtime.current,
-                Math.max(0.0D, now - runtime.enteredAt), environment);
-        environment.completion(completion);
-        for (AnimationController.Transition transition : runtime.current.transitions()) {
-            AnimationController.State target = controller.states().get(transition.targetState());
-            if (target == null || !truth(ExpressionEngine.compile(
-                    transition.conditionExpression()).evaluate(environment))) {
-                continue;
+        Set<String> visited = new LinkedHashSet<>();
+        visited.add(runtime.current.name());
+        int limit = chainEmptyStates
+                ? Math.min(MAX_EMPTY_STATE_TRANSITIONS, controller.states().size()) : 1;
+        for (int step = 0; step < limit; step++) {
+            environment.beginState(runtime.current);
+            environment.completion(completion(runtime.current,
+                    Math.max(0.0D, now - runtime.enteredAt), environment));
+            AnimationController.State target = null;
+            for (AnimationController.Transition transition : runtime.current.transitions()) {
+                AnimationController.State candidate = controller.states().get(transition.targetState());
+                if (candidate != null && truth(ExpressionEngine.compile(
+                        transition.conditionExpression()).evaluate(environment))) {
+                    target = candidate;
+                    break;
+                }
             }
+            if (target == null || chainEmptyStates && visited.contains(target.name())
+                    && (step > 0 || isEmptyState(target))) return;
             environment.stopOutputScope();
             execute(runtime.current.onExit(), environment);
             AnimationController.BlendTransition blend = target.blendTransition();
@@ -341,13 +413,33 @@ final class AnimationControllerProgram {
             execute(target.onEntry(), environment);
             environment.playSounds(target.soundEffects());
             environment.playParticles(target.particleEffects());
-            break;
+            if (!chainEmptyStates || !isEmptyState(target)) return;
+            visited.add(target.name());
         }
     }
 
     private void appendActive(List<ActiveAnimation> result, String controllerName,
                               ControllerRuntime runtime, double now,
                               ControllerEnvironment environment) {
+        if (builtinControllers.contains(controllerName)) {
+            float progress = runtime.previous == null ? 1.0F
+                    : runtime.previous.blend().progress(
+                    Math.max(0.0D, now - runtime.previous.transitionStartedAt()));
+            if (progress >= 1.0F) runtime.previous = null;
+            List<ActiveAnimation> current = new ArrayList<>();
+            double elapsed = Math.max(0.0D, now - runtime.enteredAt);
+            appendState(current, controllerName, runtime.current, runtime.generation,
+                    elapsed, 1.0F, false, environment);
+            result.addAll(current);
+            String normalized = normalize(controllerName);
+            BuiltinSlot slot = new BuiltinSlot(normalized, runtime.current.name(),
+                    runtime.generation, progress, isBuiltin(runtime.current), current);
+            result.add(new ActiveAnimation(normalized, "controller/" + controllerName + '/'
+                    + runtime.current.name() + '/' + runtime.generation + "/slot", "", elapsed,
+                    1.0F, runtime.current.blendViaShortestPath(),
+                    environment.stateVariables(), slot));
+            return;
+        }
         float incomingWeight = 1.0F;
         if (runtime.previous != null) {
             double transitionElapsed = Math.max(0.0D,
@@ -376,6 +468,7 @@ final class AnimationControllerProgram {
         }
         environment.beginState(state);
         environment.completion(completion(state, elapsed, environment));
+        if (isBuiltin(state)) return;
         for (int index = 0; index < state.animations().size(); index++) {
             AnimationController.AnimationReference reference = state.animations().get(index);
             String normalized = normalize(reference.name());
@@ -399,6 +492,7 @@ final class AnimationControllerProgram {
         if (state == null) {
             return Completion.NONE;
         }
+        if (isBuiltin(state)) return new Completion(true, true);
         boolean any = false;
         boolean all = true;
         boolean active = false;
@@ -444,6 +538,18 @@ final class AnimationControllerProgram {
 
     private static String normalize(String name) {
         return name == null ? "" : name.toLowerCase(Locale.ROOT);
+    }
+
+    private static String channelKey(String name) {
+        return normalize(name).replaceAll("_(\\d+)$", "$1");
+    }
+
+    private static boolean isBuiltin(AnimationController.State state) {
+        return state != null && BUILTIN_STATE.equals(state.name());
+    }
+
+    private static boolean isEmptyState(AnimationController.State state) {
+        return isBuiltin(state) || state.animations().isEmpty();
     }
 
     private static boolean isHandItemController(String name) {
