@@ -17,6 +17,207 @@ import static org.junit.jupiter.api.Assertions.*;
 /** Exercises script hooks through selection and pose composition, without a Minecraft entity. */
 class ScriptAnimationIntegrationTest {
     @Test
+    void naturalLadderMirroringUsesTheMainTransitionWithoutOverwritingItsHistory() {
+        Fixture fixture = fixture(List.of(rotationClip("ladder_up", "LeftArm", 40),
+                rotationClip("ladder_down", "LeftArm", 80)), Map.of(),
+                Map.of("main@player_ctrl_main", """
+                        ctrl.set_beginning_transition_length(0.2);
+                        ctrl.set_animation(v.down ? 'ladder_down' : 'ladder_up');
+                        return ctrl.state_continue;
+                        """));
+        AutomaticAnimationSelector.Selection up = selection("ladder_up", MovementAnimationType.LADDER_UP);
+        AutomaticAnimationSelector.Selection down = selection("ladder_down", MovementAnimationType.LADDER_DOWN);
+
+        assertLadderArms(0, fixture.sample(0, up, true, true));
+        assertLadderArms(20, fixture.sample(0.1, up, true, true));
+        assertLadderArms(40, fixture.sample(0.2, up, true, true));
+
+        fixture.environment.writeVariable(ExpressionEngine.slot("v.down"), 1);
+        assertLadderArms(40, fixture.sample(0.3, down, true, true));
+        assertLadderArms(60, fixture.sample(0.4, down, true, true));
+
+        // Switching again midway must start from each arm's displayed effect,
+        // not from the opposite arm or from the preceding clip's target.
+        fixture.environment.writeVariable(ExpressionEngine.slot("v.down"), 0);
+        assertLadderArms(60, fixture.sample(0.45, up, true, true));
+        assertLadderArms(50, fixture.sample(0.55, up, true, true));
+        assertLadderArms(40, fixture.sample(0.65, up, true, true));
+    }
+
+    @Test
+    void stoppingDuringBeginningTransitionAttenuatesBothPosesAndFreezesTheDisplayedResult() {
+        Fixture fixture = fixture(List.of(rotationClip("parallel0", "ear", 10),
+                rotationClip("first", "ear", 40), rotationClip("second", "ear", 80)),
+                Map.of(), Map.of("post@player_ctrl_parallel_1", """
+                        ctrl.set_beginning_transition_length(1);
+                        ctrl.set_animation(v.second ? 'second' : 'first');
+                        return v.stop ? ctrl.state_stop : ctrl.state_continue;
+                        """));
+        fixture.sample(0, emptySelection(), false);
+        assertRotationZ(50, fixture.sample(1, emptySelection(), false).parallelDeltas()[1]);
+        fixture.environment.writeVariable(ExpressionEngine.slot("v.second"), 1);
+        fixture.sample(2, emptySelection(), false);
+        fixture.environment.writeVariable(ExpressionEngine.slot("v.stop"), 1);
+        assertRotationZ(66, fixture.sample(2.4, emptySelection(), false).parallelDeltas()[1]);
+        assertRotationZ(39.5, fixture.sample(2.475, emptySelection(), false).parallelDeltas()[1]);
+        fixture.environment.writeVariable(ExpressionEngine.slot("v.stop"), 0);
+        fixture.environment.writeVariable(ExpressionEngine.slot("v.second"), 0);
+        assertRotationZ(39.5, fixture.sample(2.5, emptySelection(), false).parallelDeltas()[1]);
+    }
+
+    @Test
+    void pauseSuppressesEvaluationButPreservesTheSameSlotTransitionSourceForResume() {
+        Fixture fixture = fixture(List.of(rotationClip("parallel0", "ear", 10),
+                rotationClip("first", "ear", 40), rotationClip("second", "ear", 80)),
+                Map.of(), Map.of("post@player_ctrl_parallel_1", """
+                        ctrl.set_beginning_transition_length(1);
+                        ctrl.set_animation(v.second ? 'second' : 'first');
+                        return v.pause ? ctrl.state_pause : ctrl.state_continue;
+                        """));
+        fixture.sample(0, emptySelection(), false);
+        fixture.sample(1, emptySelection(), false);
+        fixture.environment.writeVariable(ExpressionEngine.slot("v.second"), 1);
+        fixture.sample(2, emptySelection(), false);
+        assertRotationZ(58, fixture.sample(2.2, emptySelection(), false).parallelDeltas()[1]);
+        fixture.environment.writeVariable(ExpressionEngine.slot("v.pause"), 1);
+        assertRotationZ(10, fixture.sample(2.3, emptySelection(), false).parallelDeltas()[1]);
+        assertRotationZ(10, fixture.sample(2.4, emptySelection(), false).parallelDeltas()[1]);
+        fixture.environment.writeVariable(ExpressionEngine.slot("v.pause"), 0);
+        assertRotationZ(70, fixture.sample(2.5, emptySelection(), false).parallelDeltas()[1]);
+    }
+
+    @Test
+    void emptyBypassHasNoOldClipTimelineOrPausedAudioScope() {
+        Fixture fixture = fixture(List.of(rotationClip("gesture", "ear", 40)), Map.of(),
+                Map.of("post@player_ctrl_parallel_1", "return ctrl.state_continue;"));
+        String channel = "player.parallel_1";
+        AnimationControllerProgram.Selection empty = new AnimationControllerProgram.Selection(List.of(), List.of());
+        MolangScriptRuntime.Output playing = new MolangScriptRuntime.Output(true, "gesture", 0, 1, 1,
+                new MolangScriptRuntime.Transition(1, 1, false));
+        MolangScriptRuntime.Output bypass = new MolangScriptRuntime.Output(false, "", 0, 1, 1,
+                new MolangScriptRuntime.Transition(2, 0, false));
+        MolangScriptRuntime.Output paused = new MolangScriptRuntime.Output(true, "gesture", 0.1, 0, 1,
+                new MolangScriptRuntime.Transition(1, 0.5F, false, true));
+        String playingKey = fixture.program.mergeScriptControllers(empty, Map.of(channel, playing),
+                ignored -> true).outputActive().get(0).instanceKey();
+        AnimationControllerProgram.ActiveAnimation ending = fixture.program.mergeScriptControllers(
+                empty, Map.of(channel, bypass), ignored -> true).outputActive().get(0);
+        assertNotEquals(playingKey, ending.instanceKey());
+        assertEquals("", ending.name());
+        assertTrue(fixture.program.mergeScriptControllers(empty, Map.of(channel, paused),
+                ignored -> true).outputActive().isEmpty());
+    }
+
+    @Test
+    void aPreMainTransitionDoesNotDisableUnrelatedOrdinaryMovementTransitions() {
+        Fixture fixture = fixture(List.of(rotationClip("walk", "head", 5),
+                rotationClip("run", "head", 10), rotationClip("decoration", "ear", 20)),
+                Map.of(), Map.of("before@player_ctrl_pre_main", """
+                        ctrl.set_beginning_transition_length(0.2);
+                        ctrl.set_animation('decoration');return ctrl.state_continue;
+                        """));
+        String walkingKey = fixture.sample(0, selection("walk"), true).movementPoseKey();
+        String runningKey = fixture.sample(1, selection("run"), true).movementPoseKey();
+        assertNotEquals(walkingKey, runningKey);
+    }
+
+    @Test
+    void mainTransitionKeepsOwnershipAtZeroProgressAndBlendsClipSwitchesOnce() {
+        Fixture fixture = fixture(List.of(rotationClip("walk", "head", 5),
+                rotationClip("first", "head", 40), rotationClip("second", "head", -20)),
+                Map.of(), Map.of("main@player_ctrl_main", """
+                        ctrl.set_animation(v.second ? 'second' : 'first');
+                        ctrl.set_beginning_transition_length(0.2);
+                        return ctrl.state_continue;
+                        """));
+        ParallelAnimationProgram.Frame start = fixture.sample(0, selection("walk"), true);
+        assertTrue(start.replaceEpicFightPose());
+        assertRotationZ(0, start.wholeModelDeltas()[0]);
+        assertRotationZ(20, fixture.sample(0.1, selection("walk"), true).wholeModelDeltas()[0]);
+        assertRotationZ(40, fixture.sample(0.2, selection("walk"), true).wholeModelDeltas()[0]);
+        fixture.environment.writeVariable(ExpressionEngine.slot("v.second"), 1);
+        ParallelAnimationProgram.Frame switched = fixture.sample(0.3, selection("walk"), true);
+        assertRotationZ(40, switched.wholeModelDeltas()[0]);
+        assertEquals(start.movementPoseKey(), switched.movementPoseKey(),
+                "Do not also start the fixed outer ownership blend on a script clip change");
+        assertRotationZ(10, fixture.sample(0.4, selection("walk"), true).wholeModelDeltas()[0]);
+        assertRotationZ(-20, fixture.sample(0.5, selection("walk"), true).wholeModelDeltas()[0]);
+    }
+
+    @Test
+    void scriptEntryAndBypassBlendFromTheSameOrdinaryProviderWithoutDoubleApplyingIt() {
+        Fixture fixture = fixture(List.of(rotationClip("walk", "head", 10),
+                rotationClip("backward", "head", 50)), Map.of(),
+                Map.of("main@player_ctrl_main", """
+                        ctrl.set_beginning_transition_length(0.2);
+                        v.backward ? {ctrl.set_animation('backward');return ctrl.state_continue;};
+                        return ctrl.state_bypass;
+                        """));
+        assertRotationZ(10, fixture.sample(0, selection("walk"), true).wholeModelDeltas()[0]);
+        fixture.environment.writeVariable(ExpressionEngine.slot("v.backward"), 1);
+        assertRotationZ(10, fixture.sample(1, selection("walk"), true).wholeModelDeltas()[0]);
+        assertRotationZ(30, fixture.sample(1.1, selection("walk"), true).wholeModelDeltas()[0]);
+        assertRotationZ(50, fixture.sample(1.2, selection("walk"), true).wholeModelDeltas()[0]);
+        fixture.environment.writeVariable(ExpressionEngine.slot("v.backward"), 0);
+        assertRotationZ(50, fixture.sample(2, selection("walk"), true).wholeModelDeltas()[0]);
+        assertRotationZ(30, fixture.sample(2.1, selection("walk"), true).wholeModelDeltas()[0]);
+        assertRotationZ(10, fixture.sample(2.2, selection("walk"), true).wholeModelDeltas()[0]);
+    }
+
+    @Test
+    void parallelTransitionKeepsPrecedingLayersLiveAndDoesNotReevaluateTheOldClip() {
+        AnimationClip before = rotationClip("parallel0", "ear", 10);
+        AnimationClip first = scriptClip("first", "v.first_calls+=1;return 0;");
+        first.boneTracks().get("ear").rotation().keyframes().get(0).value().setConstant(2, 40);
+        AnimationClip second = scriptClip("second", "v.second_calls+=1;return 0;");
+        second.boneTracks().get("ear").rotation().keyframes().get(0).value().setConstant(2, 80);
+        Fixture fixture = fixture(List.of(before, first, second), Map.of(),
+                Map.of("post@player_ctrl_parallel_1", """
+                        ctrl.set_beginning_transition_length(0.2);
+                        ctrl.set_animation(v.second ? 'second' : 'first');
+                        return ctrl.state_continue;
+                        """));
+        assertRotationZ(10, fixture.sample(0, emptySelection(), false).parallelDeltas()[1]);
+        assertRotationZ(50, fixture.sample(0.2, emptySelection(), false).parallelDeltas()[1]);
+        assertEquals(2.0D, fixture.environment.value("v.first_calls"));
+        fixture.environment.writeVariable(ExpressionEngine.slot("v.second"), 1);
+        assertRotationZ(50, fixture.sample(1, emptySelection(), false).parallelDeltas()[1]);
+        assertRotationZ(70, fixture.sample(1.1, emptySelection(), false).parallelDeltas()[1]);
+        assertRotationZ(90, fixture.sample(1.2, emptySelection(), false).parallelDeltas()[1]);
+        assertEquals(2.0D, fixture.environment.value("v.first_calls"),
+                "Old expressions must not run again just to obtain a transition source");
+        assertEquals(3.0D, fixture.environment.value("v.second_calls"));
+    }
+
+    @Test
+    void bypassToAnEmptySlotFadesOnlyThatLayerAndScaleVisibilityChangesImmediately() {
+        AnimationClip first = rotationClip("gesture", "ear", 40);
+        AnimationClip.VectorValue scale = new AnimationClip.VectorValue();
+        scale.setConstant(0, 0);
+        scale.setConstant(1, 0);
+        scale.setConstant(2, 0);
+        AnimationClip.Track scaleTrack = new AnimationClip.Track();
+        scaleTrack.keyframes().add(new AnimationClip.Keyframe(
+                0, AnimationClip.Interpolation.LINEAR, scale, null));
+        first.boneTracks().get("ear").scale(scaleTrack);
+        Fixture fixture = fixture(List.of(rotationClip("parallel0", "ear", 10), first),
+                Map.of(), Map.of("post@player_ctrl_parallel_1", """
+                        ctrl.set_beginning_transition_length(0.2);
+                        v.bypass ? {return ctrl.state_bypass;};
+                        ctrl.set_animation('gesture');return ctrl.state_continue;
+                        """));
+        assertTrue(fixture.sample(0, emptySelection(), false).hiddenBones().contains("ear"),
+                "Beginning transitions must not fade a hidden scale up from one");
+        fixture.sample(0.2, emptySelection(), false);
+        fixture.environment.writeVariable(ExpressionEngine.slot("v.bypass"), 1);
+        ParallelAnimationProgram.Frame ending = fixture.sample(1, emptySelection(), false);
+        assertFalse(ending.hiddenBones().contains("ear"));
+        assertRotationZ(50, ending.parallelDeltas()[1]);
+        assertRotationZ(30, fixture.sample(1.1, emptySelection(), false).parallelDeltas()[1]);
+        assertRotationZ(10, fixture.sample(1.2, emptySelection(), false).parallelDeltas()[1]);
+    }
+
+    @Test
     void rouletteStateSuppressesAndRestoresJsonControllerIdleWithoutFunctionFiles() {
         Map<String, AnimationController> controllers = BedrockAnimationControllerParser.parse(
                 JsonParser.parseString("""
@@ -263,6 +464,8 @@ class ScriptAnimationIntegrationTest {
         ear.pivot(0, 1, 0);
         geometry.add(head);
         geometry.add(ear);
+        geometry.add(new GeometryDocument.Bone("LeftArm"));
+        geometry.add(new GeometryDocument.Bone("RightArm"));
         geometry.linkHierarchy();
         Map<String, AnimationClip> animations = new LinkedHashMap<>();
         Map<String, MolangScriptRuntime.Clip> metadata = new LinkedHashMap<>();
@@ -281,15 +484,31 @@ class ScriptAnimationIntegrationTest {
                            HostEnvironment environment) {
         ParallelAnimationProgram.Frame sample(AutomaticAnimationSelector.Selection selection,
                                                boolean movementEnabled) {
-            return program.sampleScriptControllersAt(0, selection, environment, scripts,
+            return sample(0, selection, movementEnabled);
+        }
+
+        ParallelAnimationProgram.Frame sample(double now, AutomaticAnimationSelector.Selection selection,
+                                               boolean movementEnabled) {
+            return program.sampleScriptControllersAt(now, selection, environment, scripts,
                     new AnimationControllerProgram.RuntimeState(), movementEnabled);
+        }
+
+        ParallelAnimationProgram.Frame sample(double now, AutomaticAnimationSelector.Selection selection,
+                                               boolean movementEnabled, boolean naturalLadderRequested) {
+            return program.sampleScriptControllersAt(now, selection, environment, scripts,
+                    new AnimationControllerProgram.RuntimeState(), movementEnabled, naturalLadderRequested);
         }
     }
 
     private static AutomaticAnimationSelector.Selection selection(String mainName) {
+        return selection(mainName, MovementAnimationType.WALK);
+    }
+
+    private static AutomaticAnimationSelector.Selection selection(
+            String mainName, MovementAnimationType movement) {
         AutomaticAnimationSelector.ActiveClip main = active(mainName);
         return new AutomaticAnimationSelector.Selection(
-                List.of(main), main, MovementAnimationType.WALK, Set.of());
+                List.of(main), main, movement, Set.of());
     }
 
     private static AutomaticAnimationSelector.Selection emptySelection() {
@@ -344,6 +563,13 @@ class ScriptAnimationIntegrationTest {
         assertEquals(0, actual.m30, 0.0001F);
         assertEquals(0, actual.m31, 0.0001F);
         assertEquals(0, actual.m32, 0.0001F);
+    }
+
+    private static void assertLadderArms(double leftDegrees, ParallelAnimationProgram.Frame frame) {
+        assertTrue(frame.replaceEpicFightPose());
+        assertTrue(frame.naturalLadderPose());
+        assertRotationZ(leftDegrees, frame.wholeModelDeltas()[2]);
+        assertRotationZ(-leftDegrees, frame.wholeModelDeltas()[3]);
     }
 
     private static void assertRotationZ(double degrees, OpenMatrix4f actual) {

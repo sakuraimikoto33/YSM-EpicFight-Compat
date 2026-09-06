@@ -273,6 +273,311 @@ class MolangScriptRuntimeTest {
     }
 
     @Test
+    void unconfiguredBeginningTransitionsPreserveLegacyOutputs() {
+        FakeEnvironment environment = environment(Map.of("@player_ctrl_main", """
+                ctrl.set_animation('looping');
+                return v.bypass ? ctrl.state_bypass : ctrl.state_continue;
+                """));
+        MolangScriptRuntime.Output first = sample(environment, 0);
+        assertNull(first.transition());
+        assertEquals(new MolangScriptRuntime.Output(true, "looping", 0, 1, 1), first);
+        assertEquals(0.25D, sample(environment, 0.25D).elapsed(), EPSILON);
+        environment.set("v.bypass", 1.0D);
+        MolangScriptRuntime.Output bypass = environment.runtime.controller(
+                "player.main", "held", 0.75D, 1.0D, environment);
+        assertEquals(MolangScriptRuntime.Output.bypass(), bypass);
+        assertNull(bypass.transition());
+    }
+
+    @Test
+    void beginningDurationWorksBeforeOrAfterSetAnimationWithoutChangingPlayback() {
+        for (String statements : List.of(
+                "ctrl.set_beginning_transition_length(1);ctrl.set_animation('looping');",
+                "ctrl.set_animation('looping');ctrl.set_beginning_transition_length(1);")) {
+            FakeEnvironment environment = environment(Map.of("@player_ctrl_main",
+                    statements + "return ctrl.state_continue;"));
+            MolangScriptRuntime.Output first = sample(environment, 0);
+            assertTrue(first.visible(), statements);
+            assertEquals(1.0F, first.weight());
+            assertEquals(0.0F, first.transition().progress());
+            assertSame(first, sample(environment, 0));
+            MolangScriptRuntime.Output quarter = sample(environment, 0.25D);
+            assertEquals(0.25D, quarter.elapsed(), EPSILON);
+            assertEquals(0.25F, quarter.transition().progress());
+            assertEquals(first.generation(), quarter.generation());
+            assertEquals(first.transition().generation(), quarter.transition().generation());
+            MolangScriptRuntime.Output completed = sample(environment, 1.25D);
+            assertEquals(0.25D, completed.elapsed(), EPSILON);
+            assertEquals(1.0F, completed.transition().progress());
+            assertEquals(first.transition().generation(), completed.transition().generation());
+        }
+    }
+
+    @Test
+    void repeatedDurationSettersAffectOnlyTheNextClipTransition() {
+        FakeEnvironment environment = environment(Map.of("@player_ctrl_main", """
+                ctrl.set_beginning_transition_length(v.duration);
+                ctrl.set_animation(v.next ? 'held' : 'looping');
+                return ctrl.state_continue;
+                """));
+        environment.set("v.duration", 1.0D);
+        MolangScriptRuntime.Output first = sample(environment, 0);
+        environment.set("v.duration", 2.0D);
+        MolangScriptRuntime.Output halfway = sample(environment, 0.5D);
+        assertEquals(0.5F, halfway.transition().progress());
+        assertEquals(first.transition().generation(), halfway.transition().generation());
+        assertEquals(1.0F, sample(environment, 1.0D).transition().progress());
+        environment.set("v.next", 1.0D);
+        MolangScriptRuntime.Output changed = sample(environment, 1.25D);
+        assertEquals(0.0D, changed.elapsed(), EPSILON);
+        assertEquals(0.0F, changed.transition().progress());
+        assertTrue(changed.transition().generation() > first.transition().generation());
+        MolangScriptRuntime.Output nextQuarter = sample(environment, 1.75D);
+        assertEquals(0.5D, nextQuarter.elapsed(), EPSILON);
+        assertEquals(0.25F, nextQuarter.transition().progress());
+    }
+
+    @Test
+    void startingTransitionKeepsPauseStopAndReloadSemanticsSeparate() {
+        FakeEnvironment environment = environment(Map.of("@player_ctrl_main", """
+                ctrl.set_beginning_transition_length(2);
+                v.reload ? {ctrl.indicate_reload;v.reload=0;};
+                ctrl.set_animation('looping');
+                v.clock=q.anim_time;
+                return v.predicate;
+                """));
+        environment.set("v.predicate", 0.0D);
+        MolangScriptRuntime.Output first = sample(environment, 0);
+        environment.set("v.predicate", 2.0D);
+        MolangScriptRuntime.Output paused = sample(environment, 0.5D);
+        assertFalse(paused.visible());
+        assertEquals(0.5D, paused.elapsed(), EPSILON);
+        assertEquals(0.5D, environment.number("v.clock"), EPSILON);
+        assertEquals(0.25F, paused.transition().progress());
+        environment.set("v.predicate", 0.0D);
+        assertEquals(0.375F, sample(environment, 0.75D).transition().progress());
+        environment.set("v.predicate", 1.0D);
+        assertEquals(1.0F, sample(environment, 1.0D).weight());
+        MolangScriptRuntime.Output stopping = sample(environment, 1.075D);
+        assertEquals(0.5D, stopping.weight(), EPSILON);
+        assertEquals(first.transition().generation(), stopping.transition().generation());
+        assertEquals(0.0F, sample(environment, 1.2D).weight());
+        environment.set("v.predicate", 0.0D);
+        assertEquals(1.0F, sample(environment, 1.3D).weight());
+        environment.set("v.reload", 1.0D);
+        MolangScriptRuntime.Output reloaded = sample(environment, 1.5D);
+        assertTrue(reloaded.visible());
+        assertEquals(0.0D, reloaded.elapsed(), EPSILON);
+        assertEquals(0.0F, reloaded.transition().progress());
+        assertTrue(reloaded.generation() > first.generation());
+        assertTrue(reloaded.transition().generation() > first.transition().generation());
+    }
+
+    @Test
+    void transitionPauseFlagDistinguishesHiddenPauseFromStopBypassAndReset() {
+        FakeEnvironment environment = environment(Map.of("@player_ctrl_main", """
+                ctrl.set_beginning_transition_length(2);
+                v.reset ? {ctrl.reset;return ctrl.state_continue;};
+                ctrl.set_animation('looping');
+                return v.predicate;
+                """));
+        environment.set("v.predicate", 0.0D);
+        MolangScriptRuntime.Output started = sample(environment, 0);
+        assertFalse(started.transition().paused());
+        environment.set("v.predicate", 2.0D);
+        MolangScriptRuntime.Output paused = sample(environment, 0.25D);
+        assertTrue(paused.transition().paused());
+        assertFalse(paused.visible());
+        assertEquals(started.transition().generation(), paused.transition().generation());
+        assertEquals(0.25D, paused.elapsed(), EPSILON);
+        assertTrue(sample(environment, 0.5D).transition().paused());
+
+        environment.set("v.predicate", 1.0D);
+        MolangScriptRuntime.Output stopping = sample(environment, 0.75D);
+        assertFalse(stopping.transition().paused());
+        MolangScriptRuntime.Output stopped = sample(environment, 1.0D);
+        assertFalse(stopped.visible());
+        assertFalse(stopped.transition().paused());
+
+        environment.set("v.predicate", 3.0D);
+        MolangScriptRuntime.Output bypass = sample(environment, 1.25D);
+        assertFalse(bypass.overridden());
+        assertFalse(bypass.transition().paused());
+        environment.set("v.reset", 1.0D);
+        MolangScriptRuntime.Output reset = sample(environment, 1.5D);
+        assertFalse(reset.visible());
+        assertFalse(reset.transition().paused());
+        assertTrue(reset.transition().discardPrevious());
+        assertFalse(new MolangScriptRuntime.Transition(1, 0.5F, false).paused());
+    }
+
+    @Test
+    void bypassTransitionsExposeFallbackNamesAndClocksIncludingEmptyFallbacks() {
+        FakeEnvironment environment = environment(Map.of("@player_ctrl_main", """
+                ctrl.set_beginning_transition_length(0.5);
+                v.script ? {ctrl.set_animation('held');return ctrl.state_continue;};
+                return ctrl.state_bypass;
+                """));
+        MolangScriptRuntime.Output initial = environment.runtime.controller(
+                "player.main", "looping", 0.4D, 2, environment);
+        assertFalse(initial.overridden());
+        assertEquals("looping", initial.name());
+        assertEquals(0.4D, initial.elapsed(), EPSILON);
+        assertEquals(1.0F, initial.weight());
+        assertEquals(1.0F, initial.transition().progress());
+        MolangScriptRuntime.Output stable = environment.runtime.controller(
+                "player.main", "looping", 0.8D, 3, environment);
+        assertEquals(initial.transition().generation(), stable.transition().generation());
+        environment.set("v.script", 1.0D);
+        MolangScriptRuntime.Output scripted = environment.runtime.controller(
+                "player.main", "looping", 0.9D, 3.1D, environment);
+        assertTrue(scripted.visible());
+        assertEquals(0.0F, scripted.transition().progress());
+        assertTrue(scripted.transition().generation() > initial.transition().generation());
+        environment.set("v.script", 0.0D);
+        MolangScriptRuntime.Output returned = environment.runtime.controller(
+                "player.main", "looping", 0.2D, 3.5D, environment);
+        assertFalse(returned.overridden());
+        assertEquals(0.0F, returned.transition().progress());
+        assertTrue(returned.transition().generation() > scripted.transition().generation());
+        MolangScriptRuntime.Output newFallback = environment.runtime.controller(
+                "player.main", "once", 0.1D, 3.75D, environment);
+        assertEquals("once", newFallback.name());
+        assertEquals(0.0F, newFallback.transition().progress());
+        assertTrue(newFallback.transition().generation() > returned.transition().generation());
+        MolangScriptRuntime.Output empty = environment.runtime.controller(
+                "player.main", "", 0, 4, environment);
+        assertEquals("", empty.name());
+        assertFalse(empty.overridden());
+        assertEquals(0.0F, empty.transition().progress());
+        assertTrue(empty.transition().generation() > newFallback.transition().generation());
+        MolangScriptRuntime.Output emptyLater = environment.runtime.controller(
+                "player.main", null, 0, 4.25D, environment);
+        assertEquals(empty.transition().generation(), emptyLater.transition().generation());
+        assertEquals(0.5F, emptyLater.transition().progress());
+    }
+
+    @Test
+    void ignoredScriptClipWritesDuringBypassDoNotRestartFallbackTransitions() {
+        FakeEnvironment environment = environment(Map.of("@player_ctrl_main", """
+                ctrl.set_beginning_transition_length(1);
+                ctrl.set_animation('held');
+                return v.bypass ? ctrl.state_bypass : ctrl.state_continue;
+                """));
+        sample(environment, 0);
+        environment.set("v.bypass", 1.0D);
+        MolangScriptRuntime.Output returned = environment.runtime.controller(
+                "player.main", "looping", 0.2D, 0.25D, environment);
+        MolangScriptRuntime.Output sameFallback = environment.runtime.controller(
+                "player.main", "looping", 0.4D, 0.5D, environment);
+        assertEquals(returned.transition().generation(), sameFallback.transition().generation());
+        assertEquals(0.25F, sameFallback.transition().progress());
+        assertEquals("looping", sameFallback.name());
+        assertEquals(0.4D, sameFallback.elapsed(), EPSILON);
+    }
+
+    @Test
+    void resetDiscardsPreviousPoseForTheWholeTransitionButNotFollowingClipChanges() {
+        FakeEnvironment environment = environment(Map.of("@player_ctrl_main", """
+                ctrl.set_beginning_transition_length(1);
+                v.reset ? {ctrl.reset;v.reset=0;};
+                v.empty ? return ctrl.state_continue;
+                ctrl.set_animation(v.next ? 'held' : 'looping');
+                return ctrl.state_continue;
+                """));
+        MolangScriptRuntime.Output first = sample(environment, 0);
+        assertFalse(first.transition().discardPrevious());
+        environment.set("v.reset", 1.0D);
+        MolangScriptRuntime.Output reset = sample(environment, 0.5D);
+        assertTrue(reset.transition().discardPrevious());
+        assertEquals(0.0D, reset.elapsed(), EPSILON);
+        assertEquals(0.0F, reset.transition().progress());
+        MolangScriptRuntime.Output later = sample(environment, 0.75D);
+        assertTrue(later.transition().discardPrevious());
+        assertEquals(reset.transition().generation(), later.transition().generation());
+        assertEquals(0.25F, later.transition().progress());
+        environment.set("v.next", 1.0D);
+        MolangScriptRuntime.Output changed = sample(environment, 1);
+        assertFalse(changed.transition().discardPrevious());
+        assertTrue(changed.transition().generation() > reset.transition().generation());
+        environment.set("v.reset", 1.0D);
+        environment.set("v.empty", 1.0D);
+        MolangScriptRuntime.Output hidden = sample(environment, 1.25D);
+        assertFalse(hidden.visible());
+        assertEquals("", hidden.name());
+        assertTrue(hidden.transition().discardPrevious());
+        assertTrue(hidden.transition().generation() > changed.transition().generation());
+    }
+
+    @Test
+    void transitionDurationRejectsInvalidArgumentsAndCallsOutsideControllerContext() {
+        List<Object[]> invalid = List.of(new Object[0], new Object[]{1.0D, 2.0D},
+                new Object[]{"1"}, new Object[]{null}, new Object[]{Boolean.TRUE},
+                new Object[]{-1.0D}, new Object[]{Double.NaN},
+                new Object[]{Double.POSITIVE_INFINITY}, new Object[]{Double.NEGATIVE_INFINITY});
+        for (Object[] arguments : invalid) {
+            FakeEnvironment environment = environment(Map.of("@player_ctrl_main", """
+                    test.set_transition();ctrl.set_animation('looping');return ctrl.state_continue;
+                    """));
+            // The seam passes uncleaned Java values while currentControl is active;
+            // normal Molang argument evaluation already bounds non-finite values.
+            environment.rawTransitionArguments = arguments;
+            assertNull(sample(environment, 0).transition());
+        }
+        FakeEnvironment outside = environment(Map.of("@player_ctrl_main",
+                "ctrl.set_animation('looping');return ctrl.state_continue;"));
+        assertNull(outside.runtime.invoke("ctrl.set_beginning_transition_length",
+                new Object[]{1.0D}, outside));
+        assertNull(sample(outside, 0).transition());
+
+        FakeEnvironment retained = environment(Map.of("@player_ctrl_main", """
+                test.set_transition();ctrl.set_animation('looping');return ctrl.state_continue;
+                """));
+        retained.rawTransitionArguments = new Object[]{1.0D};
+        sample(retained, 0);
+        retained.rawTransitionArguments = new Object[]{Double.NaN};
+        assertEquals(0.5F, sample(retained, 0.5D).transition().progress());
+
+        FakeEnvironment zero = environment(Map.of("@player_ctrl_main", """
+                ctrl.set_beginning_transition_length(0);
+                ctrl.set_animation('looping');return ctrl.state_continue;
+                """));
+        assertEquals(1.0F, sample(zero, 0).transition().progress());
+    }
+
+    @Test
+    void transitionDurationIsControllerLocalAndGlobalResetRemovesIt() {
+        FakeEnvironment environment = environment(Map.of(
+                "@player_ctrl_main", """
+                        v.configure ? ctrl.set_beginning_transition_length(1);
+                        ctrl.set_animation('looping');return ctrl.state_continue;
+                        """,
+                "@player_ctrl_pre_main", "ctrl.set_animation('held');return ctrl.state_continue;"));
+        environment.set("v.configure", 1.0D);
+        assertEquals(0.0F, sample(environment, 0).transition().progress());
+        assertNull(environment.runtime.controller("player.pre_main", "", 0, 0, environment).transition());
+        environment.set("v.configure", 0.0D);
+        assertEquals(0.5F, sample(environment, 0.5D).transition().progress());
+        environment.runtime.reset();
+        assertNull(sample(environment, 1.0D).transition());
+    }
+
+    @Test
+    void enablingTransitionDurationWithoutChangingTheSelectionDoesNotStartABlend() {
+        FakeEnvironment environment = environment(Map.of("@player_ctrl_main", """
+                v.configure ? ctrl.set_beginning_transition_length(1);
+                ctrl.set_animation(v.next ? 'held' : 'looping');return ctrl.state_continue;
+                """));
+        assertNull(sample(environment, 0).transition());
+        environment.set("v.configure", 1.0D);
+        MolangScriptRuntime.Output enabled = sample(environment, 0.25D);
+        assertEquals(1.0F, enabled.transition().progress());
+        assertEquals(0.25D, enabled.elapsed(), EPSILON);
+        environment.set("v.next", 1.0D);
+        assertEquals(0.0F, sample(environment, 0.5D).transition().progress());
+    }
+
+    @Test
     void repeatingSameClipDoesNotRestartAndExplicitReloadDoes() {
         FakeEnvironment environment = environment(Map.of("@player_ctrl_main", """
                 v.invocations+=1;
@@ -505,6 +810,7 @@ class MolangScriptRuntimeTest {
     private static final class FakeEnvironment implements ExpressionEngine.Environment {
         private final MolangScriptRuntime runtime;
         private final Map<Integer, Object> values = new HashMap<>();
+        private Object[] rawTransitionArguments;
 
         private FakeEnvironment(MolangScriptRuntime runtime) { this.runtime = runtime; }
         private void set(String name, Object value) { values.put(ExpressionEngine.slot(name), value); }
@@ -520,6 +826,9 @@ class MolangScriptRuntimeTest {
         }
         @Override public double readQuery(int slot) { return ExpressionEngine.number(readQueryValue(slot)); }
         @Override public Object invokeValue(String name, Object[] arguments) {
+            if (name.equals("test.set_transition")) {
+                return runtime.invoke("ctrl.set_beginning_transition_length", rawTransitionArguments, this);
+            }
             Object value = runtime.invoke(name, arguments, this);
             return value == MolangScriptRuntime.UNHANDLED ? null : value;
         }

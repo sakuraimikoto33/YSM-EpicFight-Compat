@@ -915,9 +915,12 @@ public final class ParallelAnimationProgram {
                                 name, activeReplacementHands,
                                 enabledItemAnimationHands,
                                 prospectiveItemSwitch));
+        state.enabledScriptOutputs = state.scriptOutputs.keySet().stream()
+                .filter(name -> controllerOutputsEnabled(name, activeReplacementHands,
+                        enabledItemAnimationHands, prospectiveItemSwitch))
+                .collect(java.util.stream.Collectors.toUnmodifiableSet());
         controllerSelection = mergeScriptControllers(controllerSelection, state.scriptOutputs,
-                name -> controllerOutputsEnabled(name, activeReplacementHands,
-                        enabledItemAnimationHands, prospectiveItemSwitch));
+                state.enabledScriptOutputs::contains);
         ItemSwitchPose itemSwitchPose = updateItemSwitchPose(
                 selected.clips(), controllerSelection.allActive(),
                 selected.main(), selected.movement(),
@@ -1093,12 +1096,17 @@ public final class ParallelAnimationProgram {
         selected.outputActive().stream().filter(active -> !scriptOverrides(outputs, active.controllerName()))
                 .forEach(output::add);
         outputs.forEach((channel, scripted) -> {
-            if (!scripted.overridden() || !scriptClips.containsKey(scripted.name())) return;
+            // An empty built-in slot still needs its last layer to fade back to the
+            // preceding layers. This entry carries pose state only, never a timeline.
+            boolean emptyEnding = !scripted.overridden() && scripted.name().isEmpty()
+                    && scripted.transition() != null && scripted.transition().progress() < 1.0F;
+            if (!emptyEnding && (!scripted.overridden() || !scriptClips.containsKey(scripted.name()))) return;
             AnimationControllerProgram.ActiveAnimation active = new AnimationControllerProgram.ActiveAnimation(
-                    channel, "script/" + channel + '/' + scripted.generation(),
+                    channel, "script/" + channel + '/' + (emptyEnding
+                    ? "empty-" + scripted.transition().generation() : scripted.generation()),
                     scripted.name(), scripted.elapsed(), scripted.weight(), false, Map.of());
             observed.add(active);
-            if (scripted.visible() && enabled.test(channel)) output.add(active);
+            if ((scripted.visible() || emptyEnding) && enabled.test(channel)) output.add(active);
         });
         return new AnimationControllerProgram.Selection(output, observed);
     }
@@ -1144,6 +1152,8 @@ public final class ParallelAnimationProgram {
             if (program != null) evaluateProgram(program, (float) active.elapsed(), environment,
                     state, target, ApplyMode.PARALLEL, active.weight(), false,
                     active.instanceKey(), true, scratch);
+            else if (active.name().isEmpty()) applyEmptyScriptTransition(
+                    active.instanceKey(), target, ApplyMode.PARALLEL, scratch);
         }
     }
 
@@ -1306,6 +1316,15 @@ public final class ParallelAnimationProgram {
             ExpressionEngine.Environment environment, MolangScriptRuntime scripts,
             AnimationControllerProgram.RuntimeState controllerState,
             boolean movementEnabled) {
+        return sampleScriptControllersAt(now, selected, environment, scripts, controllerState,
+                movementEnabled, false);
+    }
+
+    Frame sampleScriptControllersAt(double now,
+            AutomaticAnimationSelector.Selection selected,
+            ExpressionEngine.Environment environment, MolangScriptRuntime scripts,
+            AnimationControllerProgram.RuntimeState controllerState,
+            boolean movementEnabled, boolean naturalLadderRequested) {
         scripts.frame(now, environment);
         Map<String, MolangScriptRuntime.Output> outputs = new LinkedHashMap<>();
         selected = selectScriptControllers(selected, scripts, outputs, environment, now, now);
@@ -1315,8 +1334,13 @@ public final class ParallelAnimationProgram {
         MovementPose movement = movementEnabled && selected.main() != null
                 && selected.movement() != null
                 ? new MovementPose(selected.main(), selected.movement()) : null;
+        ClipProgram main = movement == null ? null : automaticProgram(movement.active().name());
+        LadderRenderPolicy ladder = naturalLadderRequested && movement != null
+                && main != null && main.authoredLeftArmPose()
+                && isDedicatedLadderClip(movement.movement(), movement.active().name())
+                ? new LadderRenderPolicy(true, Set.of(), Set.of()) : LadderRenderPolicy.NONE;
         evaluate(now, selected.clips(), controlled.outputActive(), null, movement,
-                LadderRenderPolicy.NONE, null, null, 0.0D, environment,
+                ladder, null, null, 0.0D, environment,
                 null, testScratch, outputs);
         return frame(testScratch);
     }
@@ -1913,6 +1937,25 @@ public final class ParallelAnimationProgram {
                           RuntimeState runtimeState, EvaluationScratch scratch,
                           Map<String, MolangScriptRuntime.Output> scriptOutputs) {
         resetScratch(scratch);
+        scratch.scriptOutputs = scriptOutputs;
+        scratch.sampledScriptTransitions.clear();
+        // Visit paused slots only to preserve their numeric history under the current
+        // ownership policy. They remain absent from audible/particle output selection
+        // and never evaluate a clip or timeline while paused.
+        List<AnimationControllerProgram.ActiveAnimation> poseControlled = null;
+        for (Map.Entry<String, MolangScriptRuntime.Output> entry : scriptOutputs.entrySet()) {
+            String channel = entry.getKey();
+            MolangScriptRuntime.Output output = entry.getValue();
+            if (output.transition() != null && output.transition().paused()
+                    && scriptClips.containsKey(output.name())
+                    && (runtimeState == null || runtimeState.enabledScriptOutputs.contains(channel))) {
+                if (poseControlled == null) poseControlled = new ArrayList<>(controlled);
+                poseControlled.add(new AnimationControllerProgram.ActiveAnimation(channel,
+                        "script/" + channel + '/' + output.generation(), output.name(),
+                        output.elapsed(), 0.0F, false, Map.of()));
+            }
+        }
+        if (poseControlled != null) controlled = poseControlled;
         scratch.naturalLadderPose = ladderPolicy.naturalPose();
         scratch.ladderItemsInHand.addAll(ladderPolicy.itemsInHand());
         if (itemSwitchPose != null) {
@@ -1922,10 +1965,17 @@ public final class ParallelAnimationProgram {
                 && itemSwitchPose.hands().contains(InteractionHand.MAIN_HAND)
                 && automatic.stream().anyMatch(active ->
                 isOrdinaryMainhandBowHold(active.name()));
+        // Script-controlled locomotion already owns its authored entry duration.
+        // Keep the outer EF ownership transition, but do not add a second fixed
+        // three-tick blend on every clip change (including an authored zero seconds).
+        String movementKey = movementPose == null ? null
+                : scriptOutputs.entrySet().stream().anyMatch(entry ->
+                channelKey(entry.getKey()).equals("player.main") && entry.getValue().transition() != null)
+                ? "script-movement" : movementPose.key();
         scratch.movementPoseKey = itemSwitchPose != null
                 ? (movementPose == null ? itemSwitchPose.key()
-                : movementPose.key() + '|' + itemSwitchPose.key())
-                : movementPose == null ? null : movementPose.key();
+                : movementKey + '|' + itemSwitchPose.key())
+                : movementKey;
         Set<InteractionHand> fullBodyHands = customFullBodyHands(automatic);
         Set<InteractionHand> pausedHoldHands = runtimeState == null
                 ? customFullBodyInputHands(automatic)
@@ -2046,6 +2096,8 @@ public final class ParallelAnimationProgram {
             }
         }
         evaluateScriptParallel(false, controlled, environment, runtimeState, authoredTarget, scratch);
+        // A disabled slot must not restore an old pose when it becomes visible again.
+        scratch.scriptTransitions.keySet().retainAll(scratch.sampledScriptTransitions);
         applyOfficialMovementHeadTracking(movementPose, environment, scratch);
         composeVisibility(scratch, ladderPolicy.hiddenYsmItemRoots());
         composeAuxiliaryMatrices(scratch.parallelPose, scratch);
@@ -2313,6 +2365,13 @@ public final class ParallelAnimationProgram {
         ClipProgram program = active.instanceKey().startsWith("script/")
                 ? scriptClips.get(active.name()) : controllerClips.get(active.name());
         if (program == null) {
+            if (active.instanceKey().startsWith("script/") && active.name().isEmpty()) {
+                boolean wholeModel = movementFullBody || itemSwitchFullBody;
+                boolean applied = applyEmptyScriptTransition(active.instanceKey(),
+                        customFullBodyPose || wholeModel ? scratch.wholeModelPose : scratch.parallelPose,
+                        wholeModel ? ApplyMode.FULL_BODY : ApplyMode.OVERRIDE, scratch);
+                scratch.replaceEpicFightPose |= wholeModel && applied;
+            }
             return;
         }
         boolean heldItemController = !customFullBodyPose && !movementFullBody
@@ -2508,9 +2567,12 @@ public final class ParallelAnimationProgram {
         if (localTime < 0.0F) {
             return;
         }
+        MolangScriptRuntime.Output scriptMain = scratch.scriptOutputs.get("player.main");
+        float outputWeight = scriptMain != null && scriptMain.transition() != null
+                && scriptMain.name().equals(program.clip().name()) ? scriptMain.weight() : 1.0F;
         evaluateProgram(program, localTime, environment, null,
                 scratch.wholeModelPose, ApplyMode.FULL_BODY,
-                1.0F, false, program.clip().name() + ":natural_right_arm",
+                outputWeight, false, program.clip().name() + ":natural_right_arm",
                 false, scratch, null, PoseTransform.MIRROR_X,
                 BoneSelection.LEFT_ARM_CONTROLS);
     }
@@ -3116,6 +3178,105 @@ public final class ParallelAnimationProgram {
         return false;
     }
 
+    /** Pose-only history for one script slot; never retains an executable old clip. */
+    private static final class ScriptLayerTransition {
+        private final PoseScratch target;
+        private final ApplyMode mode;
+        private final PoseTransform transform;
+        private final ScriptPoseTransition pose;
+        private long generation = Long.MIN_VALUE;
+        private float progress;
+        private boolean paused;
+        private boolean sourceHeadPitch, sourceHeadYaw;
+        private boolean lastHeadPitch, lastHeadYaw;
+        private boolean currentHeadPitch, currentHeadYaw;
+
+        private ScriptLayerTransition(PoseScratch target, ApplyMode mode, PoseTransform transform) {
+            this.target = target;
+            this.mode = mode;
+            this.transform = transform;
+            pose = new ScriptPoseTransition(target.positions.length);
+        }
+
+        private void begin(MolangScriptRuntime.Transition transition) {
+            if (generation != transition.generation()) {
+                sourceHeadPitch = !transition.discardPrevious() && lastHeadPitch;
+                sourceHeadYaw = !transition.discardPrevious() && lastHeadYaw;
+                generation = transition.generation();
+            }
+            currentHeadPitch = false;
+            currentHeadYaw = false;
+            progress = transition.progress();
+            paused = transition.paused();
+            pose.begin(generation, progress, transition.discardPrevious());
+        }
+
+        private boolean apply(EvaluationScratch scratch, @Nullable PoseLayerSnapshot capture,
+                              float outputWeight) {
+            boolean applied = pose.apply(target.rotations, target.hasRotation,
+                    target.positions, target.hasPosition, outputWeight);
+            lastHeadPitch = currentHeadPitch || progress < 1.0F && sourceHeadPitch;
+            lastHeadYaw = currentHeadYaw || progress < 1.0F && sourceHeadYaw;
+            if (target == scratch.wholeModelPose) {
+                scratch.authoredHeadPitch |= lastHeadPitch;
+                scratch.authoredHeadYaw |= lastHeadYaw;
+            }
+            if (capture != null) {
+                for (int index = 0; index < target.positions.length; index++) {
+                    if (pose.hasPosition(index)) capture.capturePosition(index, target.positions[index]);
+                    if (pose.hasRotation(index)) capture.captureRotation(index, target.rotations[index]);
+                }
+            }
+            return applied;
+        }
+    }
+
+    @Nullable
+    private ScriptLayerTransition scriptTransition(String timelineKey, PoseScratch target,
+            ApplyMode mode, PoseTransform transform, EvaluationScratch scratch) {
+        String channel = null;
+        boolean mirroredLadderArm = timelineKey.endsWith(":natural_right_arm");
+        if (mirroredLadderArm) {
+            MolangScriptRuntime.Output main = scratch.scriptOutputs.get("player.main");
+            String clip = timelineKey.substring(0, timelineKey.length() - ":natural_right_arm".length());
+            if (main != null && main.name().equals(clip)) channel = "player.main";
+        } else if (timelineKey.startsWith("script/")) {
+            int end = timelineKey.lastIndexOf('/');
+            if (end > "script/".length()) channel = timelineKey.substring("script/".length(), end);
+        } else {
+            // A bypass retains the ordinary provider and its original timeline key.
+            // Only its numeric pose output participates in the slot's transition.
+            for (Map.Entry<String, MolangScriptRuntime.Output> entry : scratch.scriptOutputs.entrySet()) {
+                if (!entry.getValue().overridden() && entry.getValue().name().equals(timelineKey)) {
+                    channel = entry.getKey();
+                    break;
+                }
+            }
+        }
+        MolangScriptRuntime.Output output = channel == null ? null : scratch.scriptOutputs.get(channel);
+        if (output == null || output.transition() == null) return null;
+        // The mirrored fallback is sampled separately from the original left arm.
+        // Share timing, never its numeric pose history or mirroring policy.
+        String stateKey = mirroredLadderArm ? channel + ":natural_right_arm" : channel;
+        ScriptLayerTransition state = scratch.scriptTransitions.get(stateKey);
+        // An Epic Fight action or a changed attachment target must never inherit
+        // full-body tracks captured under a different ownership/mirroring policy.
+        if (state == null || state.target != target || state.mode != mode || state.transform != transform) {
+            state = new ScriptLayerTransition(target, mode, transform);
+            scratch.scriptTransitions.put(stateKey, state);
+        }
+        scratch.sampledScriptTransitions.add(stateKey);
+        state.begin(output.transition());
+        return state;
+    }
+
+    private boolean applyEmptyScriptTransition(String timelineKey, PoseScratch target,
+                                               ApplyMode mode, EvaluationScratch scratch) {
+        ScriptLayerTransition transition = scriptTransition(
+                timelineKey, target, mode, PoseTransform.NONE, scratch);
+        return transition != null && transition.apply(scratch, null, 1.0F);
+    }
+
     private boolean evaluateProgram(ClipProgram program, float localTime,
                                     ExpressionEngine.Environment environment,
                                     RuntimeState runtimeState, PoseScratch pose,
@@ -3191,6 +3352,9 @@ public final class ParallelAnimationProgram {
                                     @Nullable PoseLayerSnapshot capture,
                                     PoseTransform transform,
                                     BoneSelection selection) {
+        ScriptLayerTransition transition = scriptTransition(timelineKey, pose,
+                applyMode, transform, scratch);
+        if (transition != null && transition.paused) return false;
         EntityAnimationEnvironment entityEnvironment = entityEnvironment(environment);
         if (entityEnvironment != null) {
             entityEnvironment.clipTime(localTime);
@@ -3218,7 +3382,7 @@ public final class ParallelAnimationProgram {
         float clipWeight = finite(evaluate(program.clip().blendWeight(), environment), 1.0F);
         float blendWeight = finite(clipWeight * finite(externalWeight, 0.0F), 0.0F);
         if (Math.abs(blendWeight) <= EPSILON) {
-            return false;
+            return transition != null && transition.apply(scratch, capture, externalWeight);
         }
         boolean appliedPose = false;
         for (BoneProgram bone : program.bones()) {
@@ -3241,6 +3405,10 @@ public final class ParallelAnimationProgram {
                             && headControlAuxiliaryIndices.contains(auxiliary)) {
                         scratch.authoredHeadPitch |= program.authoredHeadPitch();
                         scratch.authoredHeadYaw |= program.authoredHeadYaw();
+                        if (transition != null) {
+                            transition.currentHeadPitch |= program.authoredHeadPitch();
+                            transition.currentHeadYaw |= program.authoredHeadYaw();
+                        }
                     }
                     float[] target = new float[]{
                             radians(-finite(scratch.sample[0], 0.0F)),
@@ -3253,7 +3421,10 @@ public final class ParallelAnimationProgram {
                         target[1] = -target[1];
                         target[2] = -target[2];
                     }
-                    for (int axis = 0; axis < 3; axis++) {
+                    if (transition != null) {
+                        transition.pose.rotation(auxiliary, target, clipWeight,
+                                applyMode == ApplyMode.PARALLEL);
+                    } else for (int axis = 0; axis < 3; axis++) {
                         if (applyMode == ApplyMode.PARALLEL) {
                             pose.rotations[auxiliary][axis] += target[axis] * blendWeight;
                         } else {
@@ -3267,8 +3438,8 @@ public final class ParallelAnimationProgram {
                                     + difference * blendWeight;
                         }
                     }
-                    pose.hasRotation[auxiliary] = true;
-                    if (capture != null) {
+                    if (transition == null) pose.hasRotation[auxiliary] = true;
+                    if (capture != null && transition == null) {
                         capture.captureRotation(auxiliary, pose.rotations[auxiliary]);
                     }
                 }
@@ -3285,15 +3456,18 @@ public final class ParallelAnimationProgram {
                     if (transform == PoseTransform.MIRROR_X) {
                         target[0] = -target[0];
                     }
-                    for (int axis = 0; axis < 3; axis++) {
+                    if (transition != null) {
+                        transition.pose.position(auxiliary, target, clipWeight,
+                                applyMode == ApplyMode.PARALLEL);
+                    } else for (int axis = 0; axis < 3; axis++) {
                         float previous = applyMode != ApplyMode.PARALLEL
                                 && pose.hasPosition[auxiliary]
                                 ? pose.positions[auxiliary][axis] : 0.0F;
                         pose.positions[auxiliary][axis] = previous
                                 + (target[axis] - previous) * blendWeight;
                     }
-                    pose.hasPosition[auxiliary] = true;
-                    if (capture != null) {
+                    if (transition == null) pose.hasPosition[auxiliary] = true;
+                    if (capture != null && transition == null) {
                         capture.capturePosition(auxiliary, pose.positions[auxiliary]);
                     }
                 }
@@ -3329,6 +3503,7 @@ public final class ParallelAnimationProgram {
                 }
             }
         }
+        if (transition != null) appliedPose |= transition.apply(scratch, capture, externalWeight);
         return appliedPose;
     }
 
@@ -3528,6 +3703,9 @@ public final class ParallelAnimationProgram {
     }
 
     private static final class EvaluationScratch {
+        private Map<String, MolangScriptRuntime.Output> scriptOutputs = Map.of();
+        private final Map<String, ScriptLayerTransition> scriptTransitions = new HashMap<>();
+        private final Set<String> sampledScriptTransitions = new LinkedHashSet<>();
         private final float[][] visibilityScales;
         private final boolean[] hasVisibilityScale;
         private final boolean[] forcedHiddenSubtrees;
@@ -4331,6 +4509,7 @@ public final class ParallelAnimationProgram {
         private final EntityAnimationEnvironment environment;
         private final MolangScriptRuntime scripts;
         private final Map<String, MolangScriptRuntime.Output> scriptOutputs = new LinkedHashMap<>();
+        private Set<String> enabledScriptOutputs = Set.of();
         private BoneQuerySnapshot displayedBoneQueries = BoneQuerySnapshot.EMPTY;
         private double boneQuerySampledAt = Double.NEGATIVE_INFINITY;
         private final EvaluationScratch scratch;
@@ -4391,6 +4570,8 @@ public final class ParallelAnimationProgram {
             assigned.clear();
             environment.reset();
             scriptOutputs.clear();
+            enabledScriptOutputs = Set.of();
+            scratch.scriptTransitions.clear();
             displayedBoneQueries = BoneQuerySnapshot.EMPTY;
             boneQuerySampledAt = Double.NEGATIVE_INFINITY;
             automaticState.reset();

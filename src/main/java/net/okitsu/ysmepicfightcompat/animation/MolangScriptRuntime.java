@@ -27,8 +27,19 @@ public final class MolangScriptRuntime {
     private static final int CONTINUE = 0, STOP = 1, PAUSE = 2, BYPASS = 3;
 
     public record Clip(double duration, AnimationClip.Playback playback) { }
+    /** Pose-only transition metadata; playback clocks and event weights stay independent. */
+    public record Transition(long generation, float progress, boolean discardPrevious,
+                             boolean paused) {
+        public Transition(long generation, float progress, boolean discardPrevious) {
+            this(generation, progress, discardPrevious, false);
+        }
+    }
     public record Output(boolean overridden, String name, double elapsed,
-                         float weight, long generation) {
+                         float weight, long generation, Transition transition) {
+        public Output(boolean overridden, String name, double elapsed,
+                      float weight, long generation) {
+            this(overridden, name, elapsed, weight, generation, null);
+        }
         static Output bypass() { return new Output(false, "", 0, 0, 0); }
         static Output hidden() { return new Output(true, "", 0, 0, 0); }
         public boolean visible() { return overridden && !name.isEmpty() && weight > 0; }
@@ -43,6 +54,16 @@ public final class MolangScriptRuntime {
         boolean reload;
         double sampledAt = Double.NaN;
         Output output = Output.bypass();
+        double beginningTransitionSeconds = Double.NaN;
+        boolean selectionObserved;
+        boolean selectedOverride;
+        String selectedClip = "";
+        long selectedClipGeneration;
+        long transitionGeneration;
+        double transitionStartedAt;
+        double transitionDuration;
+        boolean discardPrevious;
+        boolean resetPending;
     }
 
     private final Map<String, ExpressionEngine.Expression> functions = new LinkedHashMap<>();
@@ -169,14 +190,21 @@ public final class MolangScriptRuntime {
             return null;
         }
         if (!key.equals("ctrl.set_animation") && !key.equals("ctrl.reset")
-                && !key.equals("ctrl.indicate_reload")) return UNHANDLED;
+                && !key.equals("ctrl.indicate_reload")
+                && !key.equals("ctrl.set_beginning_transition_length")) return UNHANDLED;
         if (currentControl == null) return null;
-        if (key.equals("ctrl.indicate_reload")) {
+        if (key.equals("ctrl.set_beginning_transition_length")) {
+            if (arguments.length == 1 && arguments[0] instanceof Number value
+                    && Double.isFinite(value.doubleValue()) && value.doubleValue() >= 0.0D) {
+                currentControl.beginningTransitionSeconds = value.doubleValue();
+            }
+        } else if (key.equals("ctrl.indicate_reload")) {
             currentControl.reload = true;
         } else if (key.equals("ctrl.reset")) {
             currentControl.clip = "";
             currentControl.reload = true;
             currentControl.stopStartedAt = Double.NaN;
+            currentControl.resetPending = true;
         } else if (arguments.length >= 1 && arguments.length <= 2 && arguments[0] instanceof String value) {
             String clip = normalize(value);
             Clip info = clips.get(clip);
@@ -244,7 +272,8 @@ public final class MolangScriptRuntime {
             state.playback = fallbackInfo == null ? AnimationClip.Playback.ONCE : fallbackInfo.playback();
             state.startedAt = now - Math.max(0, fallbackElapsed);
             state.stopStartedAt = Double.NaN;
-            state.output = Output.bypass();
+            state.output = Double.isNaN(state.beginningTransitionSeconds) ? Output.bypass()
+                    : new Output(false, state.clip, Math.max(0, fallbackElapsed), 1.0F, state.generation);
         } else if (state.clip.isEmpty()) {
             state.output = Output.hidden();
         } else {
@@ -263,7 +292,39 @@ public final class MolangScriptRuntime {
             }
             state.output = new Output(true, state.clip, elapsed, weight, state.generation);
         }
+        state.output = transitionOutput(state, now, predicate == PAUSE);
         return state.output;
+    }
+
+    private static Output transitionOutput(Control state, double now, boolean paused) {
+        Output output = state.output;
+        boolean first = !state.selectionObserved;
+        boolean changed = first || state.resetPending
+                || output.overridden() != state.selectedOverride
+                || !state.clip.equals(state.selectedClip)
+                || output.overridden() && state.generation != state.selectedClipGeneration;
+        state.selectionObserved = true;
+        state.selectedOverride = output.overridden();
+        state.selectedClip = state.clip;
+        state.selectedClipGeneration = state.generation;
+        boolean discardPrevious = state.resetPending;
+        state.resetPending = false;
+        if (Double.isNaN(state.beginningTransitionSeconds)) return output;
+        if (changed) {
+            state.transitionGeneration++;
+            state.transitionStartedAt = now;
+            // Capture after the callback so setting the duration before or after the
+            // selected clip is equivalent. Repeated setters do not restart a blend.
+            state.transitionDuration = first && !output.overridden()
+                    ? 0.0D : state.beginningTransitionSeconds;
+            state.discardPrevious = discardPrevious;
+        }
+        float progress = state.transitionDuration <= 0.0D ? 1.0F
+                : (float) Math.max(0.0D, Math.min(1.0D,
+                (now - state.transitionStartedAt) / state.transitionDuration));
+        return new Output(output.overridden(), output.name(), output.elapsed(),
+                output.weight(), output.generation(),
+                new Transition(state.transitionGeneration, progress, state.discardPrevious, paused));
     }
 
     public void reset() {
