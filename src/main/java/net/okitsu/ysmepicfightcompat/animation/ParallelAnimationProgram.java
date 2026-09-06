@@ -2164,7 +2164,7 @@ public final class ParallelAnimationProgram {
         scratch.scriptTransitions.keySet().retainAll(scratch.sampledScriptTransitions);
         scratch.builtinTransitions.keySet().retainAll(scratch.sampledBuiltinSlots);
         silenceUnusedBuiltinProviders(elapsed, environment, runtimeState, scratch);
-        applyOfficialMovementHeadTracking(movementPose, environment, scratch);
+        applyOfficialHeadTracking(customFullBodyPose, movementPose, environment, scratch);
         composeVisibility(scratch, ladderPolicy.hiddenYsmItemRoots());
         composeAuxiliaryMatrices(scratch.parallelPose, scratch);
         composeAuxiliaryMatrices(scratch.wholeModelPose, scratch);
@@ -2783,26 +2783,30 @@ public final class ParallelAnimationProgram {
      * clips rely on that final addition: their MHead/Head query pair cancels or retains
      * pitch according to the model's later HOLD layers, while the Head yaw term cancels
      * the apparent roll created below the quarter-turned crawl root. Reproduce the full
-     * official post layer for crawl. Other configured movements retain the established
-     * compatibility behavior and receive only a camera axis absent from their authored
-     * head-control chain.
+     * official post layer for crawl and custom full-body actions. Bow clips also rely
+     * on the terminal yaw cancellation under an authored Z rotation. Other configured
+     * movements retain the established compatibility behavior and receive only a
+     * camera axis absent from their authored head-control chain. Final ownership fades
+     * already hold the post layer in their composite snapshot, so they do not count as
+     * live custom full-body poses here.
      */
-    private void applyOfficialMovementHeadTracking(
+    private void applyOfficialHeadTracking(
+            boolean customFullBodyPose,
             @Nullable MovementPose movementPose,
             ExpressionEngine.Environment environment,
             EvaluationScratch scratch) {
         if (!scratch.replaceEpicFightPose || headAuxiliaryIndex < 0
-                || movementPose == null) {
+                || !customFullBodyPose && movementPose == null) {
             return;
         }
         PoseScratch pose = scratch.wholeModelPose;
-        MovementAnimationType movement = movementPose.movement();
-        boolean completeOfficialPost = usesCompleteOfficialHeadPost(movement);
+        MovementAnimationType movement = movementPose == null ? null : movementPose.movement();
+        boolean completeOfficialPost = customFullBodyPose || usesCompleteOfficialHeadPost(movement);
         boolean applyPitch = completeOfficialPost
-                || (tracksCameraPitchDuringMovement(movement)
+                || (movement != null && tracksCameraPitchDuringMovement(movement)
                 && !scratch.authoredHeadPitch);
         boolean applyYaw = completeOfficialPost
-                || (tracksCameraYawDuringMovement(movement)
+                || (movement != null && tracksCameraYawDuringMovement(movement)
                 && !scratch.authoredHeadYaw);
         if (applyPitch) {
             pose.rotations[headAuxiliaryIndex][0] += radians(finite(

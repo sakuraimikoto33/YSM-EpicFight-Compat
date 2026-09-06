@@ -7,6 +7,7 @@ import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class ExpressionEngineTest {
@@ -20,6 +21,37 @@ class ExpressionEngineTest {
 
         assertEquals(14.0D, environment.value("variable.a"));
         assertEquals(5.0D, result);
+    }
+
+    @Test
+    void scriptFallthroughIsSeparateFromTheOrdinaryExpressionResult() {
+        TestEnvironment environment = new TestEnvironment();
+        ExpressionEngine.Expression expression = ExpressionEngine.compile(
+                "v.saved=4;v.saved+=2;");
+
+        assertEquals(6.0D, expression.evaluateValue(environment));
+        assertNull(expression.evaluateScriptValue(environment, null));
+        assertEquals(6.0D, environment.value("v.saved"));
+        assertEquals(0.0D, expression.evaluateScriptValue(environment, 0.0D));
+        assertEquals(6.0D, expression.evaluateValue(environment));
+        assertNull(ExpressionEngine.compile("").evaluateScriptValue(environment, null));
+    }
+
+    @Test
+    void scriptEvaluationKeepsExplicitNestedReturnsIncludingNullAndText() {
+        TestEnvironment environment = new TestEnvironment();
+        ExpressionEngine.Expression nested = ExpressionEngine.compile(
+                "v.choose ? {loop(2,{return 7;});};v.saved=1;");
+
+        assertNull(nested.evaluateScriptValue(environment, null));
+        assertEquals(1.0D, environment.value("v.saved"));
+        environment.writeVariable(ExpressionEngine.slot("v.choose"), 1.0D);
+        assertEquals(7.0D, nested.evaluateScriptValue(environment, null));
+        assertNull(ExpressionEngine.compile("return null;v.saved=99;")
+                .evaluateScriptValue(environment, 0.0D));
+        assertEquals(1.0D, environment.value("v.saved"));
+        assertEquals("Kept Case", ExpressionEngine.compile("return 'Kept Case';")
+                .evaluateScriptValue(environment, null));
     }
 
     @Test

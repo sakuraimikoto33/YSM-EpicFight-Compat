@@ -81,6 +81,110 @@ class MolangScriptRuntimeTest {
     }
 
     @Test
+    void functionsReturnZeroOnFallthroughButKeepExplicitNestedAndChainedReturns() {
+        FakeEnvironment environment = environment(Map.of(
+                "assign", "v.saved=7;",
+                "text", "'Not a return';",
+                "nested", "args[0] ? {loop(2,{return args[1];});};v.saved=9;",
+                "chain", "return fn.nested(1,args[0])+fn.assign();",
+                "call_without_return", "fn.nested(1,4);"));
+
+        assertEquals(0.0D, number(evaluate("fn.assign()", environment)), EPSILON);
+        assertEquals(7.0D, environment.number("v.saved"), EPSILON);
+        assertEquals(0.0D, number(evaluate("fn.text()", environment)), EPSILON);
+        assertEquals(0.0D, number(evaluate("fn.nested(0,5)", environment)), EPSILON);
+        assertEquals(9.0D, environment.number("v.saved"), EPSILON);
+        assertEquals(5.0D, number(evaluate("fn.nested(1,5)", environment)), EPSILON);
+        assertEquals(6.0D, number(evaluate("fn.chain(6)", environment)), EPSILON);
+        assertEquals(0.0D, number(evaluate("fn.call_without_return()", environment)), EPSILON);
+    }
+
+    @Test
+    void controllerFallthroughDoesNotTreatAssignmentValuesAsPredicates() {
+        for (int value = 0; value <= 3; value++) {
+            FakeEnvironment environment = environment(Map.of("@player_ctrl_main", """
+                    ctrl.set_animation('once');
+                    v.saved=v.value;
+                    """));
+            environment.set("v.value", (double) value);
+
+            assertEquals(MolangScriptRuntime.Output.bypass(),
+                    environment.runtime.controller("player.main", "held", 0.4D, 0, environment));
+            assertEquals((double) value, environment.number("v.saved"), EPSILON);
+            assertEquals(MolangScriptRuntime.Output.bypass(),
+                    environment.runtime.controller("player.main", "held", 0.8D, 0.4D, environment));
+        }
+    }
+
+    @Test
+    void onlyAnExplicitControllerReturnUsesAFunctionResultAsItsPredicate() {
+        FakeEnvironment environment = environment(Map.of(
+                "predicate", "return ctrl.state_continue;",
+                "@player_ctrl_main", """
+                        ctrl.set_animation('held');
+                        v.explicit ? return fn.predicate();
+                        fn.predicate();
+                        """));
+        assertFalse(sample(environment, 0).overridden());
+        environment.set("v.explicit", 1.0D);
+        assertTrue(sample(environment, 0.2D).visible());
+        assertEquals(0.3D, sample(environment, 0.5D).elapsed(), EPSILON);
+
+        FakeEnvironment nullPredicate = environment(Map.of("@player_ctrl_main",
+                "ctrl.set_animation('once');return null;"));
+        assertEquals(MolangScriptRuntime.Output.bypass(), sample(nullPredicate, 0));
+    }
+
+    @Test
+    void unreturnedUseHistoryKeepsFallbackClocksAcrossReleaseAndASecondDraw() {
+        FakeEnvironment environment = environment(Map.of("@player_ctrl_use", """
+                ctrl.set_beginning_transition_length(0.1);
+                v.release ? {
+                    ctrl.set_animation('once');
+                    v.release=0;
+                    return ctrl.state_continue;
+                };
+                v.last_using=v.using;
+                """));
+        environment.set("v.using", 1.0D);
+        MolangScriptRuntime.Output draw = environment.runtime.controller(
+                "player.use", "held", 0.1D, 0, environment);
+        assertFalse(draw.overridden());
+        assertEquals("held", draw.name());
+        assertEquals(0.1D, draw.elapsed(), EPSILON);
+        assertEquals(1.0F, draw.weight());
+        MolangScriptRuntime.Output held = environment.runtime.controller(
+                "player.use", "held", 0.6D, 0.5D, environment);
+        assertFalse(held.overridden());
+        assertEquals(0.6D, held.elapsed(), EPSILON);
+        assertEquals(1.0F, held.weight());
+        assertEquals(draw.transition().generation(), held.transition().generation());
+
+        environment.set("v.using", 0.0D);
+        environment.set("v.release", 1.0D);
+        MolangScriptRuntime.Output released = environment.runtime.controller(
+                "player.use", "", 0, 0.7D, environment);
+        assertTrue(released.visible());
+        assertEquals("once", released.name());
+        assertEquals(0.0D, released.elapsed(), EPSILON);
+        MolangScriptRuntime.Output cleared = environment.runtime.controller(
+                "player.use", "", 0, 0.75D, environment);
+        assertFalse(cleared.overridden());
+        assertEquals("", cleared.name());
+        assertEquals(0.0D, environment.number("v.last_using"), EPSILON);
+
+        environment.set("v.using", 1.0D);
+        MolangScriptRuntime.Output nextDraw = environment.runtime.controller(
+                "player.use", "held", 0.05D, 1.0D, environment);
+        assertFalse(nextDraw.overridden());
+        assertEquals("held", nextDraw.name());
+        assertEquals(0.05D, nextDraw.elapsed(), EPSILON);
+        assertEquals(1.0F, nextDraw.weight());
+        assertTrue(nextDraw.transition().generation() > cleared.transition().generation());
+        assertEquals(1.0D, environment.number("v.last_using"), EPSILON);
+    }
+
+    @Test
     void boundsRecursionAtThirtyTwoCallsAndRecoversAfterward() {
         FakeEnvironment environment = environment(Map.of("recur", """
                 v.calls+=1;

@@ -2214,11 +2214,15 @@ class ParallelAnimationProgramTest {
                 layout, 1.0F, 1.0F);
 
         ParallelAnimationProgram.Frame frame = program.sampleAutomaticAt(
-                0.0D, List.of(useEffect.name()), new NeutralEnvironment());
+                0.0D, List.of(useEffect.name()), new NeutralEnvironment()
+                        .query("ysm.head_pitch", -25.0D)
+                        .query("ysm.head_yaw", 40.0D));
         int effect = layout.entryForBoneName("custom_bow").auxiliaryIndex();
         int rightArm = layout.entryForBoneName("RightArm").auxiliaryIndex();
 
         assertFalse(frame.replaceEpicFightPose());
+        assertIdentity(frame.wholeModelDeltas()[
+                layout.entryForBoneName("Head").auxiliaryIndex()]);
         assertTrue(frame.replaceEpicFightAnchors()[effect]);
         assertEquals(HumanoidRig.LEFT_TOOL, frame.heldItemAnchorJoints()[effect]);
         assertTrue(frame.suppressParallelDeltas()[effect]);
@@ -2343,6 +2347,139 @@ class ParallelAnimationProgramTest {
                         new AnimationControllerProgram.RuntimeState());
         assertMatrixEquals(drawing.wholeModelDeltas()[rightArm],
                 controllerDrawing.wholeModelDeltas()[rightArm]);
+    }
+
+    @Test
+    void customBowAddsTerminalHeadPostAfterUseAndParallelWithoutQueryRoll() {
+        GeometryDocument geometry = new GeometryDocument();
+        GeometryDocument.Bone neck = new GeometryDocument.Bone("AllHead");
+        GeometryDocument.Bone movingHead = new GeometryDocument.Bone("MHead");
+        neck.parentName("UpBody");
+        movingHead.parentName("AllHead");
+        for (GeometryDocument.Bone bone : bowUpperBodyGeometry().bones().values()) {
+            if (bone.name().equals("Head")) {
+                geometry.add(neck);
+                geometry.add(movingHead);
+                bone.parentName("MHead");
+            }
+            geometry.add(bone);
+        }
+        geometry.linkHierarchy();
+        AuxiliaryBoneLayout layout = AuxiliaryBoneLayout.create(geometry);
+        AnimationClip pre = hiddenCustomBow();
+        AnimationClip hold = customBowHold();
+        AnimationClip use = new AnimationClip("use_mainhand:bow");
+        use.boneTracks().put("custom_bow", hold.boneTracks().get("custom_bow"));
+        use.boneTracks().put("AllHead", rotation(0.0D, 0.0D, 7.0D));
+        use.boneTracks().put("MHead", rotation(11.0D, 0.0D, 0.0D));
+        use.boneTracks().put("Head",
+                rotationExpression("30", "20 + ysm.head_yaw", "15"));
+        AnimationClip parallel = new AnimationClip("parallel0");
+        parallel.boneTracks().put("Head",
+                rotationExpression("30", "20 + ysm.head_yaw", "15"));
+        int neckIndex = layout.entryForBoneName("AllHead").auxiliaryIndex();
+        int movingIndex = layout.entryForBoneName("MHead").auxiliaryIndex();
+        int head = layout.entryForBoneName("Head").auxiliaryIndex();
+        Matrix4f expectedNeck = new Matrix4f().rotateZ((float) Math.toRadians(7));
+        Matrix4f expectedMoving = new Matrix4f(expectedNeck)
+                .rotateX((float) Math.toRadians(-11));
+
+        for (boolean withParallel : List.of(false, true)) {
+            ParallelAnimationProgram program = new ParallelAnimationProgram(
+                    geometry, withParallel
+                    ? Map.of(pre.name(), pre, hold.name(), hold, use.name(), use,
+                    parallel.name(), parallel)
+                    : Map.of(pre.name(), pre, hold.name(), hold, use.name(), use),
+                    layout, 1.0F, 1.0F);
+            for (double pitch : new double[]{-25, 0, 30}) {
+                for (double yaw : new double[]{-45, 0, 50}) {
+                    ParallelAnimationProgram.Frame frame = program.sampleAutomaticAt(
+                            0.0D, List.of(hold.name(), use.name()),
+                            new NeutralEnvironment().query("ysm.head_pitch", pitch)
+                                    .query("ysm.head_yaw", yaw));
+                    assertTrue(frame.replaceEpicFightPose());
+                    assertMatrix(expectedNeck, frame.wholeModelDeltas()[neckIndex]);
+                    assertMatrix(expectedMoving, frame.wholeModelDeltas()[movingIndex]);
+                    assertMatrix(new Matrix4f(expectedMoving)
+                                    .rotateZ((float) Math.toRadians(15))
+                                    .rotateY((float) Math.toRadians(-20))
+                                    .rotateX((float) Math.toRadians(-30 + pitch)),
+                            frame.wholeModelDeltas()[head]);
+                }
+            }
+        }
+    }
+
+    @Test
+    void customBowAddsBothHeadAxesEvenWhenTheAuthoredPitchUsesTheQuery() {
+        GeometryDocument geometry = bowUpperBodyGeometry();
+        AuxiliaryBoneLayout layout = AuxiliaryBoneLayout.create(geometry);
+        AnimationClip pre = hiddenCustomBow();
+        AnimationClip hold = customBowHold();
+        AnimationClip use = new AnimationClip("use_mainhand:bow");
+        use.boneTracks().put("custom_bow", hold.boneTracks().get("custom_bow"));
+        use.boneTracks().put("Head",
+                rotationExpression("10 + ysm.head_pitch", "20 + ysm.head_yaw", "15"));
+        ParallelAnimationProgram program = new ParallelAnimationProgram(
+                geometry, Map.of(pre.name(), pre, hold.name(), hold, use.name(), use),
+                layout, 1.0F, 1.0F);
+        ParallelAnimationProgram.Frame frame = program.sampleAutomaticAt(
+                0.0D, List.of(use.name()), new NeutralEnvironment()
+                        .query("ysm.head_pitch", -25).query("ysm.head_yaw", 40));
+
+        assertTrue(frame.replaceEpicFightPose());
+        assertMatrix(new Matrix4f().rotateZ((float) Math.toRadians(15))
+                        .rotateY((float) Math.toRadians(-20))
+                        .rotateX((float) Math.toRadians(-10)),
+                frame.wholeModelDeltas()[layout.entryForBoneName("Head").auxiliaryIndex()]);
+    }
+
+    @Test
+    void bowReleaseAndFinalOwnershipSnapshotsApplyHeadPostExactlyOnce() {
+        GeometryDocument geometry = bowUpperBodyGeometry();
+        AuxiliaryBoneLayout layout = AuxiliaryBoneLayout.create(geometry);
+        AnimationClip pre = hiddenCustomBow();
+        AnimationClip hold = customBowHold();
+        AnimationClip use = new AnimationClip("use_mainhand:bow");
+        use.boneTracks().put("custom_bow", hold.boneTracks().get("custom_bow"));
+        use.boneTracks().put("Head", rotationExpression("30", "20 + ysm.head_yaw", "15"));
+        AnimationClip release = new AnimationClip("swing:bow");
+        release.boneTracks().put("custom_bow", hold.boneTracks().get("custom_bow"));
+        release.boneTracks().put("Head", rotation(5, -10, 25));
+        ParallelAnimationProgram program = new ParallelAnimationProgram(
+                geometry, Map.of(pre.name(), pre, hold.name(), hold, use.name(), use,
+                release.name(), release), layout, 1.0F, 1.0F);
+        NeutralEnvironment looking = new NeutralEnvironment()
+                .query("ysm.head_pitch", -25).query("ysm.head_yaw", 40);
+        int head = layout.entryForBoneName("Head").auxiliaryIndex();
+        Matrix4f expectedDraw = new Matrix4f().rotateZ((float) Math.toRadians(15))
+                .rotateY((float) Math.toRadians(-20))
+                .rotateX((float) Math.toRadians(-55));
+        Matrix4f expectedRelease = new Matrix4f().rotateZ((float) Math.toRadians(25))
+                .rotateY((float) Math.toRadians(50))
+                .rotateX((float) Math.toRadians(-30));
+
+        ParallelAnimationProgram.Frame transition = program.sampleAutomaticWithEndingAt(
+                0, List.of(release.name()), use.name(), 0, 1, looking);
+        assertMatrix(expectedDraw, transition.wholeModelDeltas()[head]);
+        transition = program.sampleAutomaticWithEndingAt(
+                0, List.of(release.name()), use.name(), 0, 0.5F, looking);
+        assertMatrix(new Matrix4f().rotateZ((float) Math.toRadians(20))
+                        .rotateY((float) Math.toRadians(15))
+                        .rotateX((float) Math.toRadians(-42.5)),
+                transition.wholeModelDeltas()[head]);
+        transition = program.sampleAutomaticWithEndingAt(
+                0, List.of(release.name()), use.name(), 0, 0, looking);
+        assertMatrix(expectedRelease, transition.wholeModelDeltas()[head]);
+
+        ParallelAnimationProgram.Frame ending = program.sampleAutomaticOwnershipEndingAt(
+                0, List.of(release.name()), 0, List.of(hold.name()), release.name(), 0.5F,
+                looking, new NeutralEnvironment()
+                        .query("ysm.head_pitch", 50).query("ysm.head_yaw", -60));
+        assertFalse(ending.replaceEpicFightPose());
+        assertEquals(0.5F, ending.fullBodyBlendWeight(), 0.00001F);
+        assertMatrix(expectedRelease, ending.fullBodyBlendSource()[head]);
+        assertIdentity(ending.wholeModelDeltas()[head]);
     }
 
     @Test
@@ -2951,6 +3088,14 @@ class ParallelAnimationProgramTest {
         AnimationClip.BoneTracks visible = hold.boneTracks().get("custom_prop");
         visible.scale(constantTrack(1.0D, 1.0D, 1.0D));
         return hold;
+    }
+
+    private static AnimationClip hiddenCustomBow() {
+        AnimationClip pre = new AnimationClip("pre_parallel0");
+        AnimationClip.BoneTracks hidden = new AnimationClip.BoneTracks();
+        hidden.scale(constantTrack(0, 0, 0));
+        pre.boneTracks().put("custom_bow", hidden);
+        return pre;
     }
 
     private static AnimationClip customBowHold() {

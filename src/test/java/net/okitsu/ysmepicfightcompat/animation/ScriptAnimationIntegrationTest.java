@@ -264,6 +264,91 @@ class ScriptAnimationIntegrationTest {
     }
 
     @Test
+    void observationalUseHookKeepsCustomBowDrawingReleaseAndTheNextDrawClock() {
+        GeometryDocument geometry = new GeometryDocument();
+        GeometryDocument.Bone arm = new GeometryDocument.Bone("RightArm");
+        GeometryDocument.Bone locator = new GeometryDocument.Bone("RightHandLocator");
+        GeometryDocument.Bone bow = new GeometryDocument.Bone("test_bow");
+        GeometryDocument.Bone arrow = new GeometryDocument.Bone("test_arrow");
+        locator.parentName(arm.name());
+        bow.parentName(locator.name());
+        arrow.parentName(bow.name());
+        for (GeometryDocument.Bone prop : List.of(bow, arrow)) {
+            prop.faces().add(new GeometryDocument.Face(new Vector3f[]{
+                    new Vector3f(0, 0, 0), new Vector3f(1, 0, 0),
+                    new Vector3f(1, 1, 0), new Vector3f(0, 1, 0)},
+                    new float[][]{{0, 0}, {1, 0}, {1, 1}, {0, 1}}, new Vector3f(0, 0, 1)));
+        }
+        for (GeometryDocument.Bone bone : List.of(arm, locator, bow, arrow)) geometry.add(bone);
+        geometry.linkHierarchy();
+        int armIndex = AuxiliaryBoneLayout.create(geometry).entryForBoneName(arm.name()).auxiliaryIndex();
+
+        AnimationClip pre = scaleClip("pre_parallel0", bow.name(), 0);
+        pre.boneTracks().put(arrow.name(), scaleClip("unused", arrow.name(), 0).boneTracks().get(arrow.name()));
+        AnimationClip hold = scaleClip("hold_mainhand:bow", bow.name(), 1);
+        AnimationClip use = scaleClip("use_mainhand:bow", bow.name(), 1);
+        use.playback(AnimationClip.Playback.HOLD_LAST_FRAME);
+        use.duration(2);
+        use.boneTracks().put(arm.name(), rotationClip("unused", arm.name(), 30).boneTracks().get(arm.name()));
+        AnimationClip.BoneTracks drawnArrow = scaleClip("unused", arrow.name(), 0).boneTracks().get(arrow.name());
+        AnimationClip.VectorValue visible = new AnimationClip.VectorValue();
+        for (int axis = 0; axis < 3; axis++) visible.setConstant(axis, 1);
+        drawnArrow.scale().keyframes().add(new AnimationClip.Keyframe(
+                0.5F, AnimationClip.Interpolation.STEP, visible, null));
+        use.boneTracks().put(arrow.name(), drawnArrow);
+        AnimationClip swing = scaleClip("swing:bow", bow.name(), 1);
+        swing.duration(0.5F);
+        swing.boneTracks().put(arm.name(), rotationClip("unused", arm.name(), -20).boneTracks().get(arm.name()));
+        swing.boneTracks().put(arrow.name(), scaleClip("unused", arrow.name(), 0).boneTracks().get(arrow.name()));
+        Fixture fixture = fixture(geometry, List.of(pre, hold, use, swing), Map.of(),
+                Map.of("observe@player_ctrl_use", """
+                        v.last_use && !ctrl.use('mainhand','bow') ? {
+                            v.releases+=1;
+                            v.last_use=0;
+                            return ctrl.state_continue;
+                        };
+                        v.last_use=ctrl.use('mainhand','bow');
+                        """));
+
+        fixture.environment.writeVariable(ExpressionEngine.slot("v.using"), 1);
+        ParallelAnimationProgram.Frame started = fixture.sample(0, bowSelection(use.name(), 0), false);
+        assertTrue(started.replaceEpicFightPose(),
+                "An observational hook must not remove the automatic full-body bow owner");
+        assertTrue(started.hiddenBones().contains(arrow.name()));
+        assertRotationZ(30, started.wholeModelDeltas()[armIndex]);
+        ParallelAnimationProgram.Frame drawing = fixture.sample(0.6, bowSelection(use.name(), 0.6), false);
+        assertTrue(drawing.replaceEpicFightPose());
+        assertFalse(drawing.hiddenBones().contains(arrow.name()),
+                "The draw clip must reach its delayed arrow-visibility keyframe");
+        ParallelAnimationProgram.Frame heldDraw = fixture.sample(1.1, bowSelection(use.name(), 1.1), false);
+        assertTrue(heldDraw.replaceEpicFightPose());
+        assertFalse(heldDraw.hiddenBones().contains(arrow.name()),
+                "A held draw must not fade out or wrap after one second");
+        assertRotationZ(30, heldDraw.wholeModelDeltas()[armIndex]);
+
+        fixture.environment.writeVariable(ExpressionEngine.slot("v.using"), 0);
+        fixture.sample(1.2, bowSelection(swing.name(), 0), false);
+        assertEquals(1, fixture.environment.value("v.releases"));
+        // The explicit release CONTINUE keeps its existing one-frame controller behavior.
+        // The next observational callback must yield to the live native SWING provider.
+        ParallelAnimationProgram.Frame released = fixture.sample(1.25, bowSelection(swing.name(), 0.05), false);
+        assertTrue(released.replaceEpicFightPose());
+        assertTrue(released.hiddenBones().contains(arrow.name()));
+        assertRotationZ(-20, released.wholeModelDeltas()[armIndex]);
+        fixture.sample(1.8, bowSelection(null, 0), false);
+
+        fixture.environment.writeVariable(ExpressionEngine.slot("v.using"), 1);
+        ParallelAnimationProgram.Frame nextDraw = fixture.sample(2, bowSelection(use.name(), 0), false);
+        assertTrue(nextDraw.replaceEpicFightPose());
+        assertTrue(nextDraw.hiddenBones().contains(arrow.name()),
+                "A second draw must restart at its own time zero, not retain the previous draw clock");
+        assertRotationZ(30, nextDraw.wholeModelDeltas()[armIndex]);
+        assertFalse(fixture.sample(2.6, bowSelection(use.name(), 0.6), false)
+                .hiddenBones().contains(arrow.name()));
+        assertEquals(1, fixture.environment.value("v.releases"));
+    }
+
+    @Test
     void naturalLadderMirroringUsesTheMainTransitionWithoutOverwritingItsHistory() {
         Fixture fixture = fixture(List.of(rotationClip("ladder_up", "LeftArm", 40),
                 rotationClip("ladder_down", "LeftArm", 80)), Map.of(),
@@ -770,6 +855,13 @@ class ScriptAnimationIntegrationTest {
         return new AutomaticAnimationSelector.Selection(List.of(), null, null, Set.of());
     }
 
+    private static AutomaticAnimationSelector.Selection bowSelection(String action, double elapsed) {
+        AutomaticAnimationSelector.ActiveClip hold = active("hold_mainhand:bow");
+        return new AutomaticAnimationSelector.Selection(action == null ? List.of(hold)
+                : List.of(hold, new AutomaticAnimationSelector.ActiveClip(action, elapsed, elapsed == 0)),
+                null, null, Set.of());
+    }
+
     private static AutomaticAnimationSelector.ActiveClip active(String name) {
         return new AutomaticAnimationSelector.ActiveClip(name, 0, false);
     }
@@ -912,6 +1004,7 @@ class ScriptAnimationIntegrationTest {
         }
         @Override public double readQuery(int slot) { return ExpressionEngine.number(readQueryValue(slot)); }
         @Override public Object invokeValue(String name, Object[] arguments) {
+            if (name.equals("ctrl.use")) return value("v.using");
             Object value = scripts.invoke(name, arguments, this);
             return value == MolangScriptRuntime.UNHANDLED ? 0.0D : value;
         }

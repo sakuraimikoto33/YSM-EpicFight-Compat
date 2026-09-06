@@ -185,6 +185,16 @@ public final class ExpressionEngine {
             return evaluate(environment);
         }
 
+        /**
+         * Runs a script for its side effects and uses only an explicit {@code return}
+         * as the result. The caller chooses what an unspecified result means: numeric
+         * zero for a function, or no predicate for a controller hook.
+         */
+        default Object evaluateScriptValue(Environment environment, Object fallthroughValue) {
+            evaluateValue(environment);
+            return boundedValue(fallthroughValue);
+        }
+
         default Dependencies dependencies() {
             return Dependencies.EMPTY;
         }
@@ -292,16 +302,27 @@ public final class ExpressionEngine {
 
         @Override
         public Object evaluateValue(Environment environment) {
+            return evaluateProgram(environment, false, null);
+        }
+
+        @Override
+        public Object evaluateScriptValue(Environment environment, Object fallthroughValue) {
+            return evaluateProgram(environment, true, fallthroughValue);
+        }
+
+        private Object evaluateProgram(Environment environment, boolean requireReturn,
+                                       Object fallthroughValue) {
             try (EvaluationScope scope = beginEvaluation()) {
                 try {
-                    return boundedValue(program.value(environment));
+                    Object value = program.value(environment);
+                    return boundedValue(requireReturn ? fallthroughValue : value);
                 } catch (ReturnSignal result) {
                     return boundedValue(result.value);
                 } catch (EvaluationLimitException failure) {
                     if (!scope.outermost) {
                         throw failure;
                     }
-                    return 0.0D;
+                    return requireReturn ? boundedValue(fallthroughValue) : 0.0D;
                 }
             }
         }

@@ -229,11 +229,17 @@ public final class MolangScriptRuntime {
 
     private Object call(ExpressionEngine.Expression function, Object[] arguments,
                         ExpressionEngine.Environment environment) {
+        return call(function, arguments, environment, 0.0D);
+    }
+
+    private Object call(ExpressionEngine.Expression function, Object[] arguments,
+                        ExpressionEngine.Environment environment, Object fallthroughValue) {
         if (depth >= MAX_CALL_DEPTH) return null;
         depth++;
         try (ExpressionEngine.EvaluationScope ignored = ExpressionEngine.beginEvaluation()) {
             ExpressionEngine.consumeOperations(1);
-            return function.evaluateValue(new FunctionEnvironment(environment, arguments));
+            return function.evaluateScriptValue(
+                    new FunctionEnvironment(environment, arguments), fallthroughValue);
         } finally {
             depth--;
         }
@@ -258,7 +264,9 @@ public final class MolangScriptRuntime {
         }
         int predicate = BYPASS;
         try (ExpressionEngine.EvaluationScope ignored = ExpressionEngine.beginEvaluation()) {
-            Object result = call(hook, new Object[0], environment);
+            // A trailing assignment is script state, not a controller predicate.
+            // Only an explicit return may override the automatic provider.
+            Object result = call(hook, new Object[0], environment, null);
             if (result instanceof Number value) predicate = value.intValue();
         } catch (ExpressionEngine.EvaluationLimitException ignored) {
             predicate = BYPASS;
