@@ -5,12 +5,15 @@ import net.minecraft.client.model.PlayerModel;
 import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.client.renderer.MultiBufferSource;
 import net.minecraft.client.renderer.entity.LivingEntityRenderer;
+import net.minecraft.world.entity.Pose;
 import net.okitsu.ysmepicfightcompat.render.RenderFrameContext;
 import net.okitsu.ysmepicfightcompat.render.EpicFightPoseOwnership;
+import net.okitsu.ysmepicfightcompat.render.FirstPersonPoseTransform;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Redirect;
 import yesman.epicfight.client.events.engine.RenderEngine;
+import yesman.epicfight.api.client.animation.AnimationSubFileReader.PovSettings.RootTransformation;
 import yesman.epicfight.client.renderer.FirstPersonRenderer;
 import yesman.epicfight.client.world.capabilites.entitypatch.player.LocalPlayerPatch;
 
@@ -40,10 +43,19 @@ public abstract class FirstPersonRenderScopeMixin {
         Map<String, Boolean> visibleParts = settings == null
                 ? DEFAULT_ARMS : settings.visibilities();
         boolean showUnlisted = settings != null && settings.visibilityOthers();
+        float modelYaw = patch.getAccurateYRot(partialTick);
+        // CAMERA/null POVs omit the outer look rotations needed by a canonical
+        // full-body YSM pose. Capture the incoming hand transform before EF resets
+        // the stack; only the eventual YSM-owned skin will consume this correction.
+        var fullBodyTransform = FirstPersonPoseTransform.forCameraRelativePose(
+                settings == null || settings.rootTransformation() == RootTransformation.CAMERA,
+                matrices.last().pose(), player.getViewXRot(partialTick),
+                player.getYRot(), modelYaw, player.getStandingEyeHeight(
+                        Pose.STANDING, player.getDimensions(Pose.STANDING)));
         RenderFrameContext.Frame scope = RenderFrameContext.pushFirstPerson(
                 player, visibleParts, showUnlisted,
-                patch.getAccurateYRot(partialTick),
-                EpicFightPoseOwnership.actionOwnsPose(player, patch));
+                modelYaw, EpicFightPoseOwnership.actionOwnsPose(player, patch),
+                fullBodyTransform);
         try {
             renderer.render(player, patch, entityRenderer, buffers,
                     matrices, light, partialTick);

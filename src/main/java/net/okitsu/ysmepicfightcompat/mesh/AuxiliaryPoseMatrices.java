@@ -102,6 +102,31 @@ public final class AuxiliaryPoseMatrices {
                                   @Nullable int[] heldItemAnchorJoints,
                                   @Nullable OpenMatrix4f[] fullBodyBlendSource,
                                   float fullBodyBlendWeight) {
+        return compose(armature, poses, parallelDeltas, wholeModelDeltas, heldItemDeltas,
+                replaceEpicFightPose, replaceEpicFightAnchors, suppressParallelDeltas,
+                heldItemAnchorJoints, fullBodyBlendSource, fullBodyBlendWeight, null);
+    }
+
+    /**
+     * Places canonical full-body YSM skins in a render-specific coordinate system.
+     * The optional transform applies to the authored pose and saved ending source,
+     * never to Epic Fight's live target or leading armature slots.
+     * A non-null blend source denotes the final custom-bow ownership transition:
+     * only its source is transformed, even if a mounted YSM pose owns the target.
+     * Invalid snapshots retain that target-only safety rule.
+     */
+    @Nullable
+    public OpenMatrix4f[] compose(@Nullable Armature armature, @Nullable OpenMatrix4f[] poses,
+                                  @Nullable OpenMatrix4f[] parallelDeltas,
+                                  @Nullable OpenMatrix4f[] wholeModelDeltas,
+                                  @Nullable OpenMatrix4f[] heldItemDeltas,
+                                  boolean replaceEpicFightPose,
+                                  @Nullable boolean[] replaceEpicFightAnchors,
+                                  @Nullable boolean[] suppressParallelDeltas,
+                                  @Nullable int[] heldItemAnchorJoints,
+                                  @Nullable OpenMatrix4f[] fullBodyBlendSource,
+                                  float fullBodyBlendWeight,
+                                  @Nullable OpenMatrix4f fullBodyPoseTransform) {
         if (armature == null || poses == null
                 || armature.getJointNumber() < HumanoidRig.EPIC_JOINT_COUNT
                 || poses.length < HumanoidRig.EPIC_JOINT_COUNT) {
@@ -118,7 +143,7 @@ public final class AuxiliaryPoseMatrices {
                 heldItemDeltas, retargetedAnchors, replaceEpicFightPose,
                 replaceEpicFightAnchors, suppressParallelDeltas,
                 heldItemAnchorJoints, fullBodyBlendSource, fullBodyBlendWeight,
-                blendScratch);
+                fullBodyPoseTransform, blendScratch);
         float endingWeight = validBlendSource(fullBodyBlendSource)
                 ? unitWeight(fullBodyBlendWeight) : 0.0F;
         rightEpicGripWeight = rawEpicGripWeight(HumanoidRig.RIGHT_TOOL,
@@ -530,7 +555,7 @@ public final class AuxiliaryPoseMatrices {
             completeBlendSource[entry.auxiliaryIndex()] = source[entry.poseIndex()];
         }
         applyFullBodyBlend(layout, destination, completeBlendSource,
-                sourceWeight, blendScratch);
+                sourceWeight, null, blendScratch);
     }
 
     /** Carries grip ownership through the body's existing transition, with no new clock. */
@@ -669,7 +694,7 @@ public final class AuxiliaryPoseMatrices {
         return compose(poses, toOrigin, layout, destination, parallelDeltas,
                 wholeModelDeltas, heldItemDeltas, retargetedAnchors,
                 replaceEpicFightPose, replaceEpicFightAnchors, suppressParallelDeltas,
-                heldItemAnchorJoints, null, 0.0F, null);
+                heldItemAnchorJoints, null, 0.0F, null, null);
     }
 
     static OpenMatrix4f[] compose(OpenMatrix4f[] poses, OpenMatrix4f[] toOrigin,
@@ -684,12 +709,32 @@ public final class AuxiliaryPoseMatrices {
                                   @Nullable int[] heldItemAnchorJoints,
                                   @Nullable OpenMatrix4f[] fullBodyBlendSource,
                                   float fullBodyBlendWeight) {
+        return compose(poses, toOrigin, layout, destination, parallelDeltas,
+                wholeModelDeltas, heldItemDeltas, retargetedAnchors,
+                replaceEpicFightPose, replaceEpicFightAnchors, suppressParallelDeltas,
+                heldItemAnchorJoints, fullBodyBlendSource, fullBodyBlendWeight, null);
+    }
+
+    static OpenMatrix4f[] compose(OpenMatrix4f[] poses, OpenMatrix4f[] toOrigin,
+                                  AuxiliaryBoneLayout layout, OpenMatrix4f[] destination,
+                                  @Nullable OpenMatrix4f[] parallelDeltas,
+                                  @Nullable OpenMatrix4f[] wholeModelDeltas,
+                                  @Nullable OpenMatrix4f[] heldItemDeltas,
+                                  @Nullable OpenMatrix4f[] retargetedAnchors,
+                                  boolean replaceEpicFightPose,
+                                  @Nullable boolean[] replaceEpicFightAnchors,
+                                  @Nullable boolean[] suppressParallelDeltas,
+                                  @Nullable int[] heldItemAnchorJoints,
+                                  @Nullable OpenMatrix4f[] fullBodyBlendSource,
+                                  float fullBodyBlendWeight,
+                                  @Nullable OpenMatrix4f fullBodyPoseTransform) {
         BlendScratch scratch = fullBodyBlendSource == null || fullBodyBlendWeight <= 0.0F
                 ? null : new BlendScratch(layout.entries().size());
         return compose(poses, toOrigin, layout, destination, parallelDeltas,
                 wholeModelDeltas, heldItemDeltas, retargetedAnchors,
                 replaceEpicFightPose, replaceEpicFightAnchors, suppressParallelDeltas,
-                heldItemAnchorJoints, fullBodyBlendSource, fullBodyBlendWeight, scratch);
+                heldItemAnchorJoints, fullBodyBlendSource, fullBodyBlendWeight,
+                fullBodyPoseTransform, scratch);
     }
 
     private static OpenMatrix4f[] compose(OpenMatrix4f[] poses, OpenMatrix4f[] toOrigin,
@@ -705,12 +750,15 @@ public final class AuxiliaryPoseMatrices {
                                           @Nullable int[] heldItemAnchorJoints,
                                           @Nullable OpenMatrix4f[] fullBodyBlendSource,
                                           float fullBodyBlendWeight,
+                                          @Nullable OpenMatrix4f fullBodyPoseTransform,
                                           @Nullable BlendScratch blendScratch) {
         if (poses.length < HumanoidRig.EPIC_JOINT_COUNT
                 || toOrigin.length < HumanoidRig.EPIC_JOINT_COUNT
                 || destination.length != layout.totalPoseCount()) {
             throw new IllegalArgumentException("Invalid humanoid pose matrix count");
         }
+        OpenMatrix4f fullBodyTransform = fullBodyPoseTransform != null
+                && finite(fullBodyPoseTransform) ? fullBodyPoseTransform : null;
         for (int index = 0; index < HumanoidRig.EPIC_JOINT_COUNT; index++) {
             destination[index].load(poses[index]).mulBack(toOrigin[index]);
         }
@@ -774,15 +822,22 @@ public final class AuxiliaryPoseMatrices {
                 // chained model-space delta outside every local pose so all parts stay joined.
                 destination[entry.poseIndex()].mulFront(wholeModelDeltas[auxiliary]);
             }
+            if (replaceEpicFightPose && fullBodyBlendSource == null
+                    && fullBodyTransform != null) {
+                // These are already complete skin matrices, not parent-local transforms.
+                // Correct each finished skin once so children never inherit C twice.
+                destination[entry.poseIndex()].mulFront(fullBodyTransform);
+            }
         }
         applyFullBodyBlend(layout, destination, fullBodyBlendSource,
-                fullBodyBlendWeight, blendScratch);
+                fullBodyBlendWeight, fullBodyTransform, blendScratch);
         return destination;
     }
 
     private static void applyFullBodyBlend(
             AuxiliaryBoneLayout layout, OpenMatrix4f[] destination,
             @Nullable OpenMatrix4f[] source, float sourceWeight,
+            @Nullable OpenMatrix4f sourcePoseTransform,
             @Nullable BlendScratch suppliedScratch) {
         if (source == null || !Float.isFinite(sourceWeight) || sourceWeight <= 0.0F) {
             return;
@@ -801,6 +856,9 @@ public final class AuxiliaryPoseMatrices {
         if (sourceWeight >= 1.0F) {
             for (AuxiliaryBoneLayout.Entry entry : layout.entries()) {
                 destination[entry.poseIndex()].load(source[entry.auxiliaryIndex()]);
+                if (sourcePoseTransform != null) {
+                    destination[entry.poseIndex()].mulFront(sourcePoseTransform);
+                }
             }
             return;
         }
@@ -815,13 +873,21 @@ public final class AuxiliaryPoseMatrices {
         scratch.modelScale.scaling(horizontalScale, verticalScale, horizontalScale);
         scratch.modelScaleInverse.scaling(1.0F / horizontalScale,
                 1.0F / verticalScale, 1.0F / horizontalScale);
+        if (sourcePoseTransform != null) {
+            load(scratch.sourcePoseTransform, sourcePoseTransform);
+        }
         for (AuxiliaryBoneLayout.Entry entry : layout.entries()) {
             int auxiliary = entry.auxiliaryIndex();
             // pose.output is S * skin * S^-1 while the baked rest vertex is
             // S * bindWorld. Recover the authored, unscaled model-space world so parent
             // locals and their Bedrock pivots remain in one coordinate system.
-            scratch.sourceWorld[auxiliary].set(scratch.modelScaleInverse)
-                    .mul(load(scratch.sourceSkin, source[auxiliary]))
+            scratch.sourceWorld[auxiliary].set(scratch.modelScaleInverse);
+            if (sourcePoseTransform != null) {
+                // Keep the canonical snapshot immutable and leave the native target
+                // untouched. Reuse the blend scratch instead of copying the source array.
+                scratch.sourceWorld[auxiliary].mul(scratch.sourcePoseTransform);
+            }
+            scratch.sourceWorld[auxiliary].mul(load(scratch.sourceSkin, source[auxiliary]))
                     .mul(scratch.modelScale)
                     .mul(entry.bindWorld());
             scratch.targetWorld[auxiliary].set(scratch.modelScaleInverse)
@@ -1114,6 +1180,7 @@ public final class AuxiliaryPoseMatrices {
         private final Matrix4f inverse = new Matrix4f();
         private final Matrix4f output = new Matrix4f();
         private final Matrix4f sourceSkin = new Matrix4f();
+        private final Matrix4f sourcePoseTransform = new Matrix4f();
         private final Matrix4f targetSkin = new Matrix4f();
         private final Matrix4f modelScale = new Matrix4f();
         private final Matrix4f modelScaleInverse = new Matrix4f();

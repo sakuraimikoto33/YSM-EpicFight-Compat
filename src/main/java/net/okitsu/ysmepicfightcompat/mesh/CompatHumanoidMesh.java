@@ -206,21 +206,28 @@ public final class CompatHumanoidMesh extends HumanoidMesh {
         float meshScale = TouhouMaidRenderBridge.meshDrawScale(this);
         if (auxiliaryPoses != null) {
             OpenMatrix4f[] inputPoses = poses;
-            OpenMatrix4f[] complete = auxiliaryPoses.compose(armature, poses,
-                    animationFrame == null ? null : animationFrame.parallelDeltas(),
-                    animationFrame == null ? null : animationFrame.wholeModelDeltas(),
-                    animationFrame == null ? null : animationFrame.heldItemDeltas(),
-                    animationFrame != null && animationFrame.replaceEpicFightPose(),
-                    animationFrame == null ? null
-                            : animationFrame.replaceEpicFightAnchors(),
-                    animationFrame == null ? null
-                            : animationFrame.suppressParallelDeltas(),
-                    animationFrame == null ? null
-                            : animationFrame.heldItemAnchorJoints(),
-                    animationFrame == null ? null
-                            : animationFrame.fullBodyBlendSource(),
-                    animationFrame == null ? 0.0F
-                            : animationFrame.fullBodyBlendWeight());
+            OpenMatrix4f fullBodyPoseTransform = frame != null && animationFrame != null
+                    && usesFirstPersonPoseTransform(frame.firstPerson(),
+                    animationFrame.customFullBodyPose(),
+                    animationFrame.fullBodyBlendSource() != null
+                            && animationFrame.fullBodyBlendWeight() > 0.0F)
+                    ? frame.fullBodyPoseTransform() : null;
+            if (fullBodyPoseTransform != null
+                    && parallelAnimations.needsBoneQueryPublication(frame.entity())) {
+                // A view-space skin is only for this draw. Bone queries are shared
+                // with third-person evaluation and must retain canonical model space,
+                // including a final ending blend whose Epic target is not rebased.
+                // Capture before this composer's scratch is reused for the draw; no
+                // animation/script is reevaluated, and models without queries skip it.
+                OpenMatrix4f[] canonical = composeAnimationPose(
+                        armature, poses, animationFrame, null);
+                if (canonical != null) {
+                    parallelAnimations.publishBoneQueries(frame.entity(), canonical,
+                            animationFrame.hiddenBones());
+                }
+            }
+            OpenMatrix4f[] complete = composeAnimationPose(
+                    armature, poses, animationFrame, fullBodyPoseTransform);
             if (complete != null) {
                 Set<InteractionHand> currentItemSwitchHands = animationFrame == null
                         ? Set.of() : animationFrame.itemSwitchHands();
@@ -352,6 +359,31 @@ public final class CompatHumanoidMesh extends HumanoidMesh {
                 matrices.popPose();
             }
         }
+    }
+
+    @Nullable
+    private OpenMatrix4f[] composeAnimationPose(
+            @Nullable Armature armature, @Nullable OpenMatrix4f[] poses,
+            @Nullable ParallelAnimationProgram.Frame animationFrame,
+            @Nullable OpenMatrix4f fullBodyPoseTransform) {
+        return auxiliaryPoses.compose(armature, poses,
+                animationFrame == null ? null : animationFrame.parallelDeltas(),
+                animationFrame == null ? null : animationFrame.wholeModelDeltas(),
+                animationFrame == null ? null : animationFrame.heldItemDeltas(),
+                animationFrame != null && animationFrame.replaceEpicFightPose(),
+                animationFrame == null ? null : animationFrame.replaceEpicFightAnchors(),
+                animationFrame == null ? null : animationFrame.suppressParallelDeltas(),
+                animationFrame == null ? null : animationFrame.heldItemAnchorJoints(),
+                animationFrame == null ? null : animationFrame.fullBodyBlendSource(),
+                animationFrame == null ? 0.0F : animationFrame.fullBodyBlendWeight(),
+                fullBodyPoseTransform);
+    }
+
+    /** Only complete custom-bow poses and their ending source need a world/view rebase. */
+    static boolean usesFirstPersonPoseTransform(boolean firstPerson,
+                                               boolean customFullBodyPose,
+                                               boolean fullBodyEnding) {
+        return firstPerson && (customFullBodyPose || fullBodyEnding);
     }
 
     private boolean ownsItemSwitchTool(

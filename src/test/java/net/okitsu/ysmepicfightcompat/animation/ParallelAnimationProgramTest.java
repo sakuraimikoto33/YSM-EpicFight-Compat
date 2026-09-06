@@ -2223,6 +2223,7 @@ class ParallelAnimationProgramTest {
         assertFalse(frame.replaceEpicFightPose());
         assertIdentity(frame.wholeModelDeltas()[
                 layout.entryForBoneName("Head").auxiliaryIndex()]);
+        assertFalse(frame.customFullBodyPose());
         assertTrue(frame.replaceEpicFightAnchors()[effect]);
         assertEquals(HumanoidRig.LEFT_TOOL, frame.heldItemAnchorJoints()[effect]);
         assertTrue(frame.suppressParallelDeltas()[effect]);
@@ -2320,6 +2321,7 @@ class ParallelAnimationProgramTest {
             assertEquals(-1, drawing.heldItemAnchorJoints()[auxiliary], bone);
         }
         assertTrue(drawing.replaceEpicFightPose());
+        assertTrue(drawing.customFullBodyPose());
         assertFalse(isIdentity(drawing.wholeModelDeltas()[
                 layout.entryForBoneName("AllBody").auxiliaryIndex()]));
         assertFalse(isIdentity(drawing.wholeModelDeltas()[rightArm]));
@@ -2477,6 +2479,7 @@ class ParallelAnimationProgramTest {
                 looking, new NeutralEnvironment()
                         .query("ysm.head_pitch", 50).query("ysm.head_yaw", -60));
         assertFalse(ending.replaceEpicFightPose());
+        assertFalse(ending.customFullBodyPose());
         assertEquals(0.5F, ending.fullBodyBlendWeight(), 0.00001F);
         assertMatrix(expectedRelease, ending.fullBodyBlendSource()[head]);
         assertIdentity(ending.wholeModelDeltas()[head]);

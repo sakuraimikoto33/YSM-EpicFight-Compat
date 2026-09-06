@@ -1168,6 +1168,164 @@ class AuxiliaryPoseMatricesTest {
     }
 
     @Test
+    void fullBodyPoseTransformAppliesOnceAfterTheCompleteParentChildSkin() {
+        AuxiliaryBoneLayout layout = parentChildLayout(1.3F, 0.8F);
+        OpenMatrix4f[] poses = translatedMatrices(HumanoidRig.EPIC_JOINT_COUNT, 0.2F);
+        OpenMatrix4f[] origins = translatedMatrices(HumanoidRig.EPIC_JOINT_COUNT, -0.1F);
+        OpenMatrix4f[] retargeted = translatedMatrices(HumanoidRig.EPIC_JOINT_COUNT, 2);
+        OpenMatrix4f[] whole = parentChildSkins(1.3F, 0.8F);
+        OpenMatrix4f[] parallel = AuxiliaryPoseMatrices.allocate(2);
+        parallel[1] = scaledSkin(new Matrix4f().translate(0, 2, 0)
+                .rotateY((float) Math.toRadians(15)).translate(0, -2, 0), 1.3F, 0.8F);
+        OpenMatrix4f[] held = translatedMatrices(2, 7);
+        OpenMatrix4f[] canonical = AuxiliaryPoseMatrices.allocate(layout.totalPoseCount());
+        OpenMatrix4f[] output = AuxiliaryPoseMatrices.allocate(layout.totalPoseCount());
+        OpenMatrix4f correction = new OpenMatrix4f().translate(0.2F, 1.6F, -0.3F)
+                .rotateDeg(25, Vec3f.X_AXIS).rotateDeg(-40, Vec3f.Y_AXIS);
+        OpenMatrix4f originalCorrection = new OpenMatrix4f(correction);
+        OpenMatrix4f[][] inputs = {poses, origins, retargeted, whole, parallel, held};
+        OpenMatrix4f[][] originals = new OpenMatrix4f[inputs.length][];
+        for (int index = 0; index < inputs.length; index++) originals[index] = copy(inputs[index]);
+
+        AuxiliaryPoseMatrices.compose(poses, origins, layout, canonical, parallel, whole,
+                held, retargeted, true, null, null, null);
+        AuxiliaryPoseMatrices.compose(poses, origins, layout, output, parallel, whole,
+                held, retargeted, true, null, null, null, null, 0, correction);
+
+        for (AuxiliaryBoneLayout.Entry entry : layout.entries()) {
+            assertMatrixEquals(new OpenMatrix4f(canonical[entry.poseIndex()]).mulFront(correction),
+                    output[entry.poseIndex()]);
+        }
+        Vec4f pivot = new Vec4f(0, 2 * layout.verticalScale(), 0, 1);
+        Vec4f rootPivot = OpenMatrix4f.transform(
+                output[layout.entryForBoneName("Root").poseIndex()], pivot, new Vec4f());
+        Vec4f childPivot = OpenMatrix4f.transform(
+                output[layout.entryForBoneName("RightArm").poseIndex()], pivot, new Vec4f());
+        assertEquals(rootPivot.x, childPivot.x, 0.0001F);
+        assertEquals(rootPivot.y, childPivot.y, 0.0001F);
+        assertEquals(rootPivot.z, childPivot.z, 0.0001F);
+        assertEpicInputsAndSlotsUnchanged(originals[0], originals[1], poses, origins, output);
+        for (int index = 0; index < inputs.length; index++) assertMatricesEqual(originals[index], inputs[index]);
+        assertMatrixEquals(originalCorrection, correction);
+    }
+
+    @Test
+    void fullBodyEndingTransformsOnlyTheCanonicalSourceBeforeBlending() {
+        AuxiliaryBoneLayout layout = parentChildLayout(1.3F, 0.8F);
+        OpenMatrix4f[] poses = translatedMatrices(HumanoidRig.EPIC_JOINT_COUNT, 0.3F);
+        OpenMatrix4f[] origins = translatedMatrices(HumanoidRig.EPIC_JOINT_COUNT, -0.15F);
+        OpenMatrix4f[] originalPoses = copy(poses);
+        OpenMatrix4f[] originalOrigins = copy(origins);
+        OpenMatrix4f[] source = parentChildSkins(1.3F, 0.8F);
+        OpenMatrix4f[] originalSource = copy(source);
+        OpenMatrix4f correction = new OpenMatrix4f().translate(-0.2F, 1.5F, 0.4F)
+                .rotateDeg(-30, Vec3f.Y_AXIS).rotateDeg(20, Vec3f.X_AXIS);
+        OpenMatrix4f originalCorrection = new OpenMatrix4f(correction);
+        OpenMatrix4f[] correctedSource = copy(source);
+        for (OpenMatrix4f matrix : correctedSource) matrix.mulFront(correction);
+        OpenMatrix4f[] expected = AuxiliaryPoseMatrices.allocate(layout.totalPoseCount());
+        OpenMatrix4f[] output = AuxiliaryPoseMatrices.allocate(layout.totalPoseCount());
+        for (boolean fullBodyTarget : new boolean[]{false, true}) {
+            for (float weight : new float[]{0, 0.5F, 1}) {
+                AuxiliaryPoseMatrices.compose(poses, origins, layout, expected,
+                        null, null, null, null, fullBodyTarget, null, null, null, correctedSource, weight);
+                AuxiliaryPoseMatrices.compose(poses, origins, layout, output,
+                        null, null, null, null, fullBodyTarget, null, null, null, source, weight, correction);
+
+                assertMatricesEqual(expected, output);
+                assertEpicInputsAndSlotsUnchanged(originalPoses, originalOrigins, poses, origins, output);
+                assertMatricesEqual(originalSource, source);
+                assertMatrixEquals(originalCorrection, correction);
+            }
+        }
+        OpenMatrix4f[] invalidSource = copy(source);
+        invalidSource[0].m00 = Float.NaN;
+        AuxiliaryPoseMatrices.compose(poses, origins, layout, expected,
+                null, source, null, null, true, null, null, null);
+        AuxiliaryPoseMatrices.compose(poses, origins, layout, output,
+                null, source, null, null, true, null, null, null, invalidSource, 0.5F, correction);
+        assertMatricesEqual(expected, output);
+    }
+
+    @Test
+    void cachedFullBodyPoseTransformsNeverAccumulateOrModifySavedSources() {
+        AuxiliaryBoneLayout layout = parentChildLayout(1, 1);
+        AuxiliaryPoseMatrices matrices = new AuxiliaryPoseMatrices(layout);
+        Armature armature = gripArmature();
+        OpenMatrix4f[] poses = bindPoses(armature);
+        OpenMatrix4f[] originalPoses = copy(poses);
+        OpenMatrix4f[] whole = parentChildSkins(1, 1);
+        OpenMatrix4f[] originalWhole = copy(whole);
+        OpenMatrix4f[] canonical = copy(matrices.compose(armature, poses, null, whole,
+                null, true, null, null, null));
+        OpenMatrix4f[] output = null;
+        for (OpenMatrix4f correction : new OpenMatrix4f[]{
+                new OpenMatrix4f().rotateDeg(35, Vec3f.Y_AXIS),
+                new OpenMatrix4f().translate(0, 1, 0).rotateDeg(-20, Vec3f.X_AXIS),
+                new OpenMatrix4f(), null}) {
+            for (int render = 0; render < 3; render++) {
+                OpenMatrix4f[] next = matrices.compose(armature, poses, null, whole,
+                        null, true, null, null, null, null, 0, correction);
+                if (output != null) assertSame(output, next);
+                output = next;
+                for (AuxiliaryBoneLayout.Entry entry : layout.entries()) {
+                    OpenMatrix4f expected = new OpenMatrix4f(canonical[entry.poseIndex()]);
+                    if (correction != null) expected.mulFront(correction);
+                    assertMatrixEquals(expected, output[entry.poseIndex()]);
+                }
+            }
+        }
+        OpenMatrix4f correction = new OpenMatrix4f().rotateDeg(25, Vec3f.X_AXIS);
+        OpenMatrix4f[] correctedSource = copy(whole);
+        for (OpenMatrix4f matrix : correctedSource) matrix.mulFront(correction);
+        OpenMatrix4f[] expectedEnding = copy(matrices.compose(armature, poses, null, null,
+                null, false, null, null, null, correctedSource, 0.5F));
+        for (int render = 0; render < 3; render++) {
+            OpenMatrix4f[] next = matrices.compose(armature, poses, null, null,
+                    null, false, null, null, null, whole, 0.5F, correction);
+            assertSame(output, next);
+            assertMatricesEqual(expectedEnding, next);
+        }
+        assertMatricesEqual(originalPoses, poses);
+        assertMatricesEqual(originalWhole, whole);
+    }
+
+    @Test
+    void invalidFullBodyPoseTransformsFailOpenForLivePosesAndEndingSources() {
+        AuxiliaryBoneLayout layout = parentChildLayout(1, 1);
+        OpenMatrix4f[] poses = translatedMatrices(HumanoidRig.EPIC_JOINT_COUNT, 0.25F);
+        OpenMatrix4f[] origins = AuxiliaryPoseMatrices.allocate(HumanoidRig.EPIC_JOINT_COUNT);
+        OpenMatrix4f[] whole = parentChildSkins(1, 1);
+        OpenMatrix4f[] expected = AuxiliaryPoseMatrices.allocate(layout.totalPoseCount());
+        OpenMatrix4f[] output = AuxiliaryPoseMatrices.allocate(layout.totalPoseCount());
+        OpenMatrix4f nonFiniteRotation = new OpenMatrix4f();
+        nonFiniteRotation.m12 = Float.NaN;
+        OpenMatrix4f nonFiniteTranslation = new OpenMatrix4f();
+        nonFiniteTranslation.m30 = Float.POSITIVE_INFINITY;
+        for (boolean fullBody : new boolean[]{false, true}) {
+            for (float endingWeight : new float[]{0, 0.5F, 1}) {
+                OpenMatrix4f[] source = endingWeight > 0 ? whole : null;
+                AuxiliaryPoseMatrices.compose(poses, origins, layout, expected,
+                        null, whole, null, null, fullBody, null, null, null, source, endingWeight);
+                for (OpenMatrix4f correction : new OpenMatrix4f[]{
+                        null, new OpenMatrix4f(), nonFiniteRotation, nonFiniteTranslation}) {
+                    AuxiliaryPoseMatrices.compose(poses, origins, layout, output,
+                            null, whole, null, null, fullBody, null, null, null,
+                            source, endingWeight, correction);
+                    assertMatricesEqual(expected, output);
+                    for (OpenMatrix4f matrix : output) assertFinite(matrix);
+                }
+            }
+        }
+        OpenMatrix4f correction = new OpenMatrix4f().rotateDeg(60, Vec3f.Y_AXIS);
+        AuxiliaryPoseMatrices.compose(poses, origins, layout, expected,
+                null, whole, null, null, false, null, null, null);
+        AuxiliaryPoseMatrices.compose(poses, origins, layout, output,
+                null, whole, null, null, false, null, null, null, null, 0, correction);
+        assertMatricesEqual(expected, output);
+    }
+
+    @Test
     void fullBodyBlendUsesShortestRotationAndKeepsChildAttached() {
         GeometryDocument geometry = new GeometryDocument();
         GeometryDocument.Bone root = faceBone("Root", -1.0F, 1.0F, -1.0F, 1.0F);
@@ -1568,6 +1726,27 @@ class AuxiliaryPoseMatricesTest {
         return AuxiliaryBoneLayout.create(geometry);
     }
 
+    private static AuxiliaryBoneLayout parentChildLayout(float horizontalScale, float verticalScale) {
+        GeometryDocument geometry = new GeometryDocument();
+        GeometryDocument.Bone root = faceBone("Root", -1, 1, -1, 1);
+        GeometryDocument.Bone arm = faceBone("RightArm", -0.5F, 0.5F, -0.5F, 0.5F);
+        arm.parentName(root.name());
+        arm.pivot(0, 2, 0);
+        geometry.add(root);
+        geometry.add(arm);
+        geometry.linkHierarchy();
+        return AuxiliaryBoneLayout.create(geometry, horizontalScale, verticalScale);
+    }
+
+    private static OpenMatrix4f[] parentChildSkins(float horizontalScale, float verticalScale) {
+        Matrix4f root = new Matrix4f().translate(1, 0.5F, -2)
+                .rotateZ((float) Math.toRadians(25));
+        Matrix4f child = new Matrix4f(root).translate(0, 2, 0)
+                .rotateX((float) Math.toRadians(40)).translate(0, -2, 0);
+        return new OpenMatrix4f[]{scaledSkin(root, horizontalScale, verticalScale),
+                scaledSkin(child, horizontalScale, verticalScale)};
+    }
+
     private static void assertBoneMatrices(AuxiliaryBoneLayout layout, OpenMatrix4f[] matrices,
                                            OpenMatrix4f expected, String... names) {
         for (String name : names) {
@@ -1603,6 +1782,11 @@ class AuxiliaryPoseMatricesTest {
             result[index] = new OpenMatrix4f(source[index]);
         }
         return result;
+    }
+
+    private static void assertMatricesEqual(OpenMatrix4f[] expected, OpenMatrix4f[] actual) {
+        assertEquals(expected.length, actual.length);
+        for (int index = 0; index < expected.length; index++) assertMatrixEquals(expected[index], actual[index]);
     }
 
     private static OpenMatrix4f[] translatedMatrices(int count, float multiplier) {

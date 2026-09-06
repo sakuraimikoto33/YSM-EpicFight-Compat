@@ -11,6 +11,19 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class CompatHumanoidMeshTest {
     @Test
+    void firstPersonRebasesOnlyACustomFullBodyBowOrItsEndingSource() {
+        assertTrue(CompatHumanoidMesh.usesFirstPersonPoseTransform(true, true, false));
+        assertTrue(CompatHumanoidMesh.usesFirstPersonPoseTransform(true, false, true));
+        assertTrue(CompatHumanoidMesh.usesFirstPersonPoseTransform(true, true, true));
+        assertFalse(CompatHumanoidMesh.usesFirstPersonPoseTransform(true, false, false));
+        for (boolean fullBody : new boolean[]{false, true}) {
+            for (boolean ending : new boolean[]{false, true}) {
+                assertFalse(CompatHumanoidMesh.usesFirstPersonPoseTransform(false, fullBody, ending));
+            }
+        }
+    }
+
+    @Test
     void ordinaryBowMainhandSwitchUsesEpicFightsOffArmTool() {
         Set<InteractionHand> main = Set.of(InteractionHand.MAIN_HAND);
 

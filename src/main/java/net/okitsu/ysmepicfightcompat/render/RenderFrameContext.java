@@ -24,6 +24,8 @@ public final class RenderFrameContext {
         private final boolean showUnlistedParts;
         @Nullable
         private final Float epicModelYaw;
+        @Nullable
+        private final OpenMatrix4f fullBodyPoseTransform;
         private final boolean epicFightActionActive;
         @Nullable
         private final MovementAnimationType ysmMovement;
@@ -46,13 +48,16 @@ public final class RenderFrameContext {
                       Map<String, Boolean> visibleParts, boolean showUnlistedParts,
                       @Nullable Float epicModelYaw,
                       boolean epicFightActionActive,
-                      @Nullable MovementAnimationType ysmMovement) {
+                      @Nullable MovementAnimationType ysmMovement,
+                      @Nullable OpenMatrix4f fullBodyPoseTransform) {
             this.entity = entity;
             this.firstPerson = firstPerson;
             this.visibleParts = Map.copyOf(visibleParts);
             this.showUnlistedParts = showUnlistedParts;
             this.epicModelYaw = epicModelYaw != null && Float.isFinite(epicModelYaw)
                     ? epicModelYaw : null;
+            this.fullBodyPoseTransform = firstPerson && fullBodyPoseTransform != null
+                    ? new OpenMatrix4f(fullBodyPoseTransform) : null;
             this.epicFightActionActive = epicFightActionActive;
             this.ysmMovement = ysmMovement;
         }
@@ -77,6 +82,12 @@ public final class RenderFrameContext {
         @Nullable
         public Float epicModelYaw() {
             return epicModelYaw;
+        }
+
+        /** Converts a canonical YSM full-body skin into this first-person draw's basis. */
+        @Nullable
+        public OpenMatrix4f fullBodyPoseTransform() {
+            return fullBodyPoseTransform == null ? null : new OpenMatrix4f(fullBodyPoseTransform);
         }
 
         /** Whether an attack, guard, dodge, aim, hurt, or other Epic Fight action owns pose. */
@@ -121,7 +132,7 @@ public final class RenderFrameContext {
                                         boolean epicFightActionActive,
                                         @Nullable MovementAnimationType ysmMovement) {
         return push(new Frame(entity, false, Map.of(), true, epicModelYaw,
-                epicFightActionActive, ysmMovement));
+                epicFightActionActive, ysmMovement, null));
     }
 
     public static Frame pushFirstPerson(LivingEntity entity,
@@ -143,8 +154,18 @@ public final class RenderFrameContext {
                                         boolean showUnlistedParts,
                                         @Nullable Float epicModelYaw,
                                         boolean epicFightActionActive) {
+        return pushFirstPerson(entity, visibleParts, showUnlistedParts,
+                epicModelYaw, epicFightActionActive, null);
+    }
+
+    public static Frame pushFirstPerson(LivingEntity entity,
+                                        Map<String, Boolean> visibleParts,
+                                        boolean showUnlistedParts,
+                                        @Nullable Float epicModelYaw,
+                                        boolean epicFightActionActive,
+                                        @Nullable OpenMatrix4f fullBodyPoseTransform) {
         return push(new Frame(entity, true, visibleParts, showUnlistedParts,
-                epicModelYaw, epicFightActionActive, null));
+                epicModelYaw, epicFightActionActive, null, fullBodyPoseTransform));
     }
 
     private static Frame push(Frame frame) {

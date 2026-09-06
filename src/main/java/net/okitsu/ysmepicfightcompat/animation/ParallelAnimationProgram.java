@@ -76,7 +76,8 @@ public final class ParallelAnimationProgram {
     /** Values are reused and remain valid only until the owning entity's next sample. */
     public record Frame(OpenMatrix4f[] parallelDeltas, OpenMatrix4f[] wholeModelDeltas,
                         OpenMatrix4f[] heldItemDeltas,
-                        boolean replaceEpicFightPose, boolean[] replaceEpicFightAnchors,
+                        boolean replaceEpicFightPose, boolean customFullBodyPose,
+                        boolean[] replaceEpicFightAnchors,
                         boolean[] suppressParallelDeltas,
                         int[] heldItemAnchorJoints,
                         @Nullable OpenMatrix4f[] fullBodyBlendSource,
@@ -1020,12 +1021,18 @@ public final class ParallelAnimationProgram {
         return state.publishedFrame;
     }
 
-    /** Publish once after final mesh composition; never expose same-frame feedback. */
+    /** Whether this frame needs a canonical model-space snapshot for next-frame queries. */
+    public boolean needsBoneQueryPublication(LivingEntity entity) {
+        RuntimeState state = states.get(entity);
+        return state != null && state.environment.boneQueriesRequested()
+                && state.lastNow != state.boneQuerySampledAt;
+    }
+
+    /** Publish once after model-space composition; never expose a camera-space rebase. */
     public void publishBoneQueries(LivingEntity entity, OpenMatrix4f[] complete,
                                    Set<String> hiddenBones) {
+        if (!needsBoneQueryPublication(entity)) return;
         RuntimeState state = states.get(entity);
-        if (state == null || !state.environment.boneQueriesRequested()
-                || state.lastNow == state.boneQuerySampledAt) return;
         state.displayedBoneQueries = DisplayedBoneQueries.capture(
                 layout, complete, state.displayedBoneQueries, hiddenBones);
         state.boneQuerySampledAt = state.lastNow;
@@ -1834,7 +1841,8 @@ public final class ParallelAnimationProgram {
     private Frame frame(EvaluationScratch scratch) {
         return new Frame(scratch.parallelPose.output, scratch.wholeModelPose.output,
                 scratch.heldItemPose.output,
-                scratch.replaceEpicFightPose, scratch.replaceEpicFightAnchors,
+                scratch.replaceEpicFightPose, scratch.frameCustomFullBody,
+                scratch.replaceEpicFightAnchors,
                 scratch.suppressParallelDeltas,
                 scratch.heldItemAnchorJoints,
                 scratch.fullBodyBlendSource, scratch.fullBodyBlendWeight,

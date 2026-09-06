@@ -102,6 +102,29 @@ class RenderFrameContextTest {
     }
 
     @Test
+    void firstPersonPoseTransformIsDefensiveAndScopedToTheExactDraw() {
+        OpenMatrix4f transform = new OpenMatrix4f().translate(1, 2, 3);
+        RenderFrameContext.Frame first = RenderFrameContext.pushFirstPerson(
+                null, Map.of("rightArm", true), false, 25.0F, true, transform);
+        transform.m30 = 99;
+        assertEquals(1, first.fullBodyPoseTransform().m30);
+        first.fullBodyPoseTransform().m31 = 99;
+        assertEquals(2, first.fullBodyPoseTransform().m31);
+
+        RenderFrameContext.Frame third = RenderFrameContext.pushThirdPerson(null, -15.0F);
+        assertNull(third.fullBodyPoseTransform());
+        RenderFrameContext.pop(third);
+        assertSame(first, RenderFrameContext.current());
+        assertEquals(3, first.fullBodyPoseTransform().m32);
+
+        RenderFrameContext.Frame unchanged = RenderFrameContext.pushFirstPerson(
+                null, Map.of(), true, 10.0F);
+        assertNull(unchanged.fullBodyPoseTransform());
+        RenderFrameContext.pop(unchanged);
+        assertSame(first, RenderFrameContext.current());
+    }
+
+    @Test
     void ordinaryBowMainhandSuppressionUsesTheOffArmPhysicalSide() {
         assertFalse(RenderFrameContext.physicalRightForLogicalHand(
                 InteractionHand.MAIN_HAND, HumanoidArm.RIGHT, true));
