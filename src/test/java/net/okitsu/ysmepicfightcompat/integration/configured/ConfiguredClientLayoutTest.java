@@ -290,6 +290,102 @@ class ConfiguredClientLayoutTest {
         assertFalse(displayedFolder.getChildren().get(0).getValue().isChanged());
     }
 
+    @Test
+    void optionalVisibilityTracksEachModIndependentlyForValuesAndRuleFolders() {
+        List<IConfigEntry> original = allEntries();
+        List<IConfigEntry> snapshot = List.copyOf(original);
+        for (boolean parCoolAvailable : List.of(false, true)) {
+            for (boolean swemAvailable : List.of(false, true)) {
+                List<?> visible = visibleEntries(original, parCoolAvailable, swemAvailable);
+                List<IConfigEntry> displayed = descendants(
+                        ConfiguredClientLayout.groupClientEntries(visible));
+                for (IConfigEntry entry : original) {
+                    String name = name(entry);
+                    boolean expected = switch (name) {
+                        case "useYsmParCoolAnimations", "parcoolAnimationExclusions" -> parCoolAvailable;
+                        case "useYsmSwemAnimations", "swemAnimationExclusions" -> swemAvailable;
+                        default -> true;
+                    };
+                    assertEquals(expected ? 1L : 0L,
+                            displayed.stream().filter(candidate -> candidate == entry).count(), name);
+                }
+                assertEquals(snapshot, original);
+            }
+        }
+    }
+
+    @Test
+    void hidesOptionalPlaceholdersBeforeTheirDynamicEditorsAreCreated() {
+        for (String name : List.of("parcoolAnimationExclusions", "swemAnimationExclusions")) {
+            IConfigEntry placeholder = value(name);
+            assertFalse(ConfiguredClientLayout.isVisibleClientEntry(placeholder, false, false));
+            assertTrue(ConfiguredClientLayout.isVisibleClientEntry(placeholder, true, true));
+        }
+    }
+
+    @Test
+    void hiddenOnlySettingsDoNotGenerateEmptyPresentationFolders() {
+        List<IConfigEntry> optional = List.of(value("useYsmParCoolAnimations"),
+                value("useYsmSwemAnimations"), folder("parcoolAnimationExclusions"),
+                folder("swemAnimationExclusions"));
+
+        assertTrue(ConfiguredClientLayout.groupClientEntries(
+                visibleEntries(optional, false, false)).isEmpty());
+
+        IConfigEntry ladder = value("useNaturalLadderAnimations");
+        List<?> grouped = ConfiguredClientLayout.groupClientEntries(visibleEntries(
+                List.of(ladder, folder("parcoolAnimationExclusions")), false, false));
+        assertEquals(List.of("animations"), names(grouped));
+        assertEquals(List.of(ladder), entry(grouped, 0).getChildren());
+    }
+
+    @Test
+    void hidingChangedSettingsDoesNotResetValuesDirtyStateOrDynamicDescendants() {
+        BooleanValue setting = new BooleanValue("useYsmParCoolAnimations", true);
+        BooleanValue rule = new BooleanValue("example/model", true);
+        setting.set(false);
+        rule.set(false);
+        IConfigEntry settingEntry = new ValueEntry(setting);
+        IConfigEntry ruleEntry = new ValueEntry(rule);
+        IConfigEntry ruleFolder = folder("swemAnimationExclusions", ruleEntry);
+        List<IConfigEntry> original = List.of(settingEntry, ruleFolder);
+
+        assertTrue(visibleEntries(original, false, false).isEmpty());
+
+        for (BooleanValue hidden : List.of(setting, rule)) {
+            assertFalse(hidden.get());
+            assertTrue(hidden.isChanged());
+            assertEquals(0, hidden.restoreCalls);
+            assertEquals(0, hidden.cleanCacheCalls);
+        }
+        List<?> restoredVisibility = visibleEntries(original, true, true);
+        assertSame(settingEntry, restoredVisibility.get(0));
+        assertSame(ruleFolder, restoredVisibility.get(1));
+        assertSame(ruleEntry, ruleFolder.getChildren().get(0));
+    }
+
+    @Test
+    void visibilityLeavesUnrelatedEntriesAndSubtreesUnchanged() {
+        IConfigEntry unknown = folder("futureSettings", value("useYsmParCoolAnimations"));
+        IConfigEntry ordinary = value("useYsmMovementAnimations");
+        Object foreign = new Object();
+        List<Object> original = List.of(unknown, ordinary, foreign);
+
+        List<?> visible = visibleEntries(original, false, false);
+
+        assertEquals(original.size(), visible.size());
+        for (int index = 0; index < original.size(); index++) {
+            assertSame(original.get(index), visible.get(index));
+        }
+        assertEquals(List.of("useYsmParCoolAnimations"), names(unknown.getChildren()));
+    }
+
+    private static List<?> visibleEntries(List<?> entries, boolean parCoolAvailable,
+                                          boolean swemAvailable) {
+        return entries.stream().filter(entry -> ConfiguredClientLayout.isVisibleClientEntry(
+                entry, parCoolAvailable, swemAvailable)).toList();
+    }
+
     private static List<IConfigEntry> allEntries() {
         List<IConfigEntry> entries = new ArrayList<>();
         ANIMATION_EXCLUSIONS.forEach(name -> entries.add(folder(name)));

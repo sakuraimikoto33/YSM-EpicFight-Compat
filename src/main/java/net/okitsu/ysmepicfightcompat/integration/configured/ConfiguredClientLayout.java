@@ -2,7 +2,9 @@ package net.okitsu.ysmepicfightcompat.integration.configured;
 
 import com.mrcrayfish.configured.api.IConfigEntry;
 import com.mrcrayfish.configured.api.IConfigValue;
+import com.mrcrayfish.configured.impl.forge.ForgeConfig;
 import net.minecraft.network.chat.Component;
+import net.minecraftforge.common.ForgeConfigSpec;
 
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -24,6 +26,31 @@ public final class ConfiguredClientLayout {
             "useYsmHeldItemModels", "useYsmProjectileModels", "useYsmVehicleModels");
 
     private ConfiguredClientLayout() {
+    }
+
+    /** Filter before creating dynamic rule folders; stored values are never read or changed. */
+    public static boolean isVisibleClientEntry(Object entry, boolean parCoolAvailable,
+                                               boolean swemAvailable) {
+        return isVisibleClientKey(entryName(entry), parCoolAvailable, swemAvailable);
+    }
+
+    /**
+     * Configured's mod-wide reset and changed-state check use a separate Forge-value list,
+     * not the displayed tree. Preserve hidden settings by excluding them from that list too.
+     */
+    public static List<?> visibleForgeValues(List<?> values, boolean parCoolAvailable,
+                                             boolean swemAvailable) {
+        return values.stream().filter(value -> ForgeValueEntryAccess.isVisible(
+                value, parCoolAvailable, swemAvailable)).toList();
+    }
+
+    private static boolean isVisibleClientKey(String name, boolean parCoolAvailable,
+                                               boolean swemAvailable) {
+        return switch (name) {
+            case "useYsmParCoolAnimations", "parcoolAnimationExclusions" -> parCoolAvailable;
+            case "useYsmSwemAnimations", "swemAnimationExclusions" -> swemAvailable;
+            default -> true;
+        };
     }
 
     /**
@@ -97,6 +124,23 @@ public final class ConfiguredClientLayout {
             result.addAll(grouped.getOrDefault(key, List.of()));
         }
         return result;
+    }
+
+    /** Access Configured's protected record without reflection or constructing a ForgeConfig. */
+    private abstract static class ForgeValueEntryAccess extends ForgeConfig {
+        private ForgeValueEntryAccess(ForgeConfigSpec spec) {
+            super(null, spec);
+        }
+
+        private static boolean isVisible(Object entry, boolean parCoolAvailable,
+                                          boolean swemAvailable) {
+            if (!(entry instanceof ForgeValueEntry forgeEntry)) {
+                return true;
+            }
+            List<String> path = forgeEntry.value().getPath();
+            return path.size() != 2 || !"client".equals(path.get(0))
+                    || isVisibleClientKey(path.get(1), parCoolAvailable, swemAvailable);
+        }
     }
 
     /** Configured handles navigation, search, reset, and saving through this same tree. */

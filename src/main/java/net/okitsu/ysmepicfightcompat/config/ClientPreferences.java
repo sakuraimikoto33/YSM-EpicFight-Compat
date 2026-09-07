@@ -45,11 +45,11 @@ public final class ClientPreferences {
             USE_NATURAL_LADDER_ANIMATIONS;
     public static final ForgeConfigSpec.ConfigValue<Config>
             MOVEMENT_ANIMATION_EXCLUSIONS;
-    public static final ForgeConfigSpec.BooleanValue
+    public static final ForgeConfigSpec.ConfigValue<Boolean>
             USE_YSM_PARCOOL_ANIMATIONS;
     public static final ForgeConfigSpec.ConfigValue<Config>
             PARCOOL_ANIMATION_EXCLUSIONS;
-    public static final ForgeConfigSpec.BooleanValue
+    public static final ForgeConfigSpec.ConfigValue<Boolean>
             USE_YSM_SWEM_ANIMATIONS;
     public static final ForgeConfigSpec.ConfigValue<Config>
             SWEM_ANIMATION_EXCLUSIONS;
@@ -175,47 +175,47 @@ public final class ClientPreferences {
                 .translation("config.ysm_epicfight_compat.movement_animation_exclusions")
                 .define("movementAnimationExclusions", Config::inMemory,
                         MovementAnimationPolicy::isValidConfiguration);
-        USE_YSM_PARCOOL_ANIMATIONS = config
-                .comment("Prioritize YSM ParCool action animations while Epic Fight battle mode is active.",
-                        "Epic ParCool's Chain movement and Wall movement animations always keep the addon pose when it is loaded.",
-                        "Actual Epic Fight attacks, guarding, and hit reactions retain Epic Fight's pose.",
-                        "Use parcoolAnimationExclusions to disable individual actions for each model.",
-                        "Independent of useYsmMovementAnimations and movementAnimationExclusions.",
-                        "Only the active animation identifier and its resolved pose decision are synchronized; these rules remain local.",
-                        "Default: true")
-                .translation("config.ysm_epicfight_compat.use_ysm_parcool_animations")
-                .define("useYsmParCoolAnimations", true);
-        PARCOOL_ANIMATION_EXCLUSIONS = config
-                .comment("Model-specific ParCool actions that disable YSM ParCool animations.",
-                        "Use short YSM animation names without the parcool: prefix.",
-                        "The list never enables YSM ParCool animations when useYsmParCoolAnimations is disabled.",
-                        "Independent of ordinary movement and SWEM exclusions; Epic ParCool's Chain movement and Wall movement retain the addon pose.",
-                        "Rule contents remain local; only the current animation identifier and resolved pose decision are synchronized.",
-                        "Example: \"wine_fox/21_saint\" = [\"fast_running\", \"hang\"].",
-                        "Default: {}")
-                .translation("config.ysm_epicfight_compat.parcool_animation_exclusions")
-                .define("parcoolAnimationExclusions", Config::inMemory,
-                        value -> ModAnimationPolicy.isValidConfiguration(ModAnimationType.PARCOOL, value));
-        USE_YSM_SWEM_ANIMATIONS = config
-                .comment("Prioritize YSM SWEM riding animations while Epic Fight battle mode is active.",
-                        "Actual Epic Fight attacks, guarding, and hit reactions retain Epic Fight's pose.",
-                        "Use swemAnimationExclusions to disable individual riding animations for each model.",
-                        "Independent of useYsmMovementAnimations and movementAnimationExclusions.",
-                        "Only the active animation identifier and its resolved pose decision are synchronized; these rules remain local.",
-                        "Default: true")
-                .translation("config.ysm_epicfight_compat.use_ysm_swem_animations")
-                .define("useYsmSwemAnimations", true);
-        SWEM_ANIMATION_EXCLUSIONS = config
-                .comment("Model-specific SWEM riding states that disable YSM SWEM animations.",
-                        "Use short YSM animation names without the swem: prefix.",
-                        "The list never enables YSM SWEM animations when useYsmSwemAnimations is disabled.",
-                        "Independent of ordinary movement and ParCool exclusions.",
-                        "Rule contents remain local; only the current animation identifier and resolved pose decision are synchronized.",
-                        "Example: \"wine_fox/21_saint\" = [\"gallop\", \"jump_lv1\"].",
-                        "Default: {}")
-                .translation("config.ysm_epicfight_compat.swem_animation_exclusions")
-                .define("swemAnimationExclusions", Config::inMemory,
-                        value -> ModAnimationPolicy.isValidConfiguration(ModAnimationType.SWEM, value));
+        boolean parCoolAvailable = isOptionalAnimationAvailable(ModAnimationType.PARCOOL);
+        boolean swemAvailable = isOptionalAnimationAvailable(ModAnimationType.SWEM);
+        USE_YSM_PARCOOL_ANIMATIONS = OptionalModConfig.defineBoolean(
+                config.translation("config.ysm_epicfight_compat.use_ysm_parcool_animations"),
+                "useYsmParCoolAnimations", parCoolAvailable,
+                "Prioritize YSM ParCool action animations while Epic Fight battle mode is active.",
+                "Epic ParCool's Chain movement and Wall movement animations always keep the addon pose when it is loaded.",
+                "Actual Epic Fight attacks, guarding, and hit reactions retain Epic Fight's pose.",
+                "Use parcoolAnimationExclusions to disable individual actions for each model.",
+                "Independent of useYsmMovementAnimations and movementAnimationExclusions.",
+                "Only the active animation identifier and its resolved pose decision are synchronized; these rules remain local.",
+                "Default: true");
+        PARCOOL_ANIMATION_EXCLUSIONS = OptionalModConfig.defineExclusions(
+                config.translation("config.ysm_epicfight_compat.parcool_animation_exclusions"),
+                "parcoolAnimationExclusions", ModAnimationType.PARCOOL, parCoolAvailable,
+                "Model-specific ParCool actions that disable YSM ParCool animations.",
+                "Use short YSM animation names without the parcool: prefix.",
+                "The list never enables YSM ParCool animations when useYsmParCoolAnimations is disabled.",
+                "Independent of ordinary movement and SWEM exclusions; Epic ParCool's Chain movement and Wall movement retain the addon pose.",
+                "Rule contents remain local; only the current animation identifier and resolved pose decision are synchronized.",
+                "Example: \"wine_fox/21_saint\" = [\"fast_running\", \"hang\"].",
+                "Default: {}");
+        USE_YSM_SWEM_ANIMATIONS = OptionalModConfig.defineBoolean(
+                config.translation("config.ysm_epicfight_compat.use_ysm_swem_animations"),
+                "useYsmSwemAnimations", swemAvailable,
+                "Prioritize YSM SWEM riding animations while Epic Fight battle mode is active.",
+                "Actual Epic Fight attacks, guarding, and hit reactions retain Epic Fight's pose.",
+                "Use swemAnimationExclusions to disable individual riding animations for each model.",
+                "Independent of useYsmMovementAnimations and movementAnimationExclusions.",
+                "Only the active animation identifier and its resolved pose decision are synchronized; these rules remain local.",
+                "Default: true");
+        SWEM_ANIMATION_EXCLUSIONS = OptionalModConfig.defineExclusions(
+                config.translation("config.ysm_epicfight_compat.swem_animation_exclusions"),
+                "swemAnimationExclusions", ModAnimationType.SWEM, swemAvailable,
+                "Model-specific SWEM riding states that disable YSM SWEM animations.",
+                "Use short YSM animation names without the swem: prefix.",
+                "The list never enables YSM SWEM animations when useYsmSwemAnimations is disabled.",
+                "Independent of ordinary movement and ParCool exclusions.",
+                "Rule contents remain local; only the current animation identifier and resolved pose decision are synchronized.",
+                "Example: \"wine_fox/21_saint\" = [\"gallop\", \"jump_lv1\"].",
+                "Default: {}");
         YSM_WARNING_ACKNOWLEDGED = config
                 .comment("Whether the official YSM/Epic Fight compatibility warning was already shown.",
                         "Default: false")
@@ -226,6 +226,10 @@ public final class ClientPreferences {
     }
 
     private ClientPreferences() {
+    }
+
+    public static boolean isOptionalAnimationAvailable(ModAnimationType family) {
+        return OptionalModConfig.isAvailable(family);
     }
 
     private static boolean integerInRange(Object value, int minimum, int maximum) {

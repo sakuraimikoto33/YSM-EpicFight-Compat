@@ -1,6 +1,7 @@
 package net.okitsu.ysmepicfightcompat.mixin;
 
 import net.minecraftforge.common.ForgeConfigSpec;
+import net.okitsu.ysmepicfightcompat.animation.ModAnimationType;
 import net.okitsu.ysmepicfightcompat.config.ClientPreferences;
 import net.okitsu.ysmepicfightcompat.integration.configured.ConfiguredClientLayout;
 import net.okitsu.ysmepicfightcompat.integration.configured.ConfiguredHeldItemRules;
@@ -49,7 +50,12 @@ public abstract class ConfiguredForgeFolderEntryMixin {
         }
         List<?> original = info.getReturnValue();
         List<Object> adjusted = new ArrayList<>(original.size());
+        boolean parCoolAvailable = ClientPreferences.isOptionalAnimationAvailable(ModAnimationType.PARCOOL);
+        boolean swemAvailable = ClientPreferences.isOptionalAnimationAvailable(ModAnimationType.SWEM);
         for (Object entry : original) {
+            if (!ConfiguredClientLayout.isVisibleClientEntry(entry, parCoolAvailable, swemAvailable)) {
+                continue;
+            }
             if (ConfiguredHeldItemRules.isPlaceholder(entry)) {
                 String key = ConfiguredHeldItemRules.placeholderKey(entry);
                 adjusted.add(ysmEpicFightCompat$dynamicRules.computeIfAbsent(

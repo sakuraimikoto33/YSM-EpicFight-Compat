@@ -2,12 +2,14 @@ package net.okitsu.ysmepicfightcompat.config;
 
 import com.electronwill.nightconfig.core.Config;
 import net.minecraftforge.common.ForgeConfigSpec;
+import net.okitsu.ysmepicfightcompat.animation.ModAnimationType;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class CachePreferencesTest {
@@ -121,12 +123,12 @@ class CachePreferencesTest {
                 List.of("client", "movementAnimationExclusions"),
                 "Example: \"wine_fox/21_saint\" = [\"run\", \"creative_flight\"].",
                 "Default: {}");
-        assertCommentTail(ClientPreferences.CLIENT_SPEC,
-                List.of("client", "parcoolAnimationExclusions"),
+        assertOptionalCommentTail(ModAnimationType.PARCOOL,
+                "parcoolAnimationExclusions",
                 "Example: \"wine_fox/21_saint\" = [\"fast_running\", \"hang\"].",
                 "Default: {}");
-        assertCommentTail(ClientPreferences.CLIENT_SPEC,
-                List.of("client", "swemAnimationExclusions"),
+        assertOptionalCommentTail(ModAnimationType.SWEM,
+                "swemAnimationExclusions",
                 "Example: \"wine_fox/21_saint\" = [\"gallop\", \"jump_lv1\"].",
                 "Default: {}");
 
@@ -151,11 +153,11 @@ class CachePreferencesTest {
         assertCommentTail(ClientPreferences.CLIENT_SPEC,
                 List.of("client", "useNaturalLadderAnimations"),
                 "Default: true");
-        assertCommentTail(ClientPreferences.CLIENT_SPEC,
-                List.of("client", "useYsmParCoolAnimations"),
+        assertOptionalCommentTail(ModAnimationType.PARCOOL,
+                "useYsmParCoolAnimations",
                 "Default: true");
-        assertCommentTail(ClientPreferences.CLIENT_SPEC,
-                List.of("client", "useYsmSwemAnimations"),
+        assertOptionalCommentTail(ModAnimationType.SWEM,
+                "useYsmSwemAnimations",
                 "Default: true");
         assertCommentTail(ClientPreferences.CLIENT_SPEC,
                 List.of("client", "epicFightCompatibilityWarningShown"),
@@ -199,6 +201,18 @@ class CachePreferencesTest {
         rules.set(List.of("wine_fox/21_saint"), List.of("*"));
         assertFalse(parcool.test(rules));
         assertFalse(swem.test(rules));
+    }
+
+    private static void assertOptionalCommentTail(
+            ModAnimationType family, String key, String... expectedTail) {
+        List<String> path = List.of("client", key);
+        if (ClientPreferences.isOptionalAnimationAvailable(family)) {
+            assertCommentTail(ClientPreferences.CLIENT_SPEC, path, expectedTail);
+        } else {
+            ForgeConfigSpec.ValueSpec value =
+                    (ForgeConfigSpec.ValueSpec) ClientPreferences.CLIENT_SPEC.getRaw(path);
+            assertNull(value.getComment(), () -> "Orphan comment for absent mod: " + path);
+        }
     }
 
     private static void assertCommentTail(
