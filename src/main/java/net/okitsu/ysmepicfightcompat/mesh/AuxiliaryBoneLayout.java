@@ -38,6 +38,8 @@ public final class AuxiliaryBoneLayout {
     private final Map<Integer, Vector3f> extendedArmatureJointPivots;
     private final Map<Integer, Integer> toolAnchorPoseIndices;
     private final Map<Integer, Entry> toolLocatorEntries;
+    private final Map<Integer, List<Entry>> handLocatorCandidates;
+    private final RigBindingPlan rigBindings;
     private final Entry elytraLocatorEntry;
     private final Map<Integer, Entry> attachmentEntries;
     private final Map<Integer, Vector3f> attachmentPivots;
@@ -51,6 +53,8 @@ public final class AuxiliaryBoneLayout {
                                 Map<Integer, Vector3f> extendedArmatureJointPivots,
                                 Map<Integer, Integer> toolAnchorPoseIndices,
                                 Map<Integer, Entry> toolLocatorEntries,
+                                Map<Integer, List<Entry>> handLocatorCandidates,
+                                RigBindingPlan rigBindings,
                                 Entry elytraLocatorEntry,
                                 Map<Integer, Entry> attachmentEntries,
                                 Map<Integer, Vector3f> attachmentPivots,
@@ -62,6 +66,8 @@ public final class AuxiliaryBoneLayout {
         this.extendedArmatureJointPivots = Map.copyOf(extendedArmatureJointPivots);
         this.toolAnchorPoseIndices = Map.copyOf(toolAnchorPoseIndices);
         this.toolLocatorEntries = Map.copyOf(toolLocatorEntries);
+        this.handLocatorCandidates = Map.copyOf(handLocatorCandidates);
+        this.rigBindings = rigBindings;
         this.elytraLocatorEntry = elytraLocatorEntry;
         this.attachmentEntries = Map.copyOf(attachmentEntries);
         this.attachmentPivots = Map.copyOf(attachmentPivots);
@@ -75,6 +81,13 @@ public final class AuxiliaryBoneLayout {
 
     public static AuxiliaryBoneLayout create(GeometryDocument geometry,
                                              float horizontalScale, float verticalScale) {
+        return create(geometry, horizontalScale, verticalScale, RigBindingPlan.create(geometry));
+    }
+
+    /** Explicit plans are useful for rigs whose anatomy cannot be inferred safely. */
+    public static AuxiliaryBoneLayout create(GeometryDocument geometry,
+                                             float horizontalScale, float verticalScale,
+                                             RigBindingPlan rigBindings) {
         List<Entry> entries = new ArrayList<>();
         Map<GeometryDocument.Bone, Entry> byBone = new IdentityHashMap<>();
         Map<String, Entry> byName = new java.util.LinkedHashMap<>();
@@ -122,6 +135,27 @@ public final class AuxiliaryBoneLayout {
                 toolLocators.putIfAbsent(joint, entry);
             }
         }
+        Map<Integer, List<Entry>> handCandidates = new java.util.HashMap<>();
+        for (int joint : new int[]{HumanoidRig.RIGHT_TOOL, HumanoidRig.LEFT_TOOL}) {
+            List<Entry> candidates = new ArrayList<>();
+            String prefix = joint == HumanoidRig.RIGHT_TOOL
+                    ? "righthandlocator" : "lefthandlocator";
+            for (Entry entry : entries) {
+                String name = entry.bone().name().toLowerCase(Locale.ROOT);
+                if (name.equals(prefix) || name.length() == prefix.length() + 1
+                        && name.startsWith(prefix)
+                        && name.charAt(prefix.length()) >= '2'
+                        && name.charAt(prefix.length()) <= '8') {
+                    candidates.add(entry);
+                }
+            }
+            // Preserve existing aliases such as a primary *_Default locator.
+            Entry primary = toolLocators.get(joint);
+            if (primary != null && !candidates.contains(primary)) {
+                candidates.add(0, primary);
+            }
+            handCandidates.put(joint, List.copyOf(candidates));
+        }
         Map<Integer, Entry> attachmentSources = attachmentSources(
                 entries, byBone, estimate.toolSources());
         Map<Integer, Vector3f> attachmentPivots = attachmentPivots(
@@ -130,13 +164,26 @@ public final class AuxiliaryBoneLayout {
                 geometry, byBone, "ElytraLocator");
         return new AuxiliaryBoneLayout(entries, byBone, byName,
                 estimate.pivots(), estimate.extendedArmaturePivots(),
-                toolSources, toolLocators, elytraLocator,
+                toolSources, toolLocators, handCandidates, rigBindings, elytraLocator,
                 attachmentSources, attachmentPivots,
                 horizontalScale, verticalScale);
     }
 
     public List<Entry> entries() {
         return entries;
+    }
+
+    public RigBindingPlan rigBindings() {
+        return rigBindings;
+    }
+
+    public List<Entry> handLocatorCandidates(int joint) {
+        return handLocatorCandidates.getOrDefault(joint, List.of());
+    }
+
+    public boolean hasAuthoredHandLocators(int joint) {
+        return handLocatorCandidates(joint).stream()
+                .anyMatch(entry -> rigBindings.usesAuthoredPose(entry.bone()));
     }
 
     public boolean isEmpty() {

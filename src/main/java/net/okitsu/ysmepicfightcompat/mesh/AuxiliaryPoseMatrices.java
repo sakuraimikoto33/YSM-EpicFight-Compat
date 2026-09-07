@@ -11,6 +11,7 @@ import yesman.epicfight.api.utils.math.OpenMatrix4f;
 import yesman.epicfight.api.utils.math.Vec4f;
 
 import javax.annotation.Nullable;
+import java.util.Set;
 
 /** Builds complete skin matrices without adding joints to Epic Fight's armature. */
 public final class AuxiliaryPoseMatrices {
@@ -22,6 +23,7 @@ public final class AuxiliaryPoseMatrices {
     private final ModelPoseRetargeter retargeter;
     private final OpenMatrix4f[] output;
     private final BlendScratch blendScratch;
+    private final AuthoredScratch authoredScratch = new AuthoredScratch();
     private final OpenMatrix4f[] completeBlendSource;
     private final OpenMatrix4f[] toOrigin = new OpenMatrix4f[HumanoidRig.EPIC_JOINT_COUNT];
     private final OpenMatrix4f[] referenceBindWorlds =
@@ -127,6 +129,26 @@ public final class AuxiliaryPoseMatrices {
                                   @Nullable OpenMatrix4f[] fullBodyBlendSource,
                                   float fullBodyBlendWeight,
                                   @Nullable OpenMatrix4f fullBodyPoseTransform) {
+        return compose(armature, poses, parallelDeltas, wholeModelDeltas, heldItemDeltas,
+                replaceEpicFightPose, replaceEpicFightAnchors, suppressParallelDeltas,
+                heldItemAnchorJoints, fullBodyBlendSource, fullBodyBlendWeight,
+                fullBodyPoseTransform, null);
+    }
+
+    /** Native visual branches have their own evaluated hierarchy, never a gameplay armature. */
+    @Nullable
+    public OpenMatrix4f[] compose(@Nullable Armature armature, @Nullable OpenMatrix4f[] poses,
+                                  @Nullable OpenMatrix4f[] parallelDeltas,
+                                  @Nullable OpenMatrix4f[] wholeModelDeltas,
+                                  @Nullable OpenMatrix4f[] heldItemDeltas,
+                                  boolean replaceEpicFightPose,
+                                  @Nullable boolean[] replaceEpicFightAnchors,
+                                  @Nullable boolean[] suppressParallelDeltas,
+                                  @Nullable int[] heldItemAnchorJoints,
+                                  @Nullable OpenMatrix4f[] fullBodyBlendSource,
+                                  float fullBodyBlendWeight,
+                                  @Nullable OpenMatrix4f fullBodyPoseTransform,
+                                  @Nullable OpenMatrix4f[] authoredDeltas) {
         if (armature == null || poses == null
                 || armature.getJointNumber() < HumanoidRig.EPIC_JOINT_COUNT
                 || poses.length < HumanoidRig.EPIC_JOINT_COUNT) {
@@ -143,7 +165,7 @@ public final class AuxiliaryPoseMatrices {
                 heldItemDeltas, retargetedAnchors, replaceEpicFightPose,
                 replaceEpicFightAnchors, suppressParallelDeltas,
                 heldItemAnchorJoints, fullBodyBlendSource, fullBodyBlendWeight,
-                fullBodyPoseTransform, blendScratch);
+                fullBodyPoseTransform, blendScratch, authoredDeltas, authoredScratch);
         float endingWeight = validBlendSource(fullBodyBlendSource)
                 ? unitWeight(fullBodyBlendWeight) : 0.0F;
         rightEpicGripWeight = rawEpicGripWeight(HumanoidRig.RIGHT_TOOL,
@@ -250,6 +272,25 @@ public final class AuxiliaryPoseMatrices {
                 ? rightAuthoredItemOutput : joint == HumanoidRig.LEFT_TOOL
                 ? leftAuthoredItemOutput : null;
         return authoredLocatorPose(complete, locator, destination);
+    }
+
+    /** Selects a form attachment independently from transient item-switch animation ownership. */
+    public HandLocatorSelection selectFormHandLocator(
+            @Nullable OpenMatrix4f[] complete, Set<String> hiddenBones, int joint) {
+        return HandLocatorSelection.resolve(layout.hasAuthoredHandLocators(joint)
+                ? layout.handLocatorCandidates(joint) : java.util.List.of(), complete, hiddenBones);
+    }
+
+    /** A visible ordinary humanoid locator deliberately keeps the existing Epic Fight grip. */
+    @Nullable
+    public OpenMatrix4f formHeldItemPose(@Nullable OpenMatrix4f[] complete,
+                                        HandLocatorSelection selection) {
+        AuxiliaryBoneLayout.Entry locator = selection.locator();
+        if (selection.status() != HandLocatorSelection.Status.VISIBLE || locator == null
+                || !layout.rigBindings().usesAuthoredPose(locator.bone())) {
+            return null;
+        }
+        return authoredLocatorPose(complete, locator, new OpenMatrix4f());
     }
 
     /** Reconstructs the animated official-YSM frame ending at {@code ElytraLocator}. */
@@ -752,6 +793,41 @@ public final class AuxiliaryPoseMatrices {
                                           float fullBodyBlendWeight,
                                           @Nullable OpenMatrix4f fullBodyPoseTransform,
                                           @Nullable BlendScratch blendScratch) {
+        return compose(poses, toOrigin, layout, destination, parallelDeltas, wholeModelDeltas,
+                heldItemDeltas, retargetedAnchors, replaceEpicFightPose, replaceEpicFightAnchors,
+                suppressParallelDeltas, heldItemAnchorJoints, fullBodyBlendSource,
+                fullBodyBlendWeight, fullBodyPoseTransform, blendScratch, null, null);
+    }
+
+    static OpenMatrix4f[] composeAuthored(OpenMatrix4f[] poses, OpenMatrix4f[] toOrigin,
+                                         AuxiliaryBoneLayout layout, OpenMatrix4f[] destination,
+                                         @Nullable OpenMatrix4f[] parallelDeltas,
+                                         @Nullable OpenMatrix4f[] wholeModelDeltas,
+                                         boolean replaceEpicFightPose,
+                                         @Nullable OpenMatrix4f[] authoredDeltas,
+                                         @Nullable OpenMatrix4f viewTransform) {
+        return compose(poses, toOrigin, layout, destination, parallelDeltas, wholeModelDeltas,
+                null, null, replaceEpicFightPose, null, null, null, null, 0.0F,
+                viewTransform, null, authoredDeltas, new AuthoredScratch());
+    }
+
+    private static OpenMatrix4f[] compose(OpenMatrix4f[] poses, OpenMatrix4f[] toOrigin,
+                                          AuxiliaryBoneLayout layout,
+                                          OpenMatrix4f[] destination,
+                                          @Nullable OpenMatrix4f[] parallelDeltas,
+                                          @Nullable OpenMatrix4f[] wholeModelDeltas,
+                                          @Nullable OpenMatrix4f[] heldItemDeltas,
+                                          @Nullable OpenMatrix4f[] retargetedAnchors,
+                                          boolean replaceEpicFightPose,
+                                          @Nullable boolean[] replaceEpicFightAnchors,
+                                          @Nullable boolean[] suppressParallelDeltas,
+                                          @Nullable int[] heldItemAnchorJoints,
+                                          @Nullable OpenMatrix4f[] fullBodyBlendSource,
+                                          float fullBodyBlendWeight,
+                                          @Nullable OpenMatrix4f fullBodyPoseTransform,
+                                          @Nullable BlendScratch blendScratch,
+                                          @Nullable OpenMatrix4f[] authoredDeltas,
+                                          @Nullable AuthoredScratch authoredScratch) {
         if (poses.length < HumanoidRig.EPIC_JOINT_COUNT
                 || toOrigin.length < HumanoidRig.EPIC_JOINT_COUNT
                 || destination.length != layout.totalPoseCount()) {
@@ -763,6 +839,11 @@ public final class AuxiliaryPoseMatrices {
             destination[index].load(poses[index]).mulBack(toOrigin[index]);
         }
         for (AuxiliaryBoneLayout.Entry entry : layout.entries()) {
+            if (!replaceEpicFightPose && authoredScratch != null
+                    && composeAuthoredBranch(layout, entry, destination, authoredDeltas,
+                    fullBodyTransform, authoredScratch)) {
+                continue;
+            }
             OpenMatrix4f anchor = retargetedAnchors != null
                     && entry.anchorJoint() < retargetedAnchors.length
                     && retargetedAnchors[entry.anchorJoint()] != null
@@ -832,6 +913,71 @@ public final class AuxiliaryPoseMatrices {
         applyFullBodyBlend(layout, destination, fullBodyBlendSource,
                 fullBodyBlendWeight, fullBodyTransform, blendScratch);
         return destination;
+    }
+
+    /**
+     * A free-standing authored body uses model space. An attached body instead inherits
+     * its displayed parent once, removing the same parent's native delta before joining.
+     * This keeps a small animal on a moving humanoid head without double head motion.
+     */
+    private static boolean composeAuthoredBranch(
+            AuxiliaryBoneLayout layout, AuxiliaryBoneLayout.Entry entry,
+            OpenMatrix4f[] destination, @Nullable OpenMatrix4f[] authoredDeltas,
+            @Nullable OpenMatrix4f viewTransform, AuthoredScratch scratch) {
+        RigBindingPlan bindings = layout.rigBindings();
+        int index = entry.auxiliaryIndex();
+        if (!bindings.usesAuthoredPose(entry.bone())) {
+            return false;
+        }
+        // No animation program still means an authored bind pose, not permission to
+        // retarget each animal limb to an unrelated Epic Fight humanoid joint.
+        OpenMatrix4f nativePose = authoredDeltas == null ? IDENTITY
+                : index < authoredDeltas.length ? authoredDeltas[index] : null;
+        if (nativePose == null || !finite(nativePose)) {
+            return false;
+        }
+        OpenMatrix4f output = destination[entry.poseIndex()];
+        GeometryDocument.Bone root = bindings.domainRoot(entry.bone());
+        AuxiliaryBoneLayout.Entry parent = root == null || root.parent() == null ? null
+                : layout.entryForBoneName(root.parent().name());
+        if (bindings.epicAnchorFor(entry.bone()) < 0 || parent == null) {
+            output.load(nativePose);
+            if (viewTransform != null) {
+                output.mulFront(viewTransform);
+            }
+            return true;
+        }
+        int parentIndex = parent.auxiliaryIndex();
+        OpenMatrix4f parentSkin = destination[parent.poseIndex()];
+        OpenMatrix4f nativeParent = authoredDeltas == null ? IDENTITY
+                : parentIndex < authoredDeltas.length ? authoredDeltas[parentIndex] : null;
+        if (nativeParent == null || !finite(nativeParent) || !finite(parentSkin)) {
+            return false;
+        }
+        load(scratch.parentInverse, nativeParent);
+        float determinant = scratch.parentInverse.determinant();
+        if (!Float.isFinite(determinant)
+                || Math.abs(determinant) <= SINGULAR_DETERMINANT_EPSILON) {
+            // An intentionally collapsed parent also hides this subtree. Never invert
+            // its zero scale or revive the child at an unrelated humanoid joint.
+            output.load(parentSkin);
+            return true;
+        }
+        scratch.parentInverse.invert();
+        scratch.result.set(load(scratch.parent, parentSkin))
+                .mul(scratch.parentInverse).mul(load(scratch.nativePose, nativePose));
+        if (!finite(scratch.result)) {
+            return false;
+        }
+        store(output, scratch.result);
+        return true;
+    }
+
+    private static final class AuthoredScratch {
+        private final Matrix4f parent = new Matrix4f();
+        private final Matrix4f parentInverse = new Matrix4f();
+        private final Matrix4f nativePose = new Matrix4f();
+        private final Matrix4f result = new Matrix4f();
     }
 
     private static void applyFullBodyBlend(

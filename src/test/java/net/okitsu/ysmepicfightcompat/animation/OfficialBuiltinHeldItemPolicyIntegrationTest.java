@@ -625,6 +625,7 @@ class OfficialBuiltinHeldItemPolicyIntegrationTest {
                 fixture.geometry(), MODEL_SCALE, MODEL_SCALE);
         ParallelAnimationProgram program = program(fixture, layout);
         int head = layout.entryForBoneName("Head").auxiliaryIndex();
+        assertFalse(layout.rigBindings().usesAuthoredPose(layout.entries().get(head).bone()));
 
         Map.of(MovementAnimationType.WALK, "walk",
                 MovementAnimationType.RUN, "run",
@@ -635,19 +636,22 @@ class OfficialBuiltinHeldItemPolicyIntegrationTest {
             assertNotNull(fixture.animations().get(main));
             ParallelAnimationProgram.Frame forward = program.sampleMovementAt(
                     0.25D, List.of(main), main, movement,
-                    new NeutralEnvironment(),
+                    new NeutralEnvironment().mathFunctions(),
                     new AnimationControllerProgram.RuntimeState());
+            // Frame matrices borrow the program's reusable scratch. Capture this
+            // result before the looking sample overwrites the same matrix objects.
+            OpenMatrix4f forwardHead = new OpenMatrix4f(forward.wholeModelDeltas()[head]);
             ParallelAnimationProgram.Frame looking = program.sampleMovementAt(
                     0.25D, List.of(main), main, movement,
-                    new NeutralEnvironment().headYaw(35.0D),
+                    new NeutralEnvironment().mathFunctions().headYaw(35.0D),
                     new AnimationControllerProgram.RuntimeState());
 
             assertTrue(forward.replaceEpicFightPose(), movement.name());
             assertTrue(matrixDiffers(
-                            forward.wholeModelDeltas()[head],
+                            forwardHead,
                             looking.wholeModelDeltas()[head]),
                     () -> movement.name()
-                            + " must add official camera yaw after its Head pose");
+                            + " must preserve official camera yaw through its head-control chain");
         });
     }
 
@@ -1073,6 +1077,14 @@ class OfficialBuiltinHeldItemPolicyIntegrationTest {
     private static final class NeutralEnvironment implements ExpressionEngine.Environment {
         private final Map<Integer, Double> variables = new LinkedHashMap<>();
         private double headYaw;
+        private SnapshotExpressionEnvironment arithmetic;
+
+        private NeutralEnvironment mathFunctions() {
+            // Flight authors camera yaw through math.clamp on MHead. Returning zero
+            // for every host function would erase that input before pose composition.
+            arithmetic = SnapshotExpressionEnvironment.capture(this, Set.of(), Set.of());
+            return this;
+        }
 
         private NeutralEnvironment headYaw(double value) {
             headYaw = value;
@@ -1102,7 +1114,7 @@ class OfficialBuiltinHeldItemPolicyIntegrationTest {
 
         @Override
         public double invoke(String name, double[] arguments) {
-            return 0.0D;
+            return arithmetic == null ? 0.0D : arithmetic.invoke(name, arguments);
         }
 
         @Override

@@ -55,6 +55,11 @@ public final class AttachmentArmatureScope implements AutoCloseable {
         OpenMatrix4f[] snapshot = frame == null ? null
                 : snapshot(armature, originalBodyPoses, displayedLayerPoses);
         AttachmentArmatureScope scope = new AttachmentArmatureScope(armature, frame, snapshot);
+        if (snapshot != null) {
+            // These matrices already include mesh-local attachment compensation, just
+            // like copies returned by resolvePoseMatrices. Do not apply it twice.
+            scope.displayedWorldArrays.add(displayedLayerPoses);
+        }
         CURRENT.get().push(scope);
         return scope;
     }
@@ -94,10 +99,10 @@ public final class AttachmentArmatureScope implements AutoCloseable {
         return result;
     }
 
-    /** Recognizes this scope's world-pose copies so item correction is applied once. */
+    /** Recognizes this scope's complete world-pose source so correction is applied once. */
     public static boolean isDisplayedPoseArray(Armature armature, OpenMatrix4f[] poses) {
         AttachmentArmatureScope scope = active(armature);
-        return scope != null && scope.displayedWorldArrays.contains(poses);
+        return scope != null && scope.hasDisplayedPoseSource(poses);
     }
 
     /** Same-frame provenance for locator consumers that do not receive an armature. */
@@ -107,7 +112,22 @@ public final class AttachmentArmatureScope implements AutoCloseable {
             CURRENT.remove();
             return false;
         }
-        return active(scope.armature) == scope && scope.displayedWorldArrays.contains(poses);
+        return active(scope.armature) == scope && scope.hasDisplayedPoseSource(poses);
+    }
+
+    private boolean hasDisplayedPoseSource(@Nullable OpenMatrix4f[] poses) {
+        if (displayedWorldArrays.contains(poses)) {
+            return true;
+        }
+        for (OpenMatrix4f[] displayed : displayedWorldArrays) {
+            if (RenderFrameContext.sameBodyPoseSource(displayed, poses)) {
+                // A renderer may copy its array without copying its matrices. Check
+                // every joint, including add-on entries, but never retain that caller
+                // array: it may later replace a matrix and cease to identify this pose.
+                return true;
+            }
+        }
+        return false;
     }
 
     /** A single world-space joint lookup, preserving unknown/add-on joints. */

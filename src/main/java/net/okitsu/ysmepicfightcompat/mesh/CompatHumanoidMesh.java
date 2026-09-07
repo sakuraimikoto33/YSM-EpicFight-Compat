@@ -50,6 +50,7 @@ public final class CompatHumanoidMesh extends HumanoidMesh {
     private final DefaultPoseProgram poseProgram;
     private final ParallelAnimationProgram parallelAnimations;
     private final AuxiliaryPoseMatrices auxiliaryPoses;
+    private final boolean hasAuthoredBranches;
     private final MovementPoseTransition movementPoseTransition;
     @Nullable
     private final SkinnedMesh glowMesh;
@@ -71,6 +72,7 @@ public final class CompatHumanoidMesh extends HumanoidMesh {
         this.renderLayersFirst = renderLayersFirst;
         this.poseProgram = poseProgram;
         this.parallelAnimations = parallelAnimations;
+        hasAuthoredBranches = auxiliaryBones.rigBindings().hasAuthoredBranches();
         hasBaseGeometry = hasGeometry(parts);
         // A parent-backed SkinnedMesh reuses the parent's parts as well as its arrays.
         // Keep this mesh independent so the glow-only part definitions are retained.
@@ -211,13 +213,11 @@ public final class CompatHumanoidMesh extends HumanoidMesh {
         float meshScale = TouhouMaidRenderBridge.meshDrawScale(this);
         if (auxiliaryPoses != null) {
             OpenMatrix4f[] inputPoses = poses;
-            OpenMatrix4f fullBodyPoseTransform = frame != null && animationFrame != null
+            OpenMatrix4f fullBodyPoseTransform = frame != null
                     && usesFirstPersonPoseTransform(frame.firstPerson(),
-                    animationFrame.customFullBodyPose(),
-                    animationFrame.fullBodyBlendSource() != null
-                            && animationFrame.fullBodyBlendWeight() > 0.0F)
+                    animationFrame, hasAuthoredBranches)
                     ? frame.fullBodyPoseTransform() : null;
-            if (fullBodyPoseTransform != null
+            if (fullBodyPoseTransform != null && animationFrame != null
                     && parallelAnimations.needsBoneQueryPublication(
                     frame.entity(), frame.renderingInInventory())) {
                 // A view-space skin is only for this draw. Bone queries are shared
@@ -309,6 +309,23 @@ public final class CompatHumanoidMesh extends HumanoidMesh {
                                     && animationFrame.naturalLadderPose(),
                             animationFrame == null ? Set.of()
                                     : animationFrame.ladderItemsInHand());
+                    if (!frame.firstPerson()) {
+                        Set<String> hidden = animationFrame == null
+                                ? Set.of() : animationFrame.hiddenBones();
+                        HandLocatorSelection rightLocator = auxiliaryPoses.selectFormHandLocator(
+                                complete, hidden, HumanoidRig.RIGHT_TOOL);
+                        HandLocatorSelection leftLocator = auxiliaryPoses.selectFormHandLocator(
+                                complete, hidden, HumanoidRig.LEFT_TOOL);
+                        // Resolve only after the body's final transition. Neither the
+                        // previous bone-query snapshot nor a raw switch pose is authoritative.
+                        RenderFrameContext.publishFormHeldItemPoints(
+                                frame.entity(), this, frame.entity().getMainArm(),
+                                auxiliaryPoses.formHeldItemPose(complete, rightLocator),
+                                auxiliaryPoses.formHeldItemPose(complete, leftLocator),
+                                rightLocator.status() == HandLocatorSelection.Status.HIDDEN,
+                                leftLocator.status() == HandLocatorSelection.Status.HIDDEN,
+                                meshScale);
+                    }
                 }
                 poses = complete;
                 armature = null;
@@ -384,10 +401,21 @@ public final class CompatHumanoidMesh extends HumanoidMesh {
                 animationFrame == null ? null : animationFrame.heldItemAnchorJoints(),
                 animationFrame == null ? null : animationFrame.fullBodyBlendSource(),
                 animationFrame == null ? 0.0F : animationFrame.fullBodyBlendWeight(),
-                fullBodyPoseTransform);
+                fullBodyPoseTransform,
+                animationFrame == null ? null : animationFrame.authoredDeltas());
     }
 
-    /** Only complete custom-bow poses and their ending source need a world/view rebase. */
+    /** Authored branches also need a view rebase when no animation program is present. */
+    static boolean usesFirstPersonPoseTransform(boolean firstPerson,
+                                                @Nullable ParallelAnimationProgram.Frame frame,
+                                                boolean authoredBranches) {
+        return firstPerson && (authoredBranches
+                && (frame == null || !frame.replaceEpicFightPose())
+                || frame != null && usesFirstPersonPoseTransform(true,
+                frame.customFullBodyPose(), frame.fullBodyBlendSource() != null
+                        && frame.fullBodyBlendWeight() > 0.0F));
+    }
+
     static boolean usesFirstPersonPoseTransform(boolean firstPerson,
                                                boolean customFullBodyPose,
                                                boolean fullBodyEnding) {

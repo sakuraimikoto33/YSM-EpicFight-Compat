@@ -15,6 +15,83 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class AnimationControllerProgramTest {
     @Test
+    void poseOnlyStatesKeepLifecycleVariablesButSuppressExternalInvocations() {
+        AnimationControllerProgram program = parsedProgram("""
+                {"animation_controllers":{"player.hold_mainhand":{
+                  "initial_state":"idle","states":{
+                    "idle":{"animations":["pose"],
+                      "on_entry":["v.entries+=1; ysm.play_sound('entry'); ysm.particle('smoke'); ysm.sync();"],
+                      "on_exit":["v.exits+=1; ysm.stop_sound('entry');"],
+                      "transitions":[{"next":"v.next"}]},
+                    "next":{"animations":["other"],
+                      "on_entry":["v.entries+=1; ysm.abs_particle('smoke'); ysm.stop_all_sounds();"]}
+                  }}}}
+                """);
+        TestEnvironment environment = new TestEnvironment();
+        AnimationControllerProgram.RuntimeState runtime = new AnimationControllerProgram.RuntimeState();
+
+        AnimationControllerProgram.Selection first = program.selectObserved(
+                0, environment, runtime, ignored -> true, ignored -> false);
+        assertEquals("pose", first.outputActive().get(0).name());
+        assertEquals(1, environment.value("v.entries"));
+        assertTrue(environment.invocations.isEmpty());
+
+        environment.writeVariable(ExpressionEngine.slot("v.next"), 1);
+        AnimationControllerProgram.Selection next = program.selectObserved(
+                1, environment, runtime, ignored -> true, ignored -> false);
+        assertEquals("other", next.outputActive().get(0).name());
+        assertEquals(2, environment.value("v.entries"));
+        assertEquals(1, environment.value("v.exits"));
+        assertTrue(environment.invocations.isEmpty());
+    }
+
+    @Test
+    void preparingPoseOnlyBuiltinsDoesNotLeakEffectsOrRepeatLifecycleDuringSelection() {
+        AnimationControllerProgram program = parsedProgram("""
+                {"animation_controllers":{"player.hold_mainhand":{
+                  "initial_state":"ysm-builtin","states":{
+                    "ysm-builtin":{"on_entry":["v.entries+=1; ysm.play_sound('entry');"],
+                      "transitions":[{"held":"v.enter"}]},
+                    "held":{"animations":["pose"],
+                      "on_entry":["v.entries+=1; ysm.particle('smoke');"]}
+                  }}}}
+                """);
+        TestEnvironment environment = new TestEnvironment();
+        AnimationControllerProgram.RuntimeState runtime = new AnimationControllerProgram.RuntimeState();
+        program.prepareBuiltins(0, environment, runtime, ignored -> true, ignored -> false);
+        program.selectObserved(0, environment, runtime, ignored -> true, ignored -> false);
+        assertEquals(1, environment.value("v.entries"));
+        assertTrue(environment.invocations.isEmpty());
+
+        environment.writeVariable(ExpressionEngine.slot("v.enter"), 1);
+        program.prepareBuiltins(1, environment, runtime, ignored -> true, ignored -> false);
+        AnimationControllerProgram.Selection selected = program.selectObserved(
+                1, environment, runtime, ignored -> true, ignored -> false);
+        assertEquals(2, environment.value("v.entries"));
+        assertTrue(selected.outputActive().stream().anyMatch(active -> active.name().equals("pose")));
+        assertTrue(environment.invocations.isEmpty());
+    }
+
+    @Test
+    void legacySinglePredicateKeepsItsPriorLifecycleSemantics() {
+        AnimationControllerProgram program = parsedProgram("""
+                {"animation_controllers":{"player.main":{"states":{
+                  "default":{"animations":["pose"],
+                    "on_entry":["v.entries+=1; ysm.play_sound('entry');"]}
+                }}}}
+                """);
+        for (boolean enabled : new boolean[]{false, true}) {
+            TestEnvironment environment = new TestEnvironment();
+            AnimationControllerProgram.Selection selected = program.selectObserved(
+                    0, environment, new AnimationControllerProgram.RuntimeState(), ignored -> enabled);
+            assertEquals(enabled ? 1 : 0, selected.outputActive().size());
+            assertEquals(1, selected.allActive().size());
+            assertEquals(1, environment.value("v.entries"));
+            assertEquals(List.of("ysm.play_sound"), environment.invocations);
+        }
+    }
+
+    @Test
     void builtinStateIgnoresDeclaredAnimationsForOutputAndCompletion() {
         AnimationControllerProgram program = parsedProgram("""
                 {"animation_controllers":{"player.main":{
@@ -607,6 +684,7 @@ class AnimationControllerProgramTest {
 
     private static final class TestEnvironment implements ExpressionEngine.Environment {
         private final Map<Integer, Double> variables = new HashMap<>();
+        private final List<String> invocations = new java.util.ArrayList<>();
 
         private double value(String name) {
             return variables.getOrDefault(ExpressionEngine.slot(name), 0.0D);
@@ -634,11 +712,13 @@ class AnimationControllerProgramTest {
 
         @Override
         public double invoke(String name, double[] arguments) {
+            invocations.add(name);
             return 0.0D;
         }
 
         @Override
         public double invokeWithText(String name, String[] arguments) {
+            invocations.add(name);
             return 0.0D;
         }
     }

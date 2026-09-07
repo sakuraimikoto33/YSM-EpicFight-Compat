@@ -33,6 +33,13 @@ public final class HeldItemPoseResolver {
         if (entity == null) {
             return original;
         }
+        if (RenderFrameContext.formHeldItemActive(entity)
+                && patch.getArmature() instanceof ToolHolderArmature tools) {
+            // This is only a lookup inside one form-owned item draw. Never change
+            // the patch's action-time hand-parent state or its gameplay armature.
+            return hand == InteractionHand.MAIN_HAND
+                    ? tools.rightToolJoint() : tools.leftToolJoint();
+        }
         boolean requestedHandHeld =
                 RenderFrameContext.keepsLadderItemInHand(entity, hand);
         boolean mainHandHeld = RenderFrameContext.keepsLadderItemInHand(

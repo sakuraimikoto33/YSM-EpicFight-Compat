@@ -44,6 +44,11 @@ public final class RenderFrameContext {
         private boolean mainHandItemSwitchUsesOffArmTool;
         private boolean naturalLadderPose;
         private Set<InteractionHand> ladderItemsInHand = Set.of();
+        private OpenMatrix4f formMainHandPose;
+        private OpenMatrix4f formOffHandPose;
+        private boolean hideFormMainHand;
+        private boolean hideFormOffHand;
+        private int formItemDrawDepth;
 
         private Frame(LivingEntity entity, boolean firstPerson,
                       Map<String, Boolean> visibleParts, boolean showUnlistedParts,
@@ -290,6 +295,128 @@ public final class RenderFrameContext {
         frame.naturalLadderPose = naturalLadderPose;
         frame.ladderItemsInHand = ladderItemsInHand == null
                 ? Set.of() : Set.copyOf(ladderItemsInHand);
+        frame.formMainHandPose = null;
+        frame.formOffHandPose = null;
+        frame.hideFormMainHand = false;
+        frame.hideFormOffHand = false;
+    }
+
+    /**
+     * Physical model locators become logical hands at this single boundary. Epic Fight's
+     * Tool_R/Tool_L slots are not swapped by a player's dominant-arm preference.
+     * Only third-person form attachments use these model-space snapshots.
+     */
+    public static void publishFormHeldItemPoints(
+            LivingEntity entity, CompatHumanoidMesh mesh, HumanoidArm mainArm,
+            @Nullable OpenMatrix4f rightPose, @Nullable OpenMatrix4f leftPose,
+            boolean hideRight, boolean hideLeft, float translationScale) {
+        Frame frame = current();
+        if (frame == null || frame.entity != entity || frame.mesh != mesh
+                || frame.inputPoses == null || frame.firstPerson || mainArm == null) {
+            return;
+        }
+        boolean mainRight = mainArm == HumanoidArm.RIGHT;
+        frame.formMainHandPose = formPoseCopy(mainRight ? rightPose : leftPose, translationScale);
+        frame.formOffHandPose = formPoseCopy(mainRight ? leftPose : rightPose, translationScale);
+        frame.hideFormMainHand = mainRight ? hideRight : hideLeft;
+        frame.hideFormOffHand = mainRight ? hideLeft : hideRight;
+    }
+
+    @Nullable
+    private static OpenMatrix4f formPoseCopy(@Nullable OpenMatrix4f source, float scale) {
+        if (!finite(source) || !Float.isFinite(scale) || scale <= 0.0F) {
+            return null;
+        }
+        OpenMatrix4f copy = new OpenMatrix4f(source);
+        copy.m30 *= scale;
+        copy.m31 *= scale;
+        copy.m32 *= scale;
+        return finite(copy) ? copy : null;
+    }
+
+    /** A per-item, read-only view: a main-hand bow may request the off-hand Tool internally. */
+    public static final class FormHeldItemDraw implements AutoCloseable {
+        private final Frame frame;
+        private final OpenMatrix4f[] poses;
+        private final AttachmentArmatureScope armatureScope;
+        private boolean closed;
+
+        private FormHeldItemDraw(Frame frame, OpenMatrix4f[] poses,
+                                 AttachmentArmatureScope armatureScope) {
+            this.frame = frame;
+            this.poses = poses;
+            this.armatureScope = armatureScope;
+            frame.formItemDrawDepth++;
+        }
+
+        public OpenMatrix4f[] poses() {
+            return poses;
+        }
+
+        @Override
+        public void close() {
+            if (!closed) {
+                closed = true;
+                try {
+                    armatureScope.close();
+                } finally {
+                    frame.formItemDrawDepth--;
+                }
+            }
+        }
+    }
+
+    @Nullable
+    public static FormHeldItemDraw openFormHeldItem(
+            LivingEntity entity, InteractionHand hand, Armature armature,
+            OpenMatrix4f[] requestedPoses) {
+        Frame frame = current();
+        if (frame == null || frame.entity != entity || frame.firstPerson
+                || frame.naturalLadderPose || hand == null || requestedPoses == null
+                || requestedPoses.length < HumanoidRig.EPIC_JOINT_COUNT
+                || (!sameBodyPoseSource(frame.inputPoses, requestedPoses)
+                && requestedPoses != frame.attachmentPoses
+                && !AttachmentArmatureScope.isDisplayedPoseArray(requestedPoses))) {
+            return null;
+        }
+        OpenMatrix4f pose = hand == InteractionHand.MAIN_HAND
+                ? frame.formMainHandPose : frame.formOffHandPose;
+        if (!finite(pose)) {
+            return null;
+        }
+        OpenMatrix4f[] copy = copyMatrices(requestedPoses, requestedPoses.length);
+        if (copy == null) {
+            return null;
+        }
+        // Each item owns this temporary pair, so a two-handed renderer cannot move
+        // another logical hand. Distinct objects preserve correction-matrix provenance.
+        copy[HumanoidRig.RIGHT_TOOL] = new OpenMatrix4f(pose);
+        copy[HumanoidRig.LEFT_TOOL] = new OpenMatrix4f(pose);
+        AttachmentArmatureScope scope = AttachmentArmatureScope.open(armature, requestedPoses, copy);
+        if (!AttachmentArmatureScope.isDisplayedPoseArray(armature, copy)) {
+            scope.close();
+            return null;
+        }
+        return new FormHeldItemDraw(frame, copy, scope);
+    }
+
+    public static boolean formHeldItemActive(LivingEntity entity) {
+        Frame frame = current();
+        return frame != null && frame.entity == entity && frame.formItemDrawDepth > 0;
+    }
+
+    static boolean formHidesHeldItem(LivingEntity entity, InteractionHand hand) {
+        Frame frame = current();
+        return frame != null && frame.entity == entity && !frame.naturalLadderPose
+                && (hand == InteractionHand.MAIN_HAND
+                ? frame.hideFormMainHand : frame.hideFormOffHand);
+    }
+
+    static boolean hasVisibleFormHeldItem(LivingEntity entity, InteractionHand hand) {
+        Frame frame = current();
+        return frame != null && frame.entity == entity && !frame.firstPerson
+                && !frame.naturalLadderPose && finite(hand == InteractionHand.MAIN_HAND
+                ? frame.formMainHandPose : frame.formOffHandPose);
     }
 
     @Nullable
@@ -449,7 +576,18 @@ public final class RenderFrameContext {
                 frame.mainHandItemSwitchUsesOffArmTool);
         return shouldSuppressHeldItem(frame.naturalLadderPose,
                 frame.mesh.replacesHeldItem(entity, hand),
-                right ? frame.suppressRightHeldItem : frame.suppressLeftHeldItem);
+                right ? frame.suppressRightHeldItem : frame.suppressLeftHeldItem,
+                hasVisibleFormHeldItem(entity, hand), formHidesHeldItem(entity, hand));
+    }
+
+    static boolean shouldSuppressHeldItem(
+            boolean naturalLadderPose, boolean modelReplaces,
+            boolean authoredLocatorSuppresses, boolean visibleFormLocator,
+            boolean hiddenFormLocator) {
+        // A visible form's mouth supersedes a collapsed inactive human locator, but
+        // never resurrects an item replaced by authored geometry or ladder policy.
+        return shouldSuppressHeldItem(naturalLadderPose, modelReplaces,
+                hiddenFormLocator || !visibleFormLocator && authoredLocatorSuppresses);
     }
 
     static boolean shouldSuppressHeldItem(
@@ -495,6 +633,10 @@ public final class RenderFrameContext {
         frame.mainHandItemSwitchUsesOffArmTool = false;
         frame.naturalLadderPose = false;
         frame.ladderItemsInHand = Set.of();
+        frame.formMainHandPose = null;
+        frame.formOffHandPose = null;
+        frame.hideFormMainHand = false;
+        frame.hideFormOffHand = false;
     }
 
     private static boolean finite(@Nullable Vector3f value) {

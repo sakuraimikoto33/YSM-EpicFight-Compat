@@ -14,10 +14,20 @@ import java.util.function.Consumer;
 public final class MolangScriptRuntime {
     public interface Host extends ExpressionEngine.Environment {
         MolangScriptRuntime scripts();
+
+        /** Pose-only sampling can retain script state without publishing external outputs. */
+        default boolean externalOutputsEnabled() { return true; }
     }
 
     static MolangScriptRuntime scripts(ExpressionEngine.Environment environment) {
         return environment instanceof Host host ? host.scripts() : null;
+    }
+
+    static boolean externalOutputsEnabled(ExpressionEngine.Environment environment) {
+        if (environment instanceof FunctionEnvironment function) {
+            return externalOutputsEnabled(function.delegate);
+        }
+        return !(environment instanceof Host host) || host.externalOutputsEnabled();
     }
     public static final Object UNHANDLED = new Object();
     public static final int MAX_CALL_DEPTH = 32;
@@ -180,7 +190,8 @@ public final class MolangScriptRuntime {
             return expression == null ? null : call(expression, arguments, environment);
         }
         if (key.equals("ysm.sync")) {
-            if (handlingSync || arguments.length > MAX_SYNC_ARGUMENTS) return null;
+            if (!externalOutputsEnabled(environment) || handlingSync
+                    || arguments.length > MAX_SYNC_ARGUMENTS) return null;
             double[] values = new double[arguments.length];
             for (int i = 0; i < values.length; i++) {
                 if (!(arguments[i] instanceof Number value) || !Double.isFinite(value.doubleValue())) return null;

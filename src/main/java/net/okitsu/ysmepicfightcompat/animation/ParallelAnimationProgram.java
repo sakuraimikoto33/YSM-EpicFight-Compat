@@ -86,10 +86,12 @@ public final class ParallelAnimationProgram {
                         Set<InteractionHand> itemSwitchHands,
                         boolean naturalLadderPose,
                         Set<InteractionHand> ladderItemsInHand,
-                        Set<String> hiddenBones) {
+                        Set<String> hiddenBones,
+                        @Nullable OpenMatrix4f[] authoredDeltas) {
     }
 
-    private record VisibilityBone(GeometryDocument.Bone bone, int parentIndex) {
+    private record VisibilityBone(GeometryDocument.Bone bone, int parentIndex,
+                                  int auxiliaryIndex, boolean authoredPose) {
     }
 
     private record VisibilityVisit(GeometryDocument.Bone bone, int parentIndex) {
@@ -101,6 +103,8 @@ public final class ParallelAnimationProgram {
                                boolean leftArmControl,
                                boolean rightArmControl,
                                boolean epicFightOwned,
+                               boolean authoredPose,
+                               boolean authoredInfluence,
                                AnimationClip.BoneTracks tracks) {
     }
 
@@ -129,6 +133,9 @@ public final class ParallelAnimationProgram {
                                        InteractionHand hand,
                                        AnimationConditionMatcher.ItemAction action) {
     }
+
+    private record HoldClipSelection(List<AutomaticAnimationSelector.ActiveClip> clips,
+                                     Set<String> authoredOnlyClips) { }
 
     private record FullBodyEnding(AutomaticAnimationSelector.ActiveClip active,
                                   InteractionHand hand, double startedAt, float weight,
@@ -280,10 +287,14 @@ public final class ParallelAnimationProgram {
 
     private enum BoneSelection {
         ALL,
-        LEFT_ARM_CONTROLS;
+        LEFT_ARM_CONTROLS,
+        AUTHORED_ONLY;
 
         private boolean accepts(BoneProgram bone) {
-            return this == ALL || bone.leftArmControl();
+            // Native-only ownership masks writes, never the input evaluation: a
+            // suppressed humanoid channel may assign a variable used by a later
+            // native channel in this same clip.
+            return this != LEFT_ARM_CONTROLS || bone.leftArmControl();
         }
     }
 
@@ -299,6 +310,9 @@ public final class ParallelAnimationProgram {
         }
 
         @Override public MolangScriptRuntime scripts() { return MolangScriptRuntime.scripts(delegate); }
+        @Override public boolean externalOutputsEnabled() {
+            return MolangScriptRuntime.externalOutputsEnabled(delegate);
+        }
         @Override public Object readVariableValue(int slot) {
             return variables.containsKey(slot) ? variables.get(slot) : delegate.readVariableValue(slot);
         }
@@ -356,6 +370,53 @@ public final class ParallelAnimationProgram {
         public double invokeWithMixedArguments(String name, String[] textArguments,
                                                double[] numericArguments) {
             return delegate.invokeWithMixedArguments(name, textArguments, numericArguments);
+        }
+    }
+
+    /** Native-only sampling keeps expression dataflow without publishing effects. */
+    static ExpressionEngine.Environment poseOnlyEnvironment(ExpressionEngine.Environment delegate) {
+        return delegate instanceof PoseOnlyEnvironment ? delegate : new PoseOnlyEnvironment(delegate);
+    }
+
+    private record PoseOnlyEnvironment(ExpressionEngine.Environment delegate)
+            implements MolangScriptRuntime.Host {
+        @Override public MolangScriptRuntime scripts() { return MolangScriptRuntime.scripts(delegate); }
+        @Override public boolean externalOutputsEnabled() { return false; }
+        @Override public boolean hasVariable(int slot) { return delegate.hasVariable(slot); }
+        @Override public double readVariable(int slot) { return delegate.readVariable(slot); }
+        @Override public Object readVariableValue(int slot) { return delegate.readVariableValue(slot); }
+        @Override public void writeVariable(int slot, double value) { delegate.writeVariable(slot, value); }
+        @Override public void writeVariableValue(int slot, Object value) { delegate.writeVariableValue(slot, value); }
+        @Override public Object[] arguments() { return delegate.arguments(); }
+        @Override public double readQuery(int slot) { return ExpressionEngine.number(readQueryValue(slot)); }
+        @Override public Object readQueryValue(int slot) {
+            MolangScriptRuntime runtime = scripts();
+            Object value = runtime == null ? MolangScriptRuntime.UNHANDLED
+                    : runtime.read(ExpressionEngine.slotName(slot), this);
+            return value == MolangScriptRuntime.UNHANDLED ? delegate.readQueryValue(slot) : value;
+        }
+        @Override public Object invokeValue(String name, Object[] arguments) {
+            if (externalOutput(name)) return 0.0D;
+            MolangScriptRuntime runtime = scripts();
+            Object value = runtime == null ? MolangScriptRuntime.UNHANDLED
+                    : runtime.invoke(name, arguments, this);
+            return value == MolangScriptRuntime.UNHANDLED ? delegate.invokeValue(name, arguments) : value;
+        }
+        @Override public double invoke(String name, double[] arguments) {
+            return externalOutput(name) ? 0.0D : delegate.invoke(name, arguments);
+        }
+        @Override public double invokeWithText(String name, String[] arguments) {
+            return externalOutput(name) ? 0.0D : delegate.invokeWithText(name, arguments);
+        }
+        @Override public double invokeWithMixedArguments(String name, String[] text, double[] numeric) {
+            return externalOutput(name) ? 0.0D : delegate.invokeWithMixedArguments(name, text, numeric);
+        }
+        private static boolean externalOutput(String name) {
+            return switch (normalize(name)) {
+                case "ysm.play_sound", "ysm.stop_sound", "ysm.stop_all_sounds",
+                     "ysm.particle", "ysm.abs_particle", "ysm.sync" -> true;
+                default -> false;
+            };
         }
     }
 
@@ -465,7 +526,7 @@ public final class ParallelAnimationProgram {
         AuxiliaryBoneLayout.Entry head = primaryHeadControl(layout);
         headAuxiliaryIndex = head == null ? -1 : head.auxiliaryIndex();
         headControlAuxiliaryIndices = headControlAuxiliaryIndices(layout, head);
-        visibilityBones = visibilityBones(geometry);
+        visibilityBones = visibilityBones(geometry, layout);
         Map<String, Integer> visibilityByName = new HashMap<>();
         for (int index = 0; index < visibilityBones.size(); index++) {
             visibilityByName.putIfAbsent(normalize(visibilityBones.get(index).bone().name()), index);
@@ -510,7 +571,8 @@ public final class ParallelAnimationProgram {
         controllerProgram = new AnimationControllerProgram(
                 controllers, controllerInfo, heldItemControllers);
 
-        testScratch = new EvaluationScratch(visibilityBones.size(), auxiliaryCount);
+        testScratch = new EvaluationScratch(visibilityBones.size(), auxiliaryCount,
+                layout.rigBindings().hasAuthoredBranches());
     }
 
     private static Set<Integer> headControlAuxiliaryIndices(
@@ -534,20 +596,22 @@ public final class ParallelAnimationProgram {
     private static AuxiliaryBoneLayout.Entry primaryHeadControl(
             AuxiliaryBoneLayout layout) {
         AuxiliaryBoneLayout.Entry exact = layout.entryForBoneName("Head");
-        if (exact != null) {
+        if (exact != null && !layout.rigBindings().usesAuthoredPose(exact.bone())) {
             return exact;
         }
         for (AuxiliaryBoneLayout.Entry entry : layout.entries()) {
-            if ("head".equals(canonicalControlName(entry.bone().name()))) {
+            if (!layout.rigBindings().usesAuthoredPose(entry.bone())
+                    && "head".equals(canonicalControlName(entry.bone().name()))) {
                 return entry;
             }
         }
         exact = layout.entryForBoneName("AllHead");
-        if (exact != null) {
+        if (exact != null && !layout.rigBindings().usesAuthoredPose(exact.bone())) {
             return exact;
         }
         for (AuxiliaryBoneLayout.Entry entry : layout.entries()) {
-            if ("allhead".equals(canonicalControlName(entry.bone().name()))) {
+            if (!layout.rigBindings().usesAuthoredPose(entry.bone())
+                    && "allhead".equals(canonicalControlName(entry.bone().name()))) {
                 return entry;
             }
         }
@@ -840,7 +904,8 @@ public final class ParallelAnimationProgram {
                 ignored -> new RenderContextState<>()).getOrCreate(preview,
                 () -> new RuntimeState(entity, modelId,
                         scriptSources, scriptClipInfo,
-                        new EvaluationScratch(visibilityBones.size(), auxiliaryCount), preview));
+                        new EvaluationScratch(visibilityBones.size(), auxiliaryCount,
+                                layout.rigBindings().hasAuthoredBranches()), preview));
         double sampledNow = (entity.tickCount + partialTick) / 20.0D;
         if (entity.tickCount < state.lastTickCount) {
             state.reset(sampledNow);
@@ -913,9 +978,12 @@ public final class ParallelAnimationProgram {
         if (state.scripts.controllers().stream().anyMatch(controllerProgram::hasBuiltinController)) {
             controllerProgram.prepareBuiltins(now, state.environment, state.controllerState,
                     name -> controllerOutputsEnabled(name, activeReplacementHands,
+                            enabledItemAnimationHands, builtinItemSwitch),
+                    name -> legacyControllerOutputsEnabled(name, activeReplacementHands,
                             enabledItemAnimationHands, builtinItemSwitch));
         }
         state.scratch.automaticChannels = controllerProgram.hasBuiltinControllers()
+                || layout.rigBindings().hasAuthoredBranches()
                 ? automaticChannels(selected) : Map.of();
         selected = selectScriptControllers(selected, state.scripts, state.scriptOutputs,
                 state.environment, now, elapsed, state.controllerState);
@@ -963,6 +1031,10 @@ public final class ParallelAnimationProgram {
                         name -> controllerOutputsEnabled(
                                 name, activeReplacementHands,
                                 enabledItemAnimationHands,
+                                prospectiveItemSwitch),
+                        name -> legacyControllerOutputsEnabled(
+                                name, activeReplacementHands,
+                                enabledItemAnimationHands,
                                 prospectiveItemSwitch));
         state.enabledScriptOutputs = state.scriptOutputs.keySet().stream()
                 .filter(name -> controllerOutputsEnabled(name, activeReplacementHands,
@@ -975,10 +1047,25 @@ public final class ParallelAnimationProgram {
                 selected.main(), selected.movement(),
                 enabledItemAnimationHands, now, itemSwitchBlocked,
                 state.itemSwitchState);
-        List<AutomaticAnimationSelector.ActiveClip> automatic =
+        HoldClipSelection holdSelection =
                 filterInactiveOrdinaryHoldClips(
                         entity, selectedAutomatic, itemSwitchPose,
                         movementPose != null, ladderPolicy.naturalPose());
+        List<AutomaticAnimationSelector.ActiveClip> automatic = holdSelection.clips();
+        state.scratch.authoredOnlyHoldClips = holdSelection.authoredOnlyClips();
+        LinkedHashSet<String> authoredOnlyControllers = new LinkedHashSet<>();
+        controllerSelection.outputActive().stream()
+                .map(AnimationControllerProgram.ActiveAnimation::controllerName)
+                .filter(name -> !legacyControllerOutputsEnabled(name, activeReplacementHands,
+                        enabledItemAnimationHands, prospectiveItemSwitch))
+                .map(ParallelAnimationProgram::channelKey)
+                .forEach(authoredOnlyControllers::add);
+        state.enabledScriptOutputs.stream()
+                .filter(name -> !legacyControllerOutputsEnabled(name, activeReplacementHands,
+                        enabledItemAnimationHands, prospectiveItemSwitch))
+                .map(ParallelAnimationProgram::channelKey)
+                .forEach(authoredOnlyControllers::add);
+        state.scratch.authoredOnlyControllerOutputs = Set.copyOf(authoredOnlyControllers);
         state.prepareAutomaticTimelines(automatic, automaticSelector.names());
         state.environment.fullBodyReferenceYaw(
                 movementPose == null && itemSwitchPose == null ? null : epicModelYaw);
@@ -1289,8 +1376,12 @@ public final class ParallelAnimationProgram {
         SnapshotExpressionEnvironment snapshot = SnapshotExpressionEnvironment.capture(
                 state.environment, variableSlots, querySlots);
         EvaluationScratch working = state.spareWorkerScratch == null
-                ? new EvaluationScratch(visibilityBones.size(), auxiliaryCount)
+                ? new EvaluationScratch(visibilityBones.size(), auxiliaryCount,
+                        layout.rigBindings().hasAuthoredBranches())
                 : state.spareWorkerScratch;
+        working.automaticChannels = state.scratch.automaticChannels;
+        working.authoredOnlyHoldClips = state.scratch.authoredOnlyHoldClips;
+        working.authoredOnlyControllerOutputs = state.scratch.authoredOnlyControllerOutputs;
         state.spareWorkerScratch = null;
         List<AutomaticAnimationSelector.ActiveClip> automaticCopy = List.copyOf(automatic);
         List<AnimationControllerProgram.ActiveAnimation> controlledCopy = List.copyOf(controlled);
@@ -1414,10 +1505,30 @@ public final class ParallelAnimationProgram {
 
     Frame sampleAutomaticAt(double elapsed, List<String> animationNames,
                             ExpressionEngine.Environment environment) {
+        return sampleAutomaticAt(elapsed, animationNames, null, environment);
+    }
+
+    Frame sampleAutomaticAt(double elapsed, List<String> animationNames,
+                            @Nullable String mainAnimation,
+                            ExpressionEngine.Environment environment) {
+        return sampleAutomaticAt(elapsed, animationNames, mainAnimation, Set.of(), environment);
+    }
+
+    Frame sampleAutomaticAt(double elapsed, List<String> animationNames,
+                            @Nullable String mainAnimation,
+                            Set<String> authoredOnlyHoldClips,
+                            ExpressionEngine.Environment environment) {
         List<AutomaticAnimationSelector.ActiveClip> active = animationNames.stream()
                 .map(ParallelAnimationProgram::normalize)
                 .map(name -> new AutomaticAnimationSelector.ActiveClip(name, elapsed, false))
                 .toList();
+        AutomaticAnimationSelector.ActiveClip main = mainAnimation == null ? null
+                : active.stream().filter(clip -> clip.name().equals(normalize(mainAnimation)))
+                .findFirst().orElse(null);
+        testScratch.automaticChannels = main == null ? Map.of()
+                : automaticChannels(new AutomaticAnimationSelector.Selection(
+                active, main, null, Set.of()));
+        testScratch.authoredOnlyHoldClips = Set.copyOf(authoredOnlyHoldClips);
         evaluate(elapsed, active, List.of(), null, null, null,
                 null, 0.0D, environment, null, testScratch);
         return frame(testScratch);
@@ -1451,6 +1562,7 @@ public final class ParallelAnimationProgram {
             controllerProgram.prepareBuiltins(now, environment, controllerState, ignored -> true);
         }
         testScratch.automaticChannels = controllerProgram.hasBuiltinControllers()
+                || layout.rigBindings().hasAuthoredBranches()
                 ? automaticChannels(selected) : Map.of();
         Map<String, MolangScriptRuntime.Output> outputs = new LinkedHashMap<>();
         selected = selectScriptControllers(selected, scripts, outputs, environment, now, now, controllerState);
@@ -1547,12 +1659,13 @@ public final class ParallelAnimationProgram {
      * equip window and while a configured YSM movement owns the body. Official YSM
      * always composes HOLD after its movement main; retaining that body layer keeps
      * weapon-side arms and locators authored by the model without replacing the
-     * Epic Fight item. Outside those windows the clip remains filtered so disabled
-     * switch rules cannot leak pose, sound, particle, or Molang timeline output. An
-     * ordinary movement HOLD is evaluated pose-only, avoiding a false timeline restart
+     * Epic Fight item. Outside those windows humanoid output remains filtered so
+     * disabled switch rules cannot leak pose, sound, particle, or timeline output.
+     * A native branch may retain numeric-only HOLD channels and their input dataflow.
+     * An ordinary movement HOLD is evaluated pose-only, avoiding a false timeline restart
      * merely because the player began moving.
      */
-    private List<AutomaticAnimationSelector.ActiveClip>
+    private HoldClipSelection
     filterInactiveOrdinaryHoldClips(
             LivingEntity entity,
             List<AutomaticAnimationSelector.ActiveClip> automatic,
@@ -1560,12 +1673,13 @@ public final class ParallelAnimationProgram {
             boolean ysmMovementActive,
             boolean naturalLadderPose) {
         if (automatic.isEmpty()) {
-            return automatic;
+            return new HoldClipSelection(automatic, Set.of());
         }
         Set<InteractionHand> switchingHands = itemSwitchPose == null
                 ? Set.of() : itemSwitchPose.hands();
         List<AutomaticAnimationSelector.ActiveClip> result =
                 new ArrayList<>(automatic.size());
+        Set<String> authoredOnly = new LinkedHashSet<>();
         for (AutomaticAnimationSelector.ActiveClip active : automatic) {
             InteractionHand hand = holdHand(active.name());
             boolean keep = hand == null || (!naturalLadderPose
@@ -1574,10 +1688,13 @@ public final class ParallelAnimationProgram {
                     switchingHands.contains(hand), ysmMovementActive));
             if (keep) {
                 result.add(active);
+            } else if (layout.rigBindings().hasAuthoredBranches()) {
+                result.add(active);
+                authoredOnly.add(active.name());
             }
         }
-        return result.size() == automatic.size()
-                ? automatic : List.copyOf(result);
+        return new HoldClipSelection(result.size() == automatic.size()
+                ? automatic : List.copyOf(result), Set.copyOf(authoredOnly));
     }
 
     static boolean keepsHeldItemHoldClip(
@@ -1594,6 +1711,18 @@ public final class ParallelAnimationProgram {
     }
 
     private boolean controllerOutputsEnabled(
+            String controllerName, Set<InteractionHand> replacementHands,
+            Set<InteractionHand> itemAnimationHands,
+            boolean itemSwitchActive) {
+        return legacyControllerOutputsEnabled(controllerName, replacementHands,
+                itemAnimationHands, itemSwitchActive)
+                || layout.rigBindings().hasAuthoredBranches()
+                && !heldItemControllerHands.containsKey(normalize(controllerName))
+                && !ControllerOrder.dynamic(controllerName)
+                && !holdControllerHands(controllerName).isEmpty();
+    }
+
+    private boolean legacyControllerOutputsEnabled(
             String controllerName, Set<InteractionHand> replacementHands,
             Set<InteractionHand> itemAnimationHands,
             boolean itemSwitchActive) {
@@ -1919,7 +2048,8 @@ public final class ParallelAnimationProgram {
                 Set.copyOf(scratch.itemSwitchHands),
                 scratch.naturalLadderPose,
                 Set.copyOf(scratch.ladderItemsInHand),
-                scratch.hiddenView);
+                scratch.hiddenView,
+                scratch.authoredPose == null ? null : scratch.authoredPose.output);
     }
 
     private void fireActiveTimelines(
@@ -1954,6 +2084,11 @@ public final class ParallelAnimationProgram {
                 runtimeState.lastLocalTime.remove(program.clip().name());
             }
             float localTime = automaticTime(program, active.elapsed());
+            if (runtimeState.scratch.authoredOnlyHoldClips.contains(active.name())) {
+                runtimeState.silenceTimeline(program.clip().name(),
+                        controllerTime(program, active.elapsed()));
+                continue;
+            }
             if (localTime >= 0.0F) {
                 fireProgramTimeline(program, localTime, environment, runtimeState,
                         program.clip().name(), true);
@@ -1965,6 +2100,11 @@ public final class ParallelAnimationProgram {
                 continue;
             }
             float localTime = controllerTime(program, active.elapsed());
+            if (runtimeState.scratch.authoredOnlyControllerOutputs.contains(
+                    channelKey(active.controllerName()))) {
+                runtimeState.silenceTimeline(active.instanceKey(), localTime);
+                continue;
+            }
             if (!emitsControllerOutputs(active.weight())) {
                 // Bedrock controllers may list mutually exclusive clips with weights
                 // such as ctrl.idle and !ctrl.idle. Keep the inactive clip's clock
@@ -2230,6 +2370,9 @@ public final class ParallelAnimationProgram {
         composeAuxiliaryMatrices(scratch.parallelPose, scratch);
         composeAuxiliaryMatrices(scratch.wholeModelPose, scratch);
         composeAuxiliaryMatrices(scratch.heldItemPose, scratch);
+        if (scratch.authoredPose != null) {
+            composeAuxiliaryMatrices(scratch.authoredPose, scratch);
+        }
         if (liveFullBodyPose && runtimeState != null) {
             runtimeState.fullBodyCompositeSnapshot.capture(scratch);
         }
@@ -2273,16 +2416,28 @@ public final class ParallelAnimationProgram {
         float localTime = movementFullBody
                 ? movementTime(program, active.elapsed())
                 : automaticTime(program, active.elapsed());
+        AnimationConditionMatcher.ItemAction action =
+                customHeldItems.clipAction(active.name());
+        boolean continuedAuthoredClock = localTime < 0.0F
+                && scratch.authoredPose != null
+                && (channel.equals("player.main")
+                || action == AnimationConditionMatcher.ItemAction.HOLD);
+        if (continuedAuthoredClock) {
+            // A native visual branch remains alive during an Epic Fight action.
+            // An expired humanoid auxiliary clip must not be revived with it.
+            localTime = channel.equals("player.main")
+                    ? movementTime(program, active.elapsed())
+                    : controllerTime(program, active.elapsed());
+        }
         if (localTime < 0.0F) {
             return;
         }
         boolean mounted = isWholeModelMountedClip(active.name());
         boolean selectiveReplacement = !program.replacementIndices().isEmpty();
-        AnimationConditionMatcher.ItemAction action =
-                customHeldItems.clipAction(active.name());
-        if (scratch.naturalLadderPose && movementComposition
+        boolean naturalLadderHold = scratch.naturalLadderPose && movementComposition
                 && !movementFullBody
-                && action == AnimationConditionMatcher.ItemAction.HOLD) {
+                && action == AnimationConditionMatcher.ItemAction.HOLD;
+        if (naturalLadderHold && scratch.authoredPose == null) {
             return;
         }
         // Official YSM composes the complete matching hold layer after its movement
@@ -2291,7 +2446,8 @@ public final class ParallelAnimationProgram {
         // still receives its model-authored arm/hand/locator pose. Item suppression
         // remains governed by replacement indices and the existing display policy.
         boolean movementHoldComposition = movementComposition && !movementFullBody
-                && action == AnimationConditionMatcher.ItemAction.HOLD;
+                && action == AnimationConditionMatcher.ItemAction.HOLD
+                && !naturalLadderHold;
         boolean poseOnlyMovementHold = movementHoldComposition
                 && !selectiveReplacement;
         // Equipment conditions are authored after pre_parallel in official YSM. When a
@@ -2303,6 +2459,11 @@ public final class ParallelAnimationProgram {
         boolean wholeModel = mounted || customFullBodyPose || movementFullBody
                 || movementHoldComposition || itemSwitchFullBody
                 || equipmentComposition;
+        boolean authoredOnlyHold = scratch.authoredPose != null
+                && action == AnimationConditionMatcher.ItemAction.HOLD
+                && (naturalLadderHold || scratch.authoredOnlyHoldClips.contains(active.name()));
+        BoneSelection selection = continuedAuthoredClock || authoredOnlyHold
+                ? BoneSelection.AUTHORED_ONLY : BoneSelection.ALL;
         PoseScratch target = wholeModel ? scratch.wholeModelPose
                 : selectiveReplacement ? scratch.heldItemPose
                 : scratch.parallelPose;
@@ -2322,16 +2483,17 @@ public final class ParallelAnimationProgram {
                 && isOrdinaryMainhandBowHold(active.name()));
         PoseTransform transform = mirrorOrdinaryBowPose
                 ? PoseTransform.MIRROR_X : PoseTransform.NONE;
-        RuntimeState evaluationRuntimeState = poseOnlyMovementHold
+        if (runtimeState != null && selection == BoneSelection.AUTHORED_ONLY) {
+            runtimeState.silenceTimeline(program.clip().name(), localTime);
+        }
+        RuntimeState evaluationRuntimeState = poseOnlyMovementHold || authoredOnlyHold
+                || continuedAuthoredClock
                 ? null : runtimeState;
-        boolean applied = movementHoldComposition || itemSwitchFullBody
-                ? evaluateProgram(program, localTime, environment,
-                evaluationRuntimeState, target, ApplyMode.FULL_BODY,
-                scratch, capture, transform)
-                : evaluateProgram(program, localTime, environment,
+        boolean applied = evaluateProgram(program, localTime, environment,
                 evaluationRuntimeState, target,
                 wholeModel ? ApplyMode.FULL_BODY : ApplyMode.OVERRIDE,
-                scratch, capture);
+                1.0F, false, program.clip().name(), true, scratch, capture,
+                transform, selection);
         if (capture != null) {
             runtimeState.fullBodyActionSnapshotClip = applied
                     ? normalize(active.name()) : "";
@@ -2654,6 +2816,9 @@ public final class ParallelAnimationProgram {
                 && !program.replacementIndices().isEmpty();
         boolean wholeModel = movementFullBody || customControllerFullBody
                 || itemSwitchFullBody;
+        boolean authoredOnlyHold = scratch.authoredPose != null
+                && scratch.authoredOnlyControllerOutputs.contains(
+                channelKey(active.controllerName()));
         ExpressionEngine.Environment controllerEnvironment = active.stateVariables().isEmpty()
                 ? environment : new ControllerVariableEnvironment(
                 environment, active.stateVariables());
@@ -2661,17 +2826,22 @@ public final class ParallelAnimationProgram {
                 && scratch.mirrorOrdinaryMainhandBowSwitch
                 && isOrdinaryMainhandBowHold(program.clip().name())
                 ? PoseTransform.MIRROR_X : PoseTransform.NONE;
+        float localTime = active.instanceKey().startsWith("script/")
+                ? (float) active.elapsed() : controllerTime(program, active.elapsed());
+        if (runtimeState != null && authoredOnlyHold) {
+            runtimeState.silenceTimeline(active.instanceKey(), localTime);
+        }
         boolean applied = evaluateProgram(
-                program, active.instanceKey().startsWith("script/")
-                        ? (float) active.elapsed() : controllerTime(program, active.elapsed()),
-                controllerEnvironment, runtimeState,
+                program, localTime,
+                controllerEnvironment, authoredOnlyHold ? null : runtimeState,
                 customFullBodyPose || movementFullBody || itemSwitchFullBody
                         ? scratch.wholeModelPose
                         : heldItemController ? scratch.heldItemPose
                         : parallelTarget,
                 wholeModel ? ApplyMode.FULL_BODY : ApplyMode.OVERRIDE,
                 active.weight(), active.blendViaShortestPath(),
-                active.instanceKey(), true, scratch, null, transform);
+                active.instanceKey(), true, scratch, null, transform,
+                authoredOnlyHold ? BoneSelection.AUTHORED_ONLY : BoneSelection.ALL);
         scratch.replaceEpicFightPose |= wholeModel && applied;
     }
 
@@ -3455,6 +3625,9 @@ public final class ParallelAnimationProgram {
             layers.put(scratch.parallelPose, new BuiltinPoseLayer(scratch.parallelPose));
             layers.put(scratch.wholeModelPose, new BuiltinPoseLayer(scratch.wholeModelPose));
             layers.put(scratch.heldItemPose, new BuiltinPoseLayer(scratch.heldItemPose));
+            if (scratch.authoredPose != null) {
+                layers.put(scratch.authoredPose, new BuiltinPoseLayer(scratch.authoredPose));
+            }
         }
 
         private ScriptLayerTransition layer(PoseScratch pose) { return layers.get(pose).transition; }
@@ -3633,6 +3806,11 @@ public final class ParallelAnimationProgram {
         // The mirrored fallback is sampled separately from the original left arm.
         // Share timing, never its numeric pose history or mirroring policy.
         String stateKey = mirroredLadderArm ? channel + ":natural_right_arm" : channel;
+        if (target == scratch.authoredPose) {
+            // Native branches retain their own numeric history when humanoid pose
+            // ownership changes. They share the controller clock, never a pose cache.
+            stateKey = "authored:" + stateKey;
+        }
         ScriptLayerTransition state = scratch.scriptTransitions.get(stateKey);
         // An Epic Fight action or a changed attachment target must never inherit
         // full-body tracks captured under a different ownership/mirroring policy.
@@ -3649,6 +3827,13 @@ public final class ParallelAnimationProgram {
                                                ApplyMode mode, EvaluationScratch scratch) {
         ScriptLayerTransition transition = scriptTransition(
                 timelineKey, target, mode, PoseTransform.NONE, scratch);
+        if (scratch.authoredPose != null && target != scratch.authoredPose) {
+            ScriptLayerTransition authored = scriptTransition(timelineKey,
+                    scratch.authoredPose, authoredMode(mode), PoseTransform.NONE, scratch);
+            if (authored != null) {
+                authored.apply(scratch, null, 1.0F);
+            }
+        }
         return transition != null && transition.apply(scratch, null, 1.0F);
     }
 
@@ -3727,11 +3912,24 @@ public final class ParallelAnimationProgram {
                                     @Nullable PoseLayerSnapshot capture,
                                     PoseTransform transform,
                                     BoneSelection selection) {
-        ScriptLayerTransition transition = scriptTransition(timelineKey, pose,
-                applyMode, transform, scratch);
-        if (transition != null && transition.paused) return false;
+        if (selection == BoneSelection.AUTHORED_ONLY) {
+            environment = poseOnlyEnvironment(environment);
+        }
+        ScriptLayerTransition transition = selection == BoneSelection.AUTHORED_ONLY ? null
+                : scriptTransition(timelineKey, pose, applyMode, transform, scratch);
+        PoseScratch authoredPose = selection != BoneSelection.LEFT_ARM_CONTROLS
+                ? scratch.authoredPose : null;
+        ApplyMode authoredMode = authoredMode(applyMode);
+        ScriptLayerTransition authoredTransition = authoredPose == null ? null
+                : scriptTransition(timelineKey, authoredPose, authoredMode,
+                PoseTransform.NONE, scratch);
+        if (transition != null && transition.paused
+                || authoredTransition != null && authoredTransition.paused) return false;
         ScriptLayerTransition outer = scratch.activeBuiltinTransition == null ? null
                 : scratch.activeBuiltinTransition.layer(pose);
+        ScriptLayerTransition authoredOuter = authoredPose == null
+                || scratch.activeBuiltinTransition == null ? null
+                : scratch.activeBuiltinTransition.layer(authoredPose);
         if (capture != null && scratch.activeBuiltinTransition != null) {
             scratch.activeBuiltinTransition.layers.get(pose).capture = capture;
         }
@@ -3762,6 +3960,9 @@ public final class ParallelAnimationProgram {
         float clipWeight = finite(evaluate(program.clip().blendWeight(), environment), 1.0F);
         float blendWeight = finite(clipWeight * finite(externalWeight, 0.0F), 0.0F);
         if (Math.abs(blendWeight) <= EPSILON) {
+            if (authoredTransition != null) {
+                authoredTransition.apply(scratch, null, externalWeight);
+            }
             return transition != null && transition.apply(scratch, capture, externalWeight);
         }
         boolean appliedPose = false;
@@ -3770,14 +3971,23 @@ public final class ParallelAnimationProgram {
                 continue;
             }
             AnimationClip.BoneTracks tracks = bone.tracks();
-            int visibilityIndex = transform == PoseTransform.MIRROR_X
+            int visibilityIndex = selection == BoneSelection.AUTHORED_ONLY ? -1
+                    : transform == PoseTransform.MIRROR_X
                     ? bone.mirroredVisibilityIndex() : bone.visibilityIndex();
-            int auxiliaryIndex = bone.epicFightOwned()
+            int auxiliaryIndex = selection == BoneSelection.AUTHORED_ONLY ? -1
+                    : bone.epicFightOwned()
                     && applyMode != ApplyMode.FULL_BODY
                     ? -1 : transform == PoseTransform.MIRROR_X
                     ? bone.mirroredAuxiliaryIndex() : bone.auxiliaryIndex();
+            int authoredIndex = authoredPose != null && bone.authoredInfluence()
+                    ? bone.auxiliaryIndex() : -1;
             if (tracks.rotation() != null) {
                 sample(tracks.rotation(), localTime, environment, scratch.sample, scratch);
+                if (authoredIndex >= 0) {
+                    recordAuthoredVector(authoredPose, authoredIndex, true,
+                            scratch.sample, authoredMode, shortestPath, clipWeight,
+                            blendWeight, authoredTransition, authoredOuter);
+                }
                 if (auxiliaryIndex >= 0) {
                     appliedPose = true;
                     int auxiliary = auxiliaryIndex;
@@ -3834,6 +4044,11 @@ public final class ParallelAnimationProgram {
             }
             if (tracks.position() != null) {
                 sample(tracks.position(), localTime, environment, scratch.sample, scratch);
+                if (authoredIndex >= 0) {
+                    recordAuthoredVector(authoredPose, authoredIndex, false,
+                            scratch.sample, authoredMode, shortestPath, clipWeight,
+                            blendWeight, authoredTransition, authoredOuter);
+                }
                 if (auxiliaryIndex >= 0) {
                     appliedPose = true;
                     int auxiliary = auxiliaryIndex;
@@ -3866,6 +4081,10 @@ public final class ParallelAnimationProgram {
             }
             if (tracks.scale() != null) {
                 sample(tracks.scale(), localTime, environment, scratch.sample, scratch);
+                if (authoredIndex >= 0) {
+                    recordAuthoredScale(authoredPose, authoredIndex, scratch.sample,
+                            authoredMode, blendWeight, scratch);
+                }
                 if (visibilityIndex >= 0) {
                     for (int axis = 0; axis < 3; axis++) {
                         float previous = applyMode != ApplyMode.PARALLEL
@@ -3903,8 +4122,79 @@ public final class ParallelAnimationProgram {
                 }
             }
         }
+        if (authoredTransition != null) {
+            authoredTransition.apply(scratch, null, externalWeight);
+        }
         if (transition != null) appliedPose |= transition.apply(scratch, capture, externalWeight);
         return appliedPose;
+    }
+
+    private static ApplyMode authoredMode(ApplyMode mode) {
+        return mode == ApplyMode.PARALLEL ? ApplyMode.PARALLEL : ApplyMode.OVERRIDE;
+    }
+
+    /**
+     * Copies an already-sampled channel into the connected native hierarchy. In
+     * particular, shared root expressions and their side effects execute only once.
+     * The second destination is numeric state, not a second animation evaluation.
+     */
+    private static void recordAuthoredVector(
+            PoseScratch pose, int auxiliary, boolean rotation, double[] sampled,
+            ApplyMode mode, boolean shortestPath, float clipWeight, float blendWeight,
+            @Nullable ScriptLayerTransition transition,
+            @Nullable ScriptLayerTransition outer) {
+        float[] value = rotation ? new float[]{
+                radians(-finite(sampled[0], 0.0F)),
+                radians(-finite(sampled[1], 0.0F)),
+                radians(finite(sampled[2], 0.0F))}
+                : new float[]{-finite(sampled[0], 0.0F) / 16.0F,
+                finite(sampled[1], 0.0F) / 16.0F,
+                finite(sampled[2], 0.0F) / 16.0F};
+        if (transition != null) {
+            if (rotation) transition.pose.rotation(auxiliary, value, clipWeight,
+                    mode == ApplyMode.PARALLEL);
+            else transition.pose.position(auxiliary, value, clipWeight,
+                    mode == ApplyMode.PARALLEL);
+            return;
+        }
+        if (outer != null) {
+            if (rotation) outer.pose.rotation(auxiliary, value, blendWeight,
+                    mode == ApplyMode.PARALLEL);
+            else outer.pose.position(auxiliary, value, blendWeight,
+                    mode == ApplyMode.PARALLEL);
+        }
+        float[] destination = rotation ? pose.rotations[auxiliary]
+                : pose.positions[auxiliary];
+        boolean[] written = rotation ? pose.hasRotation : pose.hasPosition;
+        for (int axis = 0; axis < 3; axis++) {
+            if (rotation && mode == ApplyMode.PARALLEL) {
+                destination[axis] += value[axis] * blendWeight;
+            } else {
+                float previous = mode != ApplyMode.PARALLEL && written[auxiliary]
+                        ? destination[axis] : 0.0F;
+                float difference = value[axis] - previous;
+                if (rotation && shortestPath) difference = shortestRadians(difference);
+                destination[axis] = previous + difference * blendWeight;
+            }
+        }
+        written[auxiliary] = true;
+    }
+
+    private static void recordAuthoredScale(
+            PoseScratch pose, int auxiliary, double[] sampled,
+            ApplyMode mode, float weight, EvaluationScratch scratch) {
+        for (int axis = 0; axis < 3; axis++) {
+            float previous = mode != ApplyMode.PARALLEL && pose.hasScale[auxiliary]
+                    ? pose.scales[auxiliary][axis] : 1.0F;
+            float target = finite(sampled[axis], 1.0F);
+            pose.scales[auxiliary][axis] = finite(
+                    previous + (target - previous) * weight, 1.0F);
+        }
+        pose.hasScale[auxiliary] = true;
+        if (scratch.activeBuiltinTransition != null) {
+            scratch.activeBuiltinTransition.layers.get(pose).scale.record(
+                    auxiliary, pose.scales[auxiliary]);
+        }
     }
 
     private static boolean trackUsesQuery(
@@ -3949,6 +4239,9 @@ public final class ParallelAnimationProgram {
         scratch.parallelPose.reset();
         scratch.wholeModelPose.reset();
         scratch.heldItemPose.reset();
+        if (scratch.authoredPose != null) {
+            scratch.authoredPose.reset();
+        }
         scratch.replaceEpicFightPose = false;
         scratch.fullBodyBlendSource = null;
         scratch.fullBodyBlendWeight = 0.0F;
@@ -3988,7 +4281,23 @@ public final class ParallelAnimationProgram {
             float inherited = bone.parentIndex() < 0 ? 1.0F
                     : scratch.effectiveScale[bone.parentIndex()];
             scratch.effectiveScale[index] = own * inherited;
-            if (forcedHidden || scratch.effectiveScale[index] < HIDDEN_SCALE) {
+            float displayedScale = scratch.effectiveScale[index];
+            if (scratch.authoredPose != null) {
+                int auxiliary = bone.auxiliaryIndex();
+                float[] scale = auxiliary >= 0
+                        && scratch.authoredPose.hasScale[auxiliary]
+                        ? scratch.authoredPose.scales[auxiliary] : null;
+                float authoredOwn = scale == null ? 1.0F
+                        : Math.min(Math.abs(scale[0]),
+                        Math.min(Math.abs(scale[1]), Math.abs(scale[2])));
+                float authoredInherited = bone.parentIndex() < 0 ? 1.0F
+                        : scratch.authoredEffectiveScale[bone.parentIndex()];
+                scratch.authoredEffectiveScale[index] = authoredOwn * authoredInherited;
+                if (bone.authoredPose() && !scratch.replaceEpicFightPose) {
+                    displayedScale = scratch.authoredEffectiveScale[index];
+                }
+            }
+            if (forcedHidden || displayedScale < HIDDEN_SCALE) {
                 scratch.hiddenBones.add(bone.bone().name());
             }
         }
@@ -4104,6 +4413,8 @@ public final class ParallelAnimationProgram {
 
     private static final class EvaluationScratch {
         private Map<String, String> automaticChannels = Map.of();
+        private Set<String> authoredOnlyHoldClips = Set.of();
+        private Set<String> authoredOnlyControllerOutputs = Set.of();
         private List<AutomaticAnimationSelector.ActiveClip> builtinProviders = List.of();
         private final Map<String, BuiltinPoseTransition> builtinTransitions = new HashMap<>();
         private final Set<String> sampledBuiltinSlots = new LinkedHashSet<>();
@@ -4122,9 +4433,12 @@ public final class ParallelAnimationProgram {
         private final boolean[] hasVisibilityScale;
         private final boolean[] forcedHiddenSubtrees;
         private final float[] effectiveScale;
+        private final float[] authoredEffectiveScale;
         private final PoseScratch parallelPose;
         private final PoseScratch wholeModelPose;
         private final PoseScratch heldItemPose;
+        @Nullable
+        private final PoseScratch authoredPose;
         private final boolean[] replaceEpicFightAnchors;
         private final boolean[] suppressParallelDeltas;
         private final int[] heldItemAnchorJoints;
@@ -4154,14 +4468,17 @@ public final class ParallelAnimationProgram {
         private boolean authoredHeadYaw;
         private boolean naturalLadderPose;
 
-        private EvaluationScratch(int visibilityCount, int auxiliaryCount) {
+        private EvaluationScratch(int visibilityCount, int auxiliaryCount,
+                                  boolean hasAuthoredBranches) {
             visibilityScales = new float[visibilityCount][3];
             hasVisibilityScale = new boolean[visibilityCount];
             forcedHiddenSubtrees = new boolean[visibilityCount];
             effectiveScale = new float[visibilityCount];
+            authoredEffectiveScale = hasAuthoredBranches ? new float[visibilityCount] : null;
             parallelPose = new PoseScratch(auxiliaryCount);
             wholeModelPose = new PoseScratch(auxiliaryCount);
             heldItemPose = new PoseScratch(auxiliaryCount);
+            authoredPose = hasAuthoredBranches ? new PoseScratch(auxiliaryCount) : null;
             replaceEpicFightAnchors = new boolean[auxiliaryCount];
             suppressParallelDeltas = new boolean[auxiliaryCount];
             heldItemAnchorJoints = new int[auxiliaryCount];
@@ -4179,6 +4496,9 @@ public final class ParallelAnimationProgram {
         if (environment instanceof ControllerVariableEnvironment value) {
             return entityEnvironment(value.delegate);
         }
+        if (environment instanceof PoseOnlyEnvironment value) {
+            return entityEnvironment(value.delegate);
+        }
         return null;
     }
 
@@ -4188,6 +4508,9 @@ public final class ParallelAnimationProgram {
             return value;
         }
         if (environment instanceof ControllerVariableEnvironment value) {
+            return snapshotEnvironment(value.delegate);
+        }
+        if (environment instanceof PoseOnlyEnvironment value) {
             return snapshotEnvironment(value.delegate);
         }
         return null;
@@ -4359,7 +4682,9 @@ public final class ParallelAnimationProgram {
                 ? visibility : visibilityByName.get(mirroredName);
         AuxiliaryBoneLayout.Entry mirroredPose = mirroredName == null
                 ? pose : layout.entryForBoneName(mirroredName);
-        boolean majorControl = pose != null
+        boolean authoredPose = pose != null
+                && layout.rigBindings().usesAuthoredPose(pose.bone());
+        boolean majorControl = pose != null && !authoredPose
                 && HumanoidRig.isMajorBone(pose.bone());
         int anchorJoint = pose == null ? -1 : pose.anchorJoint();
         return new BoneProgram(
@@ -4372,6 +4697,8 @@ public final class ParallelAnimationProgram {
                 majorControl && (anchorJoint == HumanoidRig.RIGHT_ARM
                         || anchorJoint == HumanoidRig.RIGHT_HAND),
                 pose != null && epicFightPoseControls.contains(pose.bone()),
+                authoredPose,
+                pose != null && layout.rigBindings().influencesAuthoredPose(pose.bone()),
                 tracks);
     }
 
@@ -4672,7 +4999,7 @@ public final class ParallelAnimationProgram {
     private static float itemSwitchDuration(List<BoneProgram> bones) {
         float result = 0.0F;
         for (BoneProgram bone : bones) {
-            if (!bone.epicFightOwned()) {
+            if (!bone.epicFightOwned() || bone.authoredPose()) {
                 continue;
             }
             result = Math.max(result, lastTime(bone.tracks().rotation()));
@@ -4805,7 +5132,8 @@ public final class ParallelAnimationProgram {
                 + (-a + 3.0D * b - 3.0D * c + d) * cubed);
     }
 
-    private static List<VisibilityBone> visibilityBones(GeometryDocument geometry) {
+    private static List<VisibilityBone> visibilityBones(
+            GeometryDocument geometry, AuxiliaryBoneLayout layout) {
         List<VisibilityBone> result = new ArrayList<>();
         ArrayDeque<VisibilityVisit> pending = new ArrayDeque<>();
         List<GeometryDocument.Bone> roots = geometry.roots();
@@ -4815,7 +5143,10 @@ public final class ParallelAnimationProgram {
         while (!pending.isEmpty()) {
             VisibilityVisit visit = pending.pop();
             int ownIndex = result.size();
-            result.add(new VisibilityBone(visit.bone(), visit.parentIndex()));
+            AuxiliaryBoneLayout.Entry entry = layout.entryForBoneName(visit.bone().name());
+            result.add(new VisibilityBone(visit.bone(), visit.parentIndex(),
+                    entry == null ? -1 : entry.auxiliaryIndex(),
+                    layout.rigBindings().usesAuthoredPose(visit.bone())));
             List<GeometryDocument.Bone> children = visit.bone().children();
             for (int index = children.size() - 1; index >= 0; index--) {
                 pending.push(new VisibilityVisit(children.get(index), ownIndex));

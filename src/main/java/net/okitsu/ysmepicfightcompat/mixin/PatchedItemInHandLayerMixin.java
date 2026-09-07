@@ -35,7 +35,10 @@ public abstract class PatchedItemInHandLayerMixin {
         if (RenderFrameContext.suppressesHeldItem(entity, hand)) {
             return;
         }
-        renderer.renderItemInHand(stack, patch, hand, poses, buffers,
-                matrices, light, partialTick);
+        try (RenderFrameContext.FormHeldItemDraw form = RenderFrameContext.openFormHeldItem(
+                entity, hand, patch.getArmature(), poses)) {
+            renderer.renderItemInHand(stack, patch, hand, form == null ? poses : form.poses(),
+                    buffers, matrices, light, partialTick);
+        }
     }
 }

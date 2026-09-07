@@ -9,6 +9,7 @@ import yesman.epicfight.api.model.Armature;
 import yesman.epicfight.api.utils.math.OpenMatrix4f;
 import yesman.epicfight.api.utils.math.Vec3f;
 
+import java.util.Arrays;
 import java.util.LinkedHashMap;
 import java.util.Map;
 
@@ -90,6 +91,94 @@ class AttachmentArmatureScopeTest {
             }
             assertNull(skin[23]);
         }
+    }
+
+    @Test
+    void recognizesShallowCopiesOfPassedAndRereadDisplayedWorldArrays() {
+        Armature armature = armature();
+        OpenMatrix4f[] original = matrices(22, 1.0F);
+        OpenMatrix4f[] displayed = matrices(22, 5.0F);
+        try (var ignored = AttachmentArmatureScope.open(armature, original, displayed)) {
+            OpenMatrix4f[] passedCopy = displayed.clone();
+            assertTrue(AttachmentArmatureScope.isDisplayedPoseArray(armature, passedCopy));
+            assertTrue(AttachmentArmatureScope.isDisplayedPoseArray(passedCopy));
+            OpenMatrix4f[] reread = AttachmentArmatureScope.resolvePoseMatrices(
+                    armature, original, false);
+            OpenMatrix4f[] rereadCopy = reread.clone();
+            assertTrue(AttachmentArmatureScope.isDisplayedPoseArray(armature, rereadCopy));
+            assertTrue(AttachmentArmatureScope.isDisplayedPoseArray(rereadCopy));
+            OpenMatrix4f[] skin = AttachmentArmatureScope.resolvePoseMatrices(
+                    armature, original, true);
+            assertFalse(AttachmentArmatureScope.isDisplayedPoseArray(armature, skin.clone()));
+            assertFalse(AttachmentArmatureScope.isDisplayedPoseArray(skin.clone()));
+        }
+    }
+
+    @Test
+    void rejectsNumericCopiesPartialSharingAndDifferentArrayExtents() {
+        Armature armature = armature();
+        OpenMatrix4f[] original = matrices(22, 1.0F);
+        OpenMatrix4f[] displayed = matrices(22, 5.0F);
+        try (var ignored = AttachmentArmatureScope.open(armature, original, displayed)) {
+            OpenMatrix4f[] numericCopy = Arrays.stream(displayed)
+                    .map(OpenMatrix4f::new).toArray(OpenMatrix4f[]::new);
+            OpenMatrix4f[] bodyReplacement = displayed.clone();
+            bodyReplacement[HumanoidRig.RIGHT_TOOL] =
+                    new OpenMatrix4f(displayed[HumanoidRig.RIGHT_TOOL]);
+            OpenMatrix4f[] addonReplacement = displayed.clone();
+            addonReplacement[21] = new OpenMatrix4f(displayed[21]);
+            OpenMatrix4f[] missingMatrix = displayed.clone();
+            missingMatrix[20] = null;
+            for (OpenMatrix4f[] requested : new OpenMatrix4f[][]{
+                    numericCopy, bodyReplacement, addonReplacement, missingMatrix,
+                    Arrays.copyOf(displayed, 20), Arrays.copyOf(displayed, 23), null}) {
+                assertFalse(AttachmentArmatureScope.isDisplayedPoseArray(armature, requested));
+                assertFalse(AttachmentArmatureScope.isDisplayedPoseArray(requested));
+            }
+        }
+    }
+
+    @Test
+    void doesNotRetainCallerArraysAfterTheyStopSharingTheCompletePose() {
+        Armature armature = armature();
+        OpenMatrix4f[] original = matrices(22, 1.0F);
+        OpenMatrix4f[] displayed = matrices(22, 5.0F);
+        try (var ignored = AttachmentArmatureScope.open(armature, original, displayed)) {
+            OpenMatrix4f[] requested = displayed.clone();
+            assertTrue(AttachmentArmatureScope.isDisplayedPoseArray(armature, requested));
+            requested[HumanoidRig.LEFT_TOOL] =
+                    new OpenMatrix4f(displayed[HumanoidRig.LEFT_TOOL]);
+            assertFalse(AttachmentArmatureScope.isDisplayedPoseArray(armature, requested));
+            assertFalse(AttachmentArmatureScope.isDisplayedPoseArray(requested));
+        }
+    }
+
+    @Test
+    void shallowCopyRecognitionStillRequiresTheActiveArmatureScopeAndFrame() {
+        Armature armature = armature();
+        Armature other = armature();
+        OpenMatrix4f[] original = matrices(22, 1.0F);
+        OpenMatrix4f[] displayed = matrices(22, 5.0F);
+        OpenMatrix4f[] requested = displayed.clone();
+        try (var ignored = AttachmentArmatureScope.open(armature, original, displayed)) {
+            assertTrue(AttachmentArmatureScope.isDisplayedPoseArray(armature, requested));
+            assertFalse(AttachmentArmatureScope.isDisplayedPoseArray(other, requested));
+            try (var barrier = AttachmentArmatureScope.open(armature, original, original)) {
+                assertFalse(AttachmentArmatureScope.isDisplayedPoseArray(armature, requested));
+                assertFalse(AttachmentArmatureScope.isDisplayedPoseArray(requested));
+            }
+            assertTrue(AttachmentArmatureScope.isDisplayedPoseArray(armature, requested));
+            RenderFrameContext.Frame nested = RenderFrameContext.pushThirdPerson(null);
+            try {
+                assertFalse(AttachmentArmatureScope.isDisplayedPoseArray(armature, requested));
+                assertFalse(AttachmentArmatureScope.isDisplayedPoseArray(requested));
+            } finally {
+                RenderFrameContext.pop(nested);
+            }
+            assertTrue(AttachmentArmatureScope.isDisplayedPoseArray(requested));
+        }
+        assertFalse(AttachmentArmatureScope.isDisplayedPoseArray(armature, requested));
+        assertFalse(AttachmentArmatureScope.isDisplayedPoseArray(requested));
     }
 
     @Test

@@ -54,7 +54,8 @@ final class AnimationControllerProgram {
      * One controller step viewed through two independent concerns. {@code allActive}
      * is used for state/edge observation even while a remote held-item preference is
      * unknown or disabled; {@code outputActive} is the subset allowed to affect the
-     * rendered pose and emit controller outputs.
+     * rendered pose. State effects have their own permission predicate so a
+     * native visual consumer need not enable previously disabled external outputs.
      */
     record Selection(List<ActiveAnimation> outputActive,
                      List<ActiveAnimation> allActive) {
@@ -105,16 +106,23 @@ final class AnimationControllerProgram {
 
     private static final class ControllerEnvironment implements MolangScriptRuntime.Host {
         private final ExpressionEngine.Environment delegate;
+        private final ExpressionEngine.Environment poseOnlyExpressions;
         private Completion completion = Completion.NONE;
         private String soundScope = "controller";
         private boolean outputsEnabled = true;
+        private boolean stateEffectsEnabled = true;
         private final Map<Integer, Double> stateVariables = new LinkedHashMap<>();
 
         private ControllerEnvironment(ExpressionEngine.Environment delegate) {
             this.delegate = delegate;
+            poseOnlyExpressions = ParallelAnimationProgram.poseOnlyEnvironment(this);
         }
 
         @Override public MolangScriptRuntime scripts() { return MolangScriptRuntime.scripts(delegate); }
+        @Override public boolean externalOutputsEnabled() {
+            return (!outputsEnabled || stateEffectsEnabled)
+                    && MolangScriptRuntime.externalOutputsEnabled(delegate);
+        }
         @Override public Object readVariableValue(int slot) {
             return stateVariables.containsKey(slot) ? stateVariables.get(slot) : delegate.readVariableValue(slot);
         }
@@ -146,8 +154,13 @@ final class AnimationControllerProgram {
             }
         }
 
-        private void outputsEnabled(boolean value) {
-            outputsEnabled = value;
+        private void outputsEnabled(boolean poseOutputs, boolean stateEffects) {
+            outputsEnabled = poseOutputs;
+            stateEffectsEnabled = stateEffects;
+        }
+
+        private ExpressionEngine.Environment expressions() {
+            return outputsEnabled && !stateEffectsEnabled ? poseOnlyExpressions : this;
         }
 
         private void stopOutputScope() {
@@ -158,14 +171,14 @@ final class AnimationControllerProgram {
         }
 
         private void playSounds(List<String> effects) {
-            if (outputsEnabled
+            if (stateEffectsEnabled
                     && delegate instanceof EntityAnimationEnvironment entityEnvironment) {
                 effects.forEach(entityEnvironment::playSoundEffect);
             }
         }
 
         private void playParticles(List<DeclarativeParticleEffect> effects) {
-            if (outputsEnabled
+            if (stateEffectsEnabled
                     && delegate instanceof EntityAnimationEnvironment entityEnvironment) {
                 effects.forEach(effect -> entityEnvironment.playParticleEffect(effect, true));
             }
@@ -179,7 +192,7 @@ final class AnimationControllerProgram {
             for (AnimationController.StateVariable variable : state.variables()) {
                 int slot = ExpressionEngine.slot(variable.name());
                 double input = ExpressionEngine.compile(variable.inputExpression())
-                        .evaluate(this);
+                        .evaluate(expressions());
                 double value = variable.remap(input);
                 stateVariables.put(slot, Double.isFinite(value) ? value : 0.0D);
             }
@@ -309,12 +322,18 @@ final class AnimationControllerProgram {
     /** Resolve managed state machines before their same-slot script providers run. */
     void prepareBuiltins(double now, ExpressionEngine.Environment environment,
                          RuntimeState runtimeState, Predicate<String> outputsEnabled) {
+        prepareBuiltins(now, environment, runtimeState, outputsEnabled, outputsEnabled);
+    }
+
+    void prepareBuiltins(double now, ExpressionEngine.Environment environment,
+                         RuntimeState runtimeState, Predicate<String> poseOutputs,
+                         Predicate<String> stateEffects) {
         if (builtinControllers.isEmpty()) return;
         ControllerEnvironment controllerEnvironment = new ControllerEnvironment(environment);
         for (Map.Entry<String, AnimationController> entry : controllers.entrySet()) {
             if (builtinControllers.contains(entry.getKey())) {
                 prepareController(entry.getKey(), entry.getValue(), now,
-                        controllerEnvironment, runtimeState, outputsEnabled);
+                        controllerEnvironment, runtimeState, poseOutputs, stateEffects);
             }
         }
     }
@@ -333,6 +352,13 @@ final class AnimationControllerProgram {
     Selection selectObserved(double now, ExpressionEngine.Environment environment,
                              RuntimeState runtimeState,
                              Predicate<String> outputsEnabled) {
+        return selectObserved(now, environment, runtimeState, outputsEnabled, outputsEnabled);
+    }
+
+    /** Pose-only consumers may observe a state without enabling its external effects. */
+    Selection selectObserved(double now, ExpressionEngine.Environment environment,
+                             RuntimeState runtimeState, Predicate<String> poseOutputs,
+                             Predicate<String> stateEffects) {
         if (controllers.isEmpty()) {
             return new Selection(List.of(), List.of());
         }
@@ -343,7 +369,7 @@ final class AnimationControllerProgram {
             String controllerName = entry.getKey();
             AnimationController controller = entry.getValue();
             ControllerRuntime runtime = prepareController(controllerName, controller, now,
-                    controllerEnvironment, runtimeState, outputsEnabled);
+                    controllerEnvironment, runtimeState, poseOutputs, stateEffects);
             boolean enabled = controllerEnvironment.outputsEnabled;
             int first = observed.size();
             appendActive(observed, controllerName, runtime, now, controllerEnvironment);
@@ -356,8 +382,9 @@ final class AnimationControllerProgram {
 
     private ControllerRuntime prepareController(String name, AnimationController controller,
             double now, ControllerEnvironment environment, RuntimeState runtimeState,
-            Predicate<String> outputsEnabled) {
-        environment.outputsEnabled(outputsEnabled == null || outputsEnabled.test(normalize(name)));
+            Predicate<String> poseOutputs, Predicate<String> stateEffects) {
+        environment.outputsEnabled(poseOutputs == null || poseOutputs.test(normalize(name)),
+                stateEffects == null || stateEffects.test(normalize(name)));
         environment.soundScope("controller/" + name);
         ControllerRuntime runtime = runtimeState.controllers.computeIfAbsent(
                 name, ignored -> new ControllerRuntime());
@@ -394,7 +421,7 @@ final class AnimationControllerProgram {
             for (AnimationController.Transition transition : runtime.current.transitions()) {
                 AnimationController.State candidate = controller.states().get(transition.targetState());
                 if (candidate != null && truth(ExpressionEngine.compile(
-                        transition.conditionExpression()).evaluate(environment))) {
+                        transition.conditionExpression()).evaluate(environment.expressions()))) {
                     target = candidate;
                     break;
                 }
@@ -479,7 +506,7 @@ final class AnimationControllerProgram {
                 continue;
             }
             double evaluated = ExpressionEngine.compile(reference.weightExpression())
-                    .evaluate(environment);
+                    .evaluate(environment.expressions());
             float weight = finite(evaluated * transitionWeight);
             String key = "controller/" + controllerName + '/' + state.name() + '/'
                     + generation + '/' + index;
@@ -503,7 +530,7 @@ final class AnimationControllerProgram {
             String name = normalize(reference.name());
             ClipInfo clip = clips.get(name);
             if (clip == null || !truth(ExpressionEngine.compile(
-                    reference.weightExpression()).evaluate(environment))) {
+                    reference.weightExpression()).evaluate(environment.expressions()))) {
                 continue;
             }
             active = true;
@@ -525,8 +552,9 @@ final class AnimationControllerProgram {
                 : controller.states().values().stream().findFirst().orElse(null);
     }
 
-    private static void execute(List<String> expressions, ExpressionEngine.Environment environment) {
-        expressions.forEach(expression -> ExpressionEngine.compile(expression).evaluate(environment));
+    private static void execute(List<String> expressions, ControllerEnvironment environment) {
+        expressions.forEach(expression -> ExpressionEngine.compile(expression)
+                .evaluate(environment.expressions()));
     }
 
     private static boolean truth(double value) {
