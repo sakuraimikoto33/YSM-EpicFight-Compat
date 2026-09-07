@@ -59,6 +59,7 @@ final class EntityAnimationEnvironment implements MolangScriptRuntime.Host {
 
     private final LivingEntity entity;
     private final String modelId;
+    private final boolean preview;
     private final Map<Integer, Double> variables;
     private final Map<Integer, Object> typedVariables = new java.util.HashMap<>();
     private MolangScriptRuntime scripts;
@@ -91,6 +92,8 @@ final class EntityAnimationEnvironment implements MolangScriptRuntime.Host {
     private boolean renderingInInventory;
     private boolean renderingInPaperdoll;
     private boolean firstPersonModHide;
+    private boolean groundSpeed2Resolved;
+    private double groundSpeed2;
 
     EntityAnimationEnvironment(LivingEntity entity, Map<Integer, Double> variables,
                                Set<Integer> assigned) {
@@ -99,8 +102,15 @@ final class EntityAnimationEnvironment implements MolangScriptRuntime.Host {
 
     EntityAnimationEnvironment(LivingEntity entity, Map<Integer, Double> variables,
                                Set<Integer> assigned, String modelId) {
+        this(entity, variables, assigned, modelId, false);
+    }
+
+    /** Preview scripts keep local state but never publish effects into the live world. */
+    EntityAnimationEnvironment(LivingEntity entity, Map<Integer, Double> variables,
+                               Set<Integer> assigned, String modelId, boolean preview) {
         this.entity = entity;
         this.modelId = modelId == null ? "" : modelId;
+        this.preview = preview;
         this.variables = variables;
         this.assigned = assigned;
         random = new Random(entity.getUUID().getMostSignificantBits()
@@ -128,7 +138,8 @@ final class EntityAnimationEnvironment implements MolangScriptRuntime.Host {
         cachedActorCount = -1;
         cameraPositionResolved = false;
         cachedCameraPosition = null;
-        ClientParticleOutput.update(entity);
+        groundSpeed2Resolved = false;
+        if (permitsExternalEffects(preview)) ClientParticleOutput.update(entity);
     }
 
     /**
@@ -199,7 +210,7 @@ final class EntityAnimationEnvironment implements MolangScriptRuntime.Host {
     }
 
     boolean soundOutputEnabled() {
-        return soundOutputEnabled;
+        return permitsExternalEffects(preview) && soundOutputEnabled;
     }
 
     void soundOutputEnabled(boolean soundOutputEnabled) {
@@ -207,7 +218,8 @@ final class EntityAnimationEnvironment implements MolangScriptRuntime.Host {
     }
 
     boolean playSoundEffect(String effect) {
-        if (soundOutputEnabled && effect != null && !effect.isBlank()) {
+        if (permitsExternalEffects(preview) && soundOutputEnabled
+                && effect != null && !effect.isBlank()) {
             boolean played = ClientSoundOutput.playEffect(entity, modelId, soundScope, effect);
             claimAttackSound(played);
             return played;
@@ -216,7 +228,9 @@ final class EntityAnimationEnvironment implements MolangScriptRuntime.Host {
     }
 
     void stopSoundScope(String scope) {
-        ClientSoundOutput.stopScope(entity, modelId, scope);
+        if (permitsExternalEffects(preview)) {
+            ClientSoundOutput.stopScope(entity, modelId, scope);
+        }
     }
 
     void playParticleEffect(DeclarativeParticleEffect effect, boolean scoped) {
@@ -226,19 +240,25 @@ final class EntityAnimationEnvironment implements MolangScriptRuntime.Host {
         if (!effect.preEffectScript().isBlank()) {
             ExpressionEngine.compile(effect.preEffectScript()).evaluate(this);
         }
-        ClientParticleOutput.emitEffect(entity, modelId, soundScope, effect, scoped);
+        if (permitsExternalEffects(preview)) {
+            ClientParticleOutput.emitEffect(entity, modelId, soundScope, effect, scoped);
+        }
     }
 
     void stopParticleScope(String scope) {
-        ClientParticleOutput.stopScope(entity, modelId, scope);
+        if (permitsExternalEffects(preview)) {
+            ClientParticleOutput.stopScope(entity, modelId, scope);
+        }
     }
 
     void reset() {
         typedVariables.clear();
         if (scripts != null) scripts.reset();
         physics.reset();
-        ClientSoundOutput.stopModel(entity, modelId);
-        ClientParticleOutput.stopModel(entity, modelId);
+        if (permitsExternalEffects(preview)) {
+            ClientSoundOutput.stopModel(entity, modelId);
+            ClientParticleOutput.stopModel(entity, modelId);
+        }
         attackReplacementHands = Set.of();
         attackSoundHand = null;
         boneQueries = BoneQuerySnapshot.EMPTY;
@@ -248,6 +268,9 @@ final class EntityAnimationEnvironment implements MolangScriptRuntime.Host {
     @Override
     public double readVariable(int slot) {
         String name = ExpressionEngine.slotName(slot);
+        if (prefersPreviewRoamingValue(preview, name, assigned.contains(slot))) {
+            return variables.getOrDefault(slot, 0.0D);
+        }
         RoamingVariableLookup.Lookup official = roamingVariables.lookup(name);
         if (RoamingVariableLookup.isRoaming(name) && official.present()) {
             return official.value();
@@ -279,12 +302,20 @@ final class EntityAnimationEnvironment implements MolangScriptRuntime.Host {
     public void writeVariable(int slot, double value) {
         typedVariables.remove(slot);
         String name = ExpressionEngine.slotName(slot);
-        if (RoamingVariableLookup.isRoaming(name)
+        if (permitsExternalEffects(preview) && RoamingVariableLookup.isRoaming(name)
                 && roamingVariables.writeRoaming(name, value)) {
             return;
         }
         variables.put(slot, Double.isFinite(value) ? value : 0.0D);
         assigned.add(slot);
+    }
+
+    static boolean permitsExternalEffects(boolean preview) {
+        return !preview;
+    }
+
+    static boolean prefersPreviewRoamingValue(boolean preview, String name, boolean assigned) {
+        return preview && assigned && RoamingVariableLookup.isRoaming(name);
     }
 
     void scripts(MolangScriptRuntime scripts) { this.scripts = scripts; }
@@ -347,6 +378,7 @@ final class EntityAnimationEnvironment implements MolangScriptRuntime.Host {
             case "query.body_y_rotation" -> Mth.wrapDegrees(modelBodyYaw);
             case "query.yaw_speed" -> yawSpeed(entity.getYRot(), entity.yRotO);
             case "query.ground_speed" -> horizontalSpeed;
+            case "ysm.ground_speed2" -> officialGroundSpeed2();
             case "query.vertical_speed" -> entity.getDeltaMovement().y * 20.0D;
             case "query.walk_distance" -> entity.moveDist;
             case "query.modified_distance_moved" -> entity.walkDist;
@@ -446,6 +478,7 @@ final class EntityAnimationEnvironment implements MolangScriptRuntime.Host {
             case "ysm.time_delta" -> deltaTime;
             case "ysm.swinging" -> flag(entity.swinging);
             case "ysm.swing_time" -> entity.swingTime;
+            case "ysm.in_shield_block_cooldown" -> flag(ClientShieldBlockState.inCooldown(entity));
             case "ysm.swinging_arm" -> entity.swinging && entity.swingingArm == InteractionHand.OFF_HAND ? 1.0D : 0.0D;
             case "ysm.attack_time" -> entity.getAttackAnim(partialTick);
             case "ysm.rendering_in_inventory" -> flag(renderingInInventory);
@@ -482,6 +515,14 @@ final class EntityAnimationEnvironment implements MolangScriptRuntime.Host {
             case "ctrl.idle" -> flag(horizontalSpeed <= 0.01D);
             default -> 0.0D;
         };
+    }
+
+    private double officialGroundSpeed2() {
+        if (!groundSpeed2Resolved) {
+            groundSpeed2 = OfficialGroundSpeedQuery.sample(entity);
+            groundSpeed2Resolved = true;
+        }
+        return groundSpeed2;
     }
 
     @Override
@@ -822,7 +863,7 @@ final class EntityAnimationEnvironment implements MolangScriptRuntime.Host {
     }
 
     private double playSound(String[] textArguments, double[] numericArguments) {
-        if (!soundOutputEnabled) {
+        if (!permitsExternalEffects(preview) || !soundOutputEnabled) {
             return 0.0D;
         }
         ClientSoundOutput.PlayRequest request = ClientSoundOutput.request(
@@ -833,7 +874,7 @@ final class EntityAnimationEnvironment implements MolangScriptRuntime.Host {
     }
 
     private void claimAttackSound(boolean played) {
-        if (played && attackSoundHand != null) {
+        if (permitsExternalEffects(preview) && played && attackSoundHand != null) {
             AttackSoundOwnership.claim(entity, attackSoundHand, modelId);
         }
     }
@@ -857,7 +898,7 @@ final class EntityAnimationEnvironment implements MolangScriptRuntime.Host {
     }
 
     private double stopSound(String[] textArguments, double[] numericArguments) {
-        if (!soundOutputEnabled) {
+        if (!permitsExternalEffects(preview) || !soundOutputEnabled) {
             return 0.0D;
         }
         int size = Math.max(textArguments == null ? 0 : textArguments.length,
@@ -875,7 +916,7 @@ final class EntityAnimationEnvironment implements MolangScriptRuntime.Host {
     }
 
     private double stopAllSounds(String[] textArguments, double[] numericArguments) {
-        if (!soundOutputEnabled) {
+        if (!permitsExternalEffects(preview) || !soundOutputEnabled) {
             return 0.0D;
         }
         if (numericArguments != null && numericArguments.length > 1) {
@@ -909,6 +950,7 @@ final class EntityAnimationEnvironment implements MolangScriptRuntime.Host {
 
     private double particle(String[] textArguments, double[] numericArguments,
                             boolean absolute) {
+        if (!permitsExternalEffects(preview)) return 0.0D;
         return flag(ClientParticleOutput.emit(entity, random, textArguments,
                 numericArguments, absolute));
     }

@@ -24,21 +24,36 @@ final class MovementPoseTransition {
             @Nullable String movementPoseKey, Set<InteractionHand> itemSwitchHands,
             boolean epicFightActionActive,
             AuxiliaryPoseMatrices poses, OpenMatrix4f[] complete) {
+        return apply(entity, firstPerson, false, animationTicks, movementPoseKey,
+                itemSwitchHands, epicFightActionActive, poses, complete);
+    }
+
+    Set<InteractionHand> apply(
+            LivingEntity entity, boolean firstPerson, boolean renderingInInventory,
+            double animationTicks,
+            @Nullable String movementPoseKey, Set<InteractionHand> itemSwitchHands,
+            boolean epicFightActionActive,
+            AuxiliaryPoseMatrices poses, OpenMatrix4f[] complete) {
         if (entity == null || poses == null || complete == null) {
             return Set.of();
         }
         EntityChannels entityChannels = channels.computeIfAbsent(
                 entity, ignored -> new EntityChannels());
-        Channel channel = firstPerson
-                ? entityChannels.firstPerson : entityChannels.thirdPerson;
+        Channel channel = entityChannels.channel(firstPerson, renderingInInventory);
         return channel.apply(animationTicks,
                 epicFightActionActive ? null : movementPoseKey,
                 itemSwitchHands, epicFightActionActive, poses, complete);
     }
 
-    private static final class EntityChannels {
+    static final class EntityChannels {
         private final Channel firstPerson = new Channel();
         private final Channel thirdPerson = new Channel();
+        private final Channel inventory = new Channel();
+
+        Channel channel(boolean firstPerson, boolean renderingInInventory) {
+            return firstPerson ? this.firstPerson
+                    : renderingInInventory ? inventory : thirdPerson;
+        }
     }
 
     /** Package-visible deterministic state machine for focused matrix tests. */

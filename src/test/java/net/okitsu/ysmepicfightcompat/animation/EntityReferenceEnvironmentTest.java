@@ -9,6 +9,26 @@ import static org.junit.jupiter.api.Assertions.*;
 
 class EntityReferenceEnvironmentTest {
     @Test
+    void exposesObservedShieldSuccessThroughEntityReferences() {
+        ProbeEnvironment host = new ProbeEnvironment();
+        EntityReferenceEnvironment reference = new EntityReferenceEnvironment(host);
+        assertEquals(12.0D, reference.readQuery(
+                ExpressionEngine.querySlot("ysm.in_shield_block_cooldown")));
+        assertEquals(1, host.queryReads);
+    }
+
+    @Test
+    void ownerGroundSpeed2UsesItsOwnOfficialQueryInsteadOfOrdinaryGroundSpeed() {
+        ProbeEnvironment host = new ProbeEnvironment();
+        EntityReferenceEnvironment reference = new EntityReferenceEnvironment(host);
+        assertEquals(17.0D, reference.readQuery(
+                ExpressionEngine.querySlot("ysm.ground_speed2")));
+        assertEquals(12.0D, reference.readQuery(
+                ExpressionEngine.querySlot("query.ground_speed")));
+        assertEquals(2, host.queryReads);
+    }
+
+    @Test
     void readsEntityQueriesAndOfficialOwnerExampleWithTypedEquipmentArguments() {
         ProbeEnvironment host = new ProbeEnvironment();
         EntityReferenceEnvironment reference = new EntityReferenceEnvironment(host);
@@ -62,7 +82,10 @@ class EntityReferenceEnvironmentTest {
         @Override public double readVariable(int slot) { return 99; }
         @Override public boolean hasVariable(int slot) { return true; }
         @Override public void writeVariable(int slot, double value) { writes++; }
-        @Override public double readQuery(int slot) { queryReads++; return 12; }
+        @Override public double readQuery(int slot) {
+            queryReads++;
+            return ExpressionEngine.slotName(slot).equals("ysm.ground_speed2") ? 17 : 12;
+        }
         @Override public Object invokeValue(String name, Object[] arguments) {
             functions.add(name);
             this.arguments = List.of(arguments.clone());

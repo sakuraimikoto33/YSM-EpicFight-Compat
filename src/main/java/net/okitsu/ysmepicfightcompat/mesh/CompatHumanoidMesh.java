@@ -154,6 +154,10 @@ public final class CompatHumanoidMesh extends HumanoidMesh {
         return parallelAnimations.itemSwitchOwnsPose(entity);
     }
 
+    public boolean itemSwitchOwnsPose(LivingEntity entity, boolean renderingInInventory) {
+        return parallelAnimations.itemSwitchOwnsPose(entity, renderingInInventory);
+    }
+
     /** Returns the current model-space pose of a held-item locator when one was derived. */
     @Nullable
     public OpenMatrix4f heldItemPose(@Nullable Armature armature,
@@ -199,7 +203,8 @@ public final class CompatHumanoidMesh extends HumanoidMesh {
                 || parallelAnimations.isEmpty() ? null
                 : parallelAnimations.sample(frame.entity(),
                 partialTick, frame.firstPerson(), frame.epicModelYaw(),
-                frame.epicFightActionActive(), frame.ysmMovement());
+                frame.epicFightActionActive(), frame.ysmMovement(),
+                frame.renderingInInventory());
         poseProgram.apply(this, frame == null ? Map.of() : frame.visibleParts(),
                 frame == null || frame.showUnlistedParts(), frame != null && frame.firstPerson(),
                 animationFrame == null ? null : animationFrame.hiddenBones());
@@ -213,7 +218,8 @@ public final class CompatHumanoidMesh extends HumanoidMesh {
                             && animationFrame.fullBodyBlendWeight() > 0.0F)
                     ? frame.fullBodyPoseTransform() : null;
             if (fullBodyPoseTransform != null
-                    && parallelAnimations.needsBoneQueryPublication(frame.entity())) {
+                    && parallelAnimations.needsBoneQueryPublication(
+                    frame.entity(), frame.renderingInInventory())) {
                 // A view-space skin is only for this draw. Bone queries are shared
                 // with third-person evaluation and must retain canonical model space,
                 // including a final ending blend whose Epic target is not rebased.
@@ -223,7 +229,7 @@ public final class CompatHumanoidMesh extends HumanoidMesh {
                         armature, poses, animationFrame, null);
                 if (canonical != null) {
                     parallelAnimations.publishBoneQueries(frame.entity(), canonical,
-                            animationFrame.hiddenBones());
+                            animationFrame.hiddenBones(), frame.renderingInInventory());
                 }
             }
             OpenMatrix4f[] complete = composeAnimationPose(
@@ -247,6 +253,7 @@ public final class CompatHumanoidMesh extends HumanoidMesh {
                 if (frame != null && movementPoseTransition != null) {
                     displayedItemSwitchHands = movementPoseTransition.apply(
                             frame.entity(), frame.firstPerson(),
+                            frame.renderingInInventory(),
                             frame.entity().tickCount + partialTick,
                             animationFrame == null ? null
                                     : animationFrame.movementPoseKey(),
@@ -255,7 +262,8 @@ public final class CompatHumanoidMesh extends HumanoidMesh {
                 }
                 if (frame != null) {
                     parallelAnimations.publishBoneQueries(frame.entity(), complete,
-                            animationFrame == null ? Set.of() : animationFrame.hiddenBones());
+                            animationFrame == null ? Set.of() : animationFrame.hiddenBones(),
+                            frame.renderingInInventory());
                     boolean rightItemSwitch = ownsItemSwitchTool(
                             frame.entity(), displayedItemSwitchHands,
                             HumanoidRig.RIGHT_TOOL);

@@ -19,6 +19,81 @@ import static org.junit.jupiter.api.Assertions.*;
 /** Exercises script hooks through selection and pose composition, without a Minecraft entity. */
 class ScriptAnimationIntegrationTest {
     @Test
+    void bedrockInventoryTransitionsDoNotConsumeTheWorldControllerStepAtTheSameTime() {
+        AnimationController.BlendTransition immediate =
+                new AnimationController.BlendTransition(0, List.of());
+        AnimationController.State normal = new AnimationController.State("normal",
+                List.of(new AnimationController.AnimationReference("world_pose", "1")),
+                List.of(new AnimationController.Transition("gui", "ysm.rendering_in_inventory")),
+                List.of("v.entries+=1;"), List.of(), immediate, false);
+        AnimationController.State preview = new AnimationController.State("gui",
+                List.of(new AnimationController.AnimationReference("gui_pose", "1")),
+                List.of(), List.of("v.entries+=1;"), List.of(), immediate, false);
+        AnimationController controller = new AnimationController("player.parallel_preview", "normal",
+                Map.of("normal", normal, "gui", preview));
+        RenderContextState<Fixture> contexts = new RenderContextState<>();
+        java.util.function.Supplier<Fixture> create = () -> fixture(List.of(
+                rotationClip("world_pose", "ear", 10), rotationClip("gui_pose", "ear", 55)),
+                Map.of(controller.name(), controller), Map.of());
+        Fixture world = contexts.getOrCreate(false, create);
+        Fixture gui = contexts.getOrCreate(true, create);
+        gui.environment.inventory = true;
+        world.sample(0, emptySelection(), false);
+        gui.sample(0, emptySelection(), false);
+        assertRotationZ(10, world.sample(0.1, emptySelection(), false).parallelDeltas()[1]);
+        assertRotationZ(55, gui.sample(0.1, emptySelection(), false).parallelDeltas()[1]);
+        assertRotationZ(10, world.sample(0.1, emptySelection(), false).parallelDeltas()[1]);
+        assertEquals(1, world.environment.value("v.entries"));
+        assertEquals(2, gui.environment.value("v.entries"));
+    }
+
+    @Test
+    void worldInventoryWorldAtTheSameTimeKeepsIndependentPredicatesAndFrameEvents() {
+        RenderContextState<Fixture> contexts = new RenderContextState<>();
+        Map<String, String> sources = Map.of(
+                "init@player_init", "v.init_count+=1;",
+                "update@player_update", "v.update_count+=1;",
+                "pose@player_ctrl_parallel0", "v.hook_count+=1;"
+                        + "ctrl.set_animation(ysm.rendering_in_inventory ? 'gui_pose' : 'world_pose');"
+                        + "return ctrl.state_continue;");
+        java.util.function.Supplier<Fixture> create = () -> fixture(List.of(
+                rotationClip("world_pose", "ear", 10),
+                rotationClip("gui_pose", "ear", 55)), Map.of(), sources);
+        Fixture world = contexts.getOrCreate(false, create);
+        Fixture gui = contexts.getOrCreate(true, create);
+        gui.environment.inventory = true;
+        assertRotationZ(10, world.sample(0, emptySelection(), false).parallelDeltas()[1]);
+        assertRotationZ(55, gui.sample(0, emptySelection(), false).parallelDeltas()[1]);
+        assertRotationZ(10, contexts.get(false).sample(0, emptySelection(), false).parallelDeltas()[1]);
+        for (Fixture context : List.of(world, gui)) {
+            assertEquals(1, context.environment.value("v.init_count"));
+            assertEquals(1, context.environment.value("v.update_count"));
+            assertEquals(1, context.environment.value("v.hook_count"));
+        }
+        gui.sample(0.1, emptySelection(), false);
+        assertEquals(2, gui.environment.value("v.update_count"));
+        assertEquals(1, world.environment.value("v.update_count"));
+        assertEquals(1, world.environment.value("v.hook_count"));
+    }
+
+    @Test
+    void inventoryStopFadesPersistAcrossDrawsWithoutStoppingTheWorldController() {
+        RenderContextState<Fixture> contexts = new RenderContextState<>();
+        java.util.function.Supplier<Fixture> create = () -> fixture(
+                List.of(rotationClip("pose", "ear", 45)), Map.of(),
+                Map.of("pose@player_ctrl_parallel0", "ctrl.set_animation('pose');"
+                        + "return ysm.rendering_in_inventory ? ctrl.state_stop : ctrl.state_continue;"));
+        Fixture world = contexts.getOrCreate(false, create);
+        Fixture gui = contexts.getOrCreate(true, create);
+        gui.environment.inventory = true;
+        assertRotationZ(45, world.sample(0, emptySelection(), false).parallelDeltas()[1]);
+        assertRotationZ(45, gui.sample(0, emptySelection(), false).parallelDeltas()[1]);
+        assertRotationZ(0, gui.sample(0.2, emptySelection(), false).parallelDeltas()[1]);
+        assertRotationZ(45, world.sample(0.2, emptySelection(), false).parallelDeltas()[1]);
+        assertRotationZ(0, gui.sample(0.3, emptySelection(), false).parallelDeltas()[1]);
+    }
+
+    @Test
     void builtinScalesSwitchImmediatelyButTheCustomStateKeepsItsScaleBlend() {
         AnimationController controller = builtinController("player.parallel0", 0.2F);
         Fixture fixture = fixture(List.of(scaleClip("parallel0", "ear", 0),
@@ -699,6 +774,134 @@ class ScriptAnimationIntegrationTest {
     }
 
     @Test
+    void dynamicBedrockControllersUsePhaseAndLexicalOrderForLifecycleAndPose() {
+        Map<String, AnimationController> controllers = new LinkedHashMap<>();
+        List<AnimationClip> clips = new java.util.ArrayList<>();
+        // Deliberately reverse both phase and same-phase name order in the input.
+        List<String> channels = List.of("player.parallel_z", "player.parallel_a",
+                "player.post_main_z", "player.post_main_a", "player.main",
+                "player.pre_main_z", "player.pre_main_a", "player.pre_parallel_start");
+        for (int index = 0; index < channels.size(); index++) {
+            String channel = channels.get(index);
+            int digit = channels.size() - index;
+            String clip = "authored_" + digit;
+            clips.add(scriptClip(clip, "v.pose_order=v.pose_order*10+" + digit + ";return 0;"));
+            controllers.put(channel, controller(channel, clip,
+                    List.of("v.entry_order=v.entry_order*10+" + digit + ";")));
+        }
+        Fixture fixture = fixture(clips, controllers, Map.of());
+
+        fixture.sample(selection("walk"), false);
+
+        assertEquals(12345678.0D, fixture.environment.value("v.entry_order"));
+        assertEquals(12345678.0D, fixture.environment.value("v.pose_order"));
+    }
+
+    @Test
+    void dynamicLifecycleAndPoseUseTheSameOriginalNameCaseOrder() {
+        for (String prefix : List.of("player.pre_main_", "player.pre_parallel_", "player.parallel_")) {
+            Fixture fixture = fixture(List.of(
+                    scriptClip("first", "v.pose_order=v.pose_order*10+1;return 0;"),
+                    scriptClip("second", "v.pose_order=v.pose_order*10+2;return 0;")), Map.of(
+                    prefix + "a", controller(prefix + "a", "second", List.of("v.entry_order=v.entry_order*10+2;")),
+                    prefix + "Z", controller(prefix + "Z", "first", List.of("v.entry_order=v.entry_order*10+1;"))), Map.of());
+
+            fixture.sample(emptySelection(), false);
+
+            assertEquals(12.0D, fixture.environment.value("v.entry_order"), prefix);
+            assertEquals(12.0D, fixture.environment.value("v.pose_order"), prefix);
+        }
+    }
+
+    @Test
+    void ordinaryParallelControllerReplacesItsNativeSlotUnderBothNumberSpellings() {
+        for (String prefix : List.of("parallel", "pre_parallel")) {
+            for (String suffix : List.of("0", "_0")) {
+                String channel = "player." + prefix + suffix;
+                AnimationClip nativeClip = countedRotationClip(prefix + "0", 10, "v.native_calls");
+                AnimationClip authored = countedRotationClip("authored", 20, "v.authored_calls");
+                Fixture fixture = fixture(List.of(nativeClip, authored), Map.of(
+                        channel, controller(channel, authored.name(), List.of())), Map.of());
+
+                ParallelAnimationProgram.Frame frame = fixture.sample(emptySelection(), false);
+
+                assertEquals(0.0D, fixture.environment.value("v.native_calls"), channel);
+                assertEquals(1.0D, fixture.environment.value("v.authored_calls"), channel);
+                assertRotationZ(20, frame.parallelDeltas()[1]);
+            }
+        }
+    }
+
+    @Test
+    void dynamicOrderIncludesManagedSlotsWhenNoScriptProviderNeedsEarlyPreparation() {
+        AnimationController main = controller("player.main", "main_pose", List.of("v.order=v.order*10+2;"));
+        Map<String, AnimationController.State> states = new LinkedHashMap<>(main.states());
+        states.put("ysm-builtin", builtinController("unused", 0).states().get("ysm-builtin"));
+        main = new AnimationController(main.name(), main.initialState(), states);
+        Fixture fixture = fixture(List.of(rotationClip("main_pose", "head", 20)), Map.of(
+                "player.main", main,
+                "player.pre_main_face", controller("player.pre_main_face", "", List.of("v.order=1;")),
+                "player.post_main_face", controller("player.post_main_face", "", List.of("v.order=v.order*10+3;"))),
+                Map.of());
+
+        fixture.sample(selection("walk"), true);
+
+        assertEquals(123.0D, fixture.environment.value("v.order"));
+    }
+
+    @Test
+    void dynamicMainLayersKeepTheirPositionAroundTheNativeMovementProvider() {
+        AnimationClip walk = rotationClip("walk", "head", 20);
+        AnimationClip before = rotationClip("before", "head", 10);
+        AnimationClip afterA = rotationClip("after_a", "head", 30);
+        AnimationClip afterZ = rotationClip("after_z", "head", 40);
+        Map<String, AnimationController> controllers = new LinkedHashMap<>();
+        controllers.put("player.post_main_z", controller("player.post_main_z", "after_z", List.of()));
+        controllers.put("player.pre_main_a", controller("player.pre_main_a", "before", List.of()));
+        controllers.put("player.post_main_a", controller("player.post_main_a", "after_a", List.of()));
+        Fixture fixture = fixture(List.of(walk, before, afterA, afterZ), controllers, Map.of());
+
+        ParallelAnimationProgram.Frame frame = fixture.sample(selection("walk"), true);
+
+        assertTrue(frame.replaceEpicFightPose());
+        assertRotationZ(40, frame.wholeModelDeltas()[0]);
+    }
+
+    @Test
+    void dynamicParallelLayersSurroundNativeProvidersAndDoNotRunTwice() {
+        AnimationClip pre = scriptClip("pre_parallel0", "v.order=v.order*10+1;return 0;");
+        AnimationClip before = scriptClip("before", "v.order=v.order*10+2;return 0;");
+        AnimationClip walk = scriptClip("walk", "v.order=v.order*10+3;return 0;");
+        AnimationClip post = scriptClip("parallel0", "v.order=v.order*10+4;return 0;");
+        AnimationClip after = scriptClip("after", "v.order=v.order*10+5;return 0;");
+        Fixture fixture = fixture(List.of(pre, before, walk, post, after), Map.of(
+                "player.parallel_fox", controller("player.parallel_fox", "after", List.of()),
+                "player.pre_parallel_fox", controller("player.pre_parallel_fox", "before", List.of())), Map.of());
+
+        fixture.sample(selection("walk"), false);
+
+        assertEquals(12345.0D, fixture.environment.value("v.order"));
+    }
+
+    @Test
+    void dynamicHandInsertionControllersCanAnimateAuxiliaryBonesWithoutReplacingAnItem() {
+        List<String> channels = List.of("player.pre_hold_face", "player.post_hold_face",
+                "player.pre_swing_face", "player.post_swing_face", "player.pre_use_face", "player.post_use_face");
+        Map<String, AnimationController> controllers = new LinkedHashMap<>();
+        List<AnimationClip> clips = new java.util.ArrayList<>();
+        for (int index = channels.size() - 1; index >= 0; index--) {
+            String name = "face_" + index;
+            clips.add(scriptClip(name, "v.order=v.order*10+" + (index + 1) + ";return 0;"));
+            controllers.put(channels.get(index), controller(channels.get(index), name, List.of()));
+        }
+        Fixture fixture = fixture(clips, controllers, Map.of());
+
+        fixture.sample(emptySelection(), false);
+
+        assertEquals(123456.0D, fixture.environment.value("v.order"));
+    }
+
+    @Test
     void bedrockControllerOwnsItsSlotAndTheConflictingScriptIsNotExecuted() {
         AnimationClip walk = rotationClip("walk", "head", 5);
         AnimationClip scripted = rotationClip("scripted_pose", "head", 40);
@@ -981,6 +1184,7 @@ class ScriptAnimationIntegrationTest {
     private static final class HostEnvironment implements MolangScriptRuntime.Host {
         private final Map<Integer, Object> values = new HashMap<>();
         private final MolangScriptRuntime scripts;
+        private boolean inventory;
 
         private HostEnvironment(MolangScriptRuntime scripts) {
             this.scripts = scripts;
@@ -999,6 +1203,9 @@ class ScriptAnimationIntegrationTest {
             values.put(slot, ExpressionEngine.boundedValue(value));
         }
         @Override public Object readQueryValue(int slot) {
+            if (ExpressionEngine.slotName(slot).equals("ysm.rendering_in_inventory")) {
+                return inventory ? 1.0D : 0.0D;
+            }
             Object value = scripts.read(ExpressionEngine.slotName(slot), this);
             return value == MolangScriptRuntime.UNHANDLED ? 0.0D : value;
         }

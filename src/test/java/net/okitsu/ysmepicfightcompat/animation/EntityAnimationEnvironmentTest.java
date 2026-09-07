@@ -4,14 +4,69 @@ import net.minecraft.core.Direction;
 import net.minecraft.world.InteractionHand;
 import net.minecraft.world.phys.Vec3;
 import org.junit.jupiter.api.Test;
+import org.objectweb.asm.ClassReader;
+import org.objectweb.asm.ClassVisitor;
+import org.objectweb.asm.Label;
+import org.objectweb.asm.MethodVisitor;
+import org.objectweb.asm.Opcodes;
 
+import java.io.IOException;
+import java.io.InputStream;
+import java.util.ArrayDeque;
+import java.util.ArrayList;
+import java.util.HashSet;
+import java.util.IdentityHashMap;
+import java.util.List;
+import java.util.Map;
 import java.util.Random;
 import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class EntityAnimationEnvironmentTest {
+    @Test
+    void previewEffectsCannotBeEnabledByAnAnimationSoundScope() {
+        assertFalse(EntityAnimationEnvironment.permitsExternalEffects(true));
+        assertTrue(EntityAnimationEnvironment.permitsExternalEffects(false));
+    }
+
+    @Test
+    void onlyAssignedPreviewRoamingValuesOverrideTheSharedRead() {
+        assertTrue(EntityAnimationEnvironment.prefersPreviewRoamingValue(
+                true, "v.roaming.choice", true));
+        assertTrue(EntityAnimationEnvironment.prefersPreviewRoamingValue(
+                true, "variable.roaming.choice", true));
+        assertFalse(EntityAnimationEnvironment.prefersPreviewRoamingValue(
+                true, "v.roaming.choice", false));
+        assertFalse(EntityAnimationEnvironment.prefersPreviewRoamingValue(
+                false, "v.roaming.choice", true));
+        assertFalse(EntityAnimationEnvironment.prefersPreviewRoamingValue(
+                true, "v.configuration", true));
+        assertFalse(EntityAnimationEnvironment.prefersPreviewRoamingValue(
+                true, "v.roaming.", true));
+    }
+
+    @Test
+    void everyExternalEffectCallIsUnreachableWhenPreviewPermissionIsFalse() throws IOException {
+        List<EffectMethod> methods = effectMethods();
+        Set<String> guardedMethods = new HashSet<>();
+        for (EffectMethod method : methods) {
+            if (method.steps.stream().noneMatch(EffectStep::externalEffect)) continue;
+            guardedMethods.add(method.name);
+            assertFalse(method.reachesExternalEffect(false), method.name);
+            assertTrue(method.reachesExternalEffect(true),
+                    "The normal world path must remain reachable: " + method.name);
+        }
+        assertEquals(Set.of("update", "playSoundEffect", "stopSoundScope",
+                "playParticleEffect", "stopParticleScope", "reset", "writeVariable",
+                "playSound", "claimAttackSound", "stopSound", "stopAllSounds", "particle"),
+                guardedMethods);
+    }
+
     @Test
     void limitsAttackSoundOwnershipToSwingScopesAndTheMatchingHand() {
         assertEquals(InteractionHand.MAIN_HAND,
@@ -138,5 +193,120 @@ class EntityAnimationEnvironmentTest {
         assertEquals(-8, EntityAnimationEnvironment.relativeOffset(-8.0D));
         assertNull(EntityAnimationEnvironment.relativeOffset(9.0D));
         assertNull(EntityAnimationEnvironment.relativeOffset(Double.NaN));
+    }
+
+    /** Verifies the compiled boundary without constructing a bootstrapped Minecraft entity. */
+    private static List<EffectMethod> effectMethods() throws IOException {
+        List<EffectMethod> methods = new ArrayList<>();
+        String type = "net/okitsu/ysmepicfightcompat/animation/EntityAnimationEnvironment";
+        try (InputStream stream = EntityAnimationEnvironmentTest.class.getClassLoader()
+                .getResourceAsStream(type + ".class")) {
+            assertNotNull(stream);
+            new ClassReader(stream).accept(new ClassVisitor(Opcodes.ASM9) {
+                @Override
+                public MethodVisitor visitMethod(int access, String name, String descriptor,
+                                                 String signature, String[] exceptions) {
+                    EffectMethod method = new EffectMethod(name, type);
+                    methods.add(method);
+                    return method;
+                }
+            }, ClassReader.SKIP_DEBUG | ClassReader.SKIP_FRAMES);
+        }
+        return methods;
+    }
+
+    private record EffectStep(int opcode, List<Label> targets,
+                              boolean permission, boolean externalEffect) { }
+    private record EffectPosition(int index, Boolean permission) { }
+
+    private static final class EffectMethod extends MethodVisitor {
+        private final String name;
+        private final String environmentType;
+        private final List<EffectStep> steps = new ArrayList<>();
+        private final Map<Label, Integer> labels = new IdentityHashMap<>();
+
+        private EffectMethod(String name, String environmentType) {
+            super(Opcodes.ASM9);
+            this.name = name;
+            this.environmentType = environmentType;
+        }
+
+        @Override public void visitLabel(Label label) { labels.put(label, steps.size()); }
+
+        @Override
+        public void visitMethodInsn(int opcode, String owner, String method,
+                                    String descriptor, boolean isInterface) {
+            String prefix = "net/okitsu/ysmepicfightcompat/animation/";
+            boolean external = owner.equals(prefix + "ClientParticleOutput")
+                    || owner.equals(prefix + "AttackSoundOwnership")
+                    || owner.equals(prefix + "ClientSoundOutput")
+                    && !Set.of("request", "identifier").contains(method)
+                    || owner.equals(prefix + "OfficialRoamingVariables$View")
+                    && method.equals("writeRoaming");
+            steps.add(new EffectStep(opcode, List.of(),
+                    owner.equals(environmentType) && method.equals("permitsExternalEffects"), external));
+        }
+
+        @Override
+        public void visitJumpInsn(int opcode, Label target) {
+            steps.add(new EffectStep(opcode, List.of(target), false, false));
+        }
+
+        @Override
+        public void visitInsn(int opcode) {
+            if (opcode >= Opcodes.IRETURN && opcode <= Opcodes.RETURN || opcode == Opcodes.ATHROW) {
+                steps.add(new EffectStep(opcode, List.of(), false, false));
+            }
+        }
+
+        @Override
+        public void visitTableSwitchInsn(int minimum, int maximum, Label fallback, Label... targets) {
+            addSwitch(fallback, targets);
+        }
+
+        @Override
+        public void visitLookupSwitchInsn(Label fallback, int[] keys, Label[] targets) {
+            addSwitch(fallback, targets);
+        }
+
+        private void addSwitch(Label fallback, Label[] targets) {
+            List<Label> all = new ArrayList<>(List.of(targets));
+            all.add(fallback);
+            steps.add(new EffectStep(Opcodes.TABLESWITCH, all, false, false));
+        }
+
+        private boolean reachesExternalEffect(boolean permission) {
+            ArrayDeque<EffectPosition> pending = new ArrayDeque<>();
+            Set<EffectPosition> visited = new HashSet<>();
+            pending.add(new EffectPosition(0, null));
+            while (!pending.isEmpty()) {
+                EffectPosition position = pending.removeFirst();
+                if (position.index >= steps.size() || !visited.add(position)) continue;
+                EffectStep step = steps.get(position.index);
+                if (step.externalEffect) return true;
+                if (step.permission) {
+                    pending.add(new EffectPosition(position.index + 1, permission));
+                } else if (step.opcode >= Opcodes.IRETURN && step.opcode <= Opcodes.RETURN
+                        || step.opcode == Opcodes.ATHROW) {
+                    // No normal successor.
+                } else if (!step.targets.isEmpty()) {
+                    Boolean jump = position.permission == null ? null
+                            : step.opcode == Opcodes.IFEQ ? !position.permission
+                            : step.opcode == Opcodes.IFNE ? position.permission : null;
+                    if (jump == null || jump) {
+                        for (Label target : step.targets) {
+                            pending.add(new EffectPosition(labels.get(target), null));
+                        }
+                    }
+                    if (step.opcode != Opcodes.GOTO && step.opcode != Opcodes.TABLESWITCH
+                            && (jump == null || !jump)) {
+                        pending.add(new EffectPosition(position.index + 1, null));
+                    }
+                } else {
+                    pending.add(new EffectPosition(position.index + 1, null));
+                }
+            }
+            return false;
+        }
     }
 }

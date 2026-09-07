@@ -242,6 +242,78 @@ class AnimationControllerProgramTest {
     }
 
     @Test
+    void ordinaryEmptyStateChainsRunInOneFrameWithOrderedLifecycleAndConditions() {
+        AnimationControllerProgram program = parsedProgram("""
+                {"animation_controllers":{"player.parallel_4":{"initial_state":"first","states":{
+                  "first":{"animations":["pose"],"on_entry":["v.order=1;"],
+                    "on_exit":["v.order=v.order*10+2;"],"transitions":[{"empty":"1"}]},
+                  "empty":{"on_entry":["v.order=v.order*10+3;"],
+                    "on_exit":["v.order=v.order*10+4;"],
+                    "transitions":[{"last":"q.all_animations_finished && v.order == 123"},{"wrong":"1"}]},
+                  "last":{"animations":["other"],"on_entry":["v.order=v.order*10+5;"],
+                    "transitions":[{"wrong":"1"}]},
+                  "wrong":{"on_entry":["v.wrong+=1;"]}
+                }}}}
+                """);
+        TestEnvironment environment = new TestEnvironment();
+        AnimationControllerProgram.RuntimeState runtime = new AnimationControllerProgram.RuntimeState();
+        program.select(0, environment, runtime);
+        List<AnimationControllerProgram.ActiveAnimation> selected = program.select(0.1, environment, runtime);
+        assertFalse(program.hasBuiltinControllers());
+        assertEquals(List.of("other"), selected.stream()
+                .map(AnimationControllerProgram.ActiveAnimation::name).toList());
+        assertEquals(12345.0D, environment.value("v.order"));
+        assertEquals(0.0D, environment.value("v.wrong"), "Stop at the first nonempty state");
+        program.select(0.1, environment, runtime);
+        assertEquals(12345.0D, environment.value("v.order"), "Do not step twice at the same time");
+        assertEquals(0.0D, environment.value("v.wrong"));
+    }
+
+    @Test
+    void ordinaryEmptyStateCyclesStopBeforeReentryIncludingSelfLoops() {
+        AnimationControllerProgram program = parsedProgram("""
+                {"animation_controllers":{"player.parallel_4":{"initial_state":"first","states":{
+                  "first":{"on_entry":["v.first+=1;"],"transitions":[{"second":"1"}]},
+                  "second":{"on_entry":["v.second+=1;"],"transitions":[{"third":"1"}]},
+                  "third":{"on_entry":["v.third+=1;"],"transitions":[{"first":"1"}]}
+                }},"player.parallel_5":{"states":{
+                  "default":{"on_entry":["v.self+=1;"],"transitions":[{"default":"1"}]}
+                }}}}
+                """);
+        TestEnvironment environment = new TestEnvironment();
+        AnimationControllerProgram.RuntimeState runtime = new AnimationControllerProgram.RuntimeState();
+        program.select(0, environment, runtime);
+        program.select(0.1, environment, runtime);
+        assertEquals(1.0D, environment.value("v.first"));
+        assertEquals(1.0D, environment.value("v.second"));
+        assertEquals(1.0D, environment.value("v.third"));
+        assertEquals(1.0D, environment.value("v.self"));
+    }
+
+    @Test
+    void ordinaryEmptyStateChainsKeepThePerFrameWorkBound() {
+        Map<String, AnimationController.State> states = new LinkedHashMap<>();
+        for (int index = 0; index < 300; index++) {
+            states.put("state" + index, state("state" + index, List.of(),
+                    index == 299 ? List.of() : List.of(new AnimationController.Transition(
+                            "state" + (index + 1), "1")),
+                    List.of("v.entries+=1;"), List.of(), null, false));
+        }
+        AnimationController controller = new AnimationController("player.parallel_4", "state0", states);
+        AnimationControllerProgram program = new AnimationControllerProgram(
+                Map.of(controller.name(), controller), Map.of());
+        TestEnvironment environment = new TestEnvironment();
+        AnimationControllerProgram.RuntimeState runtime = new AnimationControllerProgram.RuntimeState();
+        program.select(0, environment, runtime);
+        program.select(0.1, environment, runtime);
+        assertEquals(257.0D, environment.value("v.entries"));
+        program.select(0.1, environment, runtime);
+        assertEquals(257.0D, environment.value("v.entries"));
+        program.select(0.2, environment, runtime);
+        assertEquals(300.0D, environment.value("v.entries"));
+    }
+
+    @Test
     void unsupportedOrChildControllersNeverDelegateAndTheReservedNameIsExact() {
         for (String name : List.of("player.main.child", "player.parallel_9", "player.parallel_fox",
                 "projectile.main", "vehicle.main", "fp.arm.misc", "player.gui_hover")) {

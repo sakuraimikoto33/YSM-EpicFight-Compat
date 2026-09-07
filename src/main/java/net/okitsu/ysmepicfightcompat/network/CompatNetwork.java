@@ -27,6 +27,7 @@ import net.okitsu.ysmepicfightcompat.network.message.OwnerPreferenceEpochMessage
 import net.okitsu.ysmepicfightcompat.network.message.SelectionUpdateMessage;
 import net.okitsu.ysmepicfightcompat.network.message.ScriptSyncRequestMessage;
 import net.okitsu.ysmepicfightcompat.network.message.ScriptSyncSnapshotMessage;
+import net.okitsu.ysmepicfightcompat.network.message.ShieldBlockMessage;
 import net.okitsu.ysmepicfightcompat.network.message.SubEntityPreferenceQueryMessage;
 import net.okitsu.ysmepicfightcompat.network.message.SubEntityPreferenceSnapshotMessage;
 import net.okitsu.ysmepicfightcompat.network.message.SubEntityPreferenceUpdateMessage;
@@ -139,9 +140,13 @@ public final class CompatNetwork {
                 ScriptSyncRequestMessage::write, ScriptSyncRequestMessage::read,
                 ScriptSyncRequestMessage::receive,
                 Optional.of(NetworkDirection.PLAY_TO_SERVER));
-        CHANNEL.registerMessage(id, ScriptSyncSnapshotMessage.class,
+        CHANNEL.registerMessage(id++, ScriptSyncSnapshotMessage.class,
                 ScriptSyncSnapshotMessage::write, ScriptSyncSnapshotMessage::read,
                 ScriptSyncSnapshotMessage::receive,
+                Optional.of(NetworkDirection.PLAY_TO_CLIENT));
+        CHANNEL.registerMessage(id, ShieldBlockMessage.class,
+                ShieldBlockMessage::write, ShieldBlockMessage::read,
+                ShieldBlockMessage::receive,
                 Optional.of(NetworkDirection.PLAY_TO_CLIENT));
     }
 

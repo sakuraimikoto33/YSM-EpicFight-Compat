@@ -155,7 +155,7 @@ public final class CombatPlayerRenderer extends PHumanoidRenderer<
         }
         CompatHumanoidMesh mesh = CombatMeshCache.readyMesh(selection.modelId());
         boolean itemSwitchOwnsPose = mesh != null
-                && mesh.itemSwitchOwnsPose(entity);
+                && mesh.itemSwitchOwnsPose(entity, InventoryRenderScope.pending(entity));
         boolean movementOwnsPose = movement != null
                 && ClientMovementAnimationPreferences.usesYsm(
                 entity, selection.modelId(), movement);

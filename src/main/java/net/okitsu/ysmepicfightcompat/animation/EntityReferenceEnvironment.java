@@ -7,6 +7,7 @@ import java.util.Set;
 final class EntityReferenceEnvironment implements ExpressionEngine.Environment {
     private static final Set<String> YSM_VALUES = Set.of(
             "ysm.head_yaw", "ysm.head_pitch", "ysm.weather", "ysm.dimension_name",
+            "ysm.ground_speed2", "ysm.in_shield_block_cooldown",
             "ysm.is_passenger", "ysm.is_sleep", "ysm.is_sneak", "ysm.is_open_air",
             "ysm.eye_in_water", "ysm.frozen_ticks", "ysm.air_supply", "ysm.has_helmet",
             "ysm.has_chest_plate", "ysm.has_leggings", "ysm.has_boots", "ysm.has_mainhand",

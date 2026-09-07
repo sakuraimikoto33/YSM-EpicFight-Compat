@@ -20,6 +20,7 @@ public final class RenderFrameContext {
     public static final class Frame {
         private final LivingEntity entity;
         private final boolean firstPerson;
+        private final boolean renderingInInventory;
         private final Map<String, Boolean> visibleParts;
         private final boolean showUnlistedParts;
         @Nullable
@@ -52,6 +53,7 @@ public final class RenderFrameContext {
                       @Nullable OpenMatrix4f fullBodyPoseTransform) {
             this.entity = entity;
             this.firstPerson = firstPerson;
+            this.renderingInInventory = InventoryRenderScope.claim(entity, firstPerson);
             this.visibleParts = Map.copyOf(visibleParts);
             this.showUnlistedParts = showUnlistedParts;
             this.epicModelYaw = epicModelYaw != null && Float.isFinite(epicModelYaw)
@@ -68,6 +70,11 @@ public final class RenderFrameContext {
 
         public boolean firstPerson() {
             return firstPerson;
+        }
+
+        /** True only for the entity draw claimed by an inventory preview scope. */
+        public boolean renderingInInventory() {
+            return renderingInInventory;
         }
 
         public Map<String, Boolean> visibleParts() {

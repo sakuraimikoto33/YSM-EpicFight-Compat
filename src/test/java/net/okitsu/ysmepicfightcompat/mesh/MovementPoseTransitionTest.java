@@ -11,6 +11,29 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 
 class MovementPoseTransitionTest {
     @Test
+    void inventoryAndWorldPoseTransitionsRemainSeparateAtIdenticalTimes() {
+        Fixture fixture = new Fixture();
+        MovementPoseTransition.EntityChannels channels = new MovementPoseTransition.EntityChannels();
+        MovementPoseTransition.Channel world = channels.channel(false, false);
+        MovementPoseTransition.Channel gui = channels.channel(false, true);
+        org.junit.jupiter.api.Assertions.assertNotSame(world, gui);
+        org.junit.jupiter.api.Assertions.assertNotSame(world, channels.channel(true, false));
+        org.junit.jupiter.api.Assertions.assertSame(channels.channel(true, false),
+                channels.channel(true, true), "first person cannot select an inventory channel");
+        world.apply(0, null, false, fixture.composer, fixture.pose(2));
+        gui.apply(0, null, false, fixture.composer, fixture.pose(100));
+        OpenMatrix4f[] worldStart = fixture.pose(20);
+        world.apply(1, "run", false, fixture.composer, worldStart);
+        assertEquals(2, fixture.x(worldStart), 0.0001F);
+        OpenMatrix4f[] guiStart = fixture.pose(200);
+        gui.apply(1, "run", false, fixture.composer, guiStart);
+        assertEquals(100, fixture.x(guiStart), 0.0001F);
+        OpenMatrix4f[] worldEnd = fixture.pose(20);
+        world.apply(4, "run", false, fixture.composer, worldEnd);
+        assertEquals(20, fixture.x(worldEnd), 0.0001F);
+    }
+
+    @Test
     void leavingConfiguredMovementBlendsToOrdinaryLocomotionButNotToAnAction() {
         Fixture fixture = new Fixture();
         MovementPoseTransition.Channel channel = new MovementPoseTransition.Channel();

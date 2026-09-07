@@ -257,13 +257,16 @@ final class AnimationControllerProgram {
         if (controllers != null) {
             controllers.forEach((name, controller) -> {
                 if (controller != null && !controller.states().isEmpty()
-                        && (!isHandItemController(name)
+                        && (!isHandItemController(name) || ControllerOrder.dynamic(name)
                         || allowed.contains(normalize(name)))) {
                     retained.putIfAbsent(name, controller);
                 }
             });
         }
-        this.controllers = Collections.unmodifiableMap(new LinkedHashMap<>(retained));
+        Map<String, AnimationController> ordered = new LinkedHashMap<>();
+        retained.keySet().stream().sorted(ControllerOrder.comparator())
+                .forEach(name -> ordered.put(name, retained.get(name)));
+        this.controllers = Collections.unmodifiableMap(ordered);
         builtinControllers = retained.entrySet().stream()
                 .filter(entry -> ParallelAnimationProgram.supportsScriptController(entry.getKey())
                         && entry.getValue().states().containsKey(BUILTIN_STATE))
@@ -361,7 +364,7 @@ final class AnimationControllerProgram {
         if (runtime.current == null) {
             runtime.initialize(controller, now, environment);
         } else if (now > runtime.lastStepAt + EPSILON) {
-            advance(controller, runtime, now, environment, builtinControllers.contains(name));
+            advance(controller, runtime, now, environment);
         }
         return runtime;
     }
@@ -373,7 +376,7 @@ final class AnimationControllerProgram {
     }
 
     private void advance(AnimationController controller, ControllerRuntime runtime,
-                         double now, ControllerEnvironment environment, boolean chainEmptyStates) {
+                         double now, ControllerEnvironment environment) {
         runtime.lastStepAt = now;
         if (runtime.previous != null
                 && now - runtime.previous.transitionStartedAt()
@@ -382,8 +385,7 @@ final class AnimationControllerProgram {
         }
         Set<String> visited = new LinkedHashSet<>();
         visited.add(runtime.current.name());
-        int limit = chainEmptyStates
-                ? Math.min(MAX_EMPTY_STATE_TRANSITIONS, controller.states().size()) : 1;
+        int limit = Math.min(MAX_EMPTY_STATE_TRANSITIONS, controller.states().size());
         for (int step = 0; step < limit; step++) {
             environment.beginState(runtime.current);
             environment.completion(completion(runtime.current,
@@ -397,7 +399,7 @@ final class AnimationControllerProgram {
                     break;
                 }
             }
-            if (target == null || chainEmptyStates && visited.contains(target.name())
+            if (target == null || visited.contains(target.name())
                     && (step > 0 || isEmptyState(target))) return;
             environment.stopOutputScope();
             execute(runtime.current.onExit(), environment);
@@ -413,7 +415,7 @@ final class AnimationControllerProgram {
             execute(target.onEntry(), environment);
             environment.playSounds(target.soundEffects());
             environment.playParticles(target.particleEffects());
-            if (!chainEmptyStates || !isEmptyState(target)) return;
+            if (!isEmptyState(target)) return;
             visited.add(target.name());
         }
     }
@@ -434,7 +436,7 @@ final class AnimationControllerProgram {
             String normalized = normalize(controllerName);
             BuiltinSlot slot = new BuiltinSlot(normalized, runtime.current.name(),
                     runtime.generation, progress, isBuiltin(runtime.current), current);
-            result.add(new ActiveAnimation(normalized, "controller/" + controllerName + '/'
+            result.add(new ActiveAnimation(controllerName, "controller/" + controllerName + '/'
                     + runtime.current.name() + '/' + runtime.generation + "/slot", "", elapsed,
                     1.0F, runtime.current.blendViaShortestPath(),
                     environment.stateVariables(), slot));
@@ -481,7 +483,7 @@ final class AnimationControllerProgram {
             float weight = finite(evaluated * transitionWeight);
             String key = "controller/" + controllerName + '/' + state.name() + '/'
                     + generation + '/' + index;
-            result.add(new ActiveAnimation(normalize(controllerName), key,
+            result.add(new ActiveAnimation(controllerName, key,
                     normalized, elapsed, weight,
                     shortestPath, environment.stateVariables()));
         }

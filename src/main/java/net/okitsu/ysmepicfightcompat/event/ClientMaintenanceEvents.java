@@ -14,8 +14,10 @@ import net.minecraftforge.eventbus.api.SubscribeEvent;
 import net.minecraftforge.fml.common.Mod;
 import net.okitsu.ysmepicfightcompat.CompatMod;
 import net.okitsu.ysmepicfightcompat.animation.ClientAttackSoundRouter;
+import net.okitsu.ysmepicfightcompat.animation.ClientShieldBlockState;
 import net.okitsu.ysmepicfightcompat.animation.OfficialConfigurationVariables;
 import net.okitsu.ysmepicfightcompat.animation.OfficialRoamingVariables;
+import net.okitsu.ysmepicfightcompat.animation.OfficialGroundSpeedQuery;
 import net.okitsu.ysmepicfightcompat.integration.tlm.TouhouMaidRenderBridge;
 import net.okitsu.ysmepicfightcompat.integration.tlm.TouhouMaidSelectionAccess;
 import net.okitsu.ysmepicfightcompat.mesh.CombatMeshCache;
@@ -48,7 +50,9 @@ public final class ClientMaintenanceEvents {
         ClientModelTransfers.clear();
         OfficialConfigurationVariables.clear();
         OfficialRoamingVariables.clear();
+        OfficialGroundSpeedQuery.clear();
         ClientAttackSoundRouter.clear();
+        ClientShieldBlockState.clear();
         ClientHeldItemModelPreferences.beginConnection();
         ClientMovementAnimationPreferences.beginConnection();
         ClientMaidPreferenceSync.beginConnection();
@@ -67,12 +71,14 @@ public final class ClientMaintenanceEvents {
         Entity removed = event.getEntity();
         RemoteSubEntityModelPreferences.remove(removed.getUUID());
         if (removed instanceof LivingEntity entity) {
+            ClientShieldBlockState.remove(entity);
             CombatMeshCache.releaseEntity(entity);
             if (TouhouMaidSelectionAccess.isSupportedMaid(entity)) {
                 RemoteMaidPreferences.remove(entity.getUUID());
             }
             if (entity instanceof Player player) {
                 OfficialConfigurationVariables.reset(player);
+                OfficialGroundSpeedQuery.remove(player);
             }
         }
     }

@@ -814,6 +814,44 @@ class ParallelAnimationProgramTest {
     }
 
     @Test
+    void ordinaryParallelControllerKeepsAnActiveHeldPropInItsAttachmentPose() {
+        GeometryDocument geometry = handPropGeometry();
+        AuxiliaryBoneLayout layout = AuxiliaryBoneLayout.create(geometry);
+        AnimationClip pre = new AnimationClip("pre_parallel0");
+        AnimationClip.BoneTracks hidden = new AnimationClip.BoneTracks();
+        hidden.scale(constantTrack(0.0D, 0.0D, 0.0D));
+        pre.boneTracks().put("custom_prop", hidden);
+        AnimationClip hold = customSwordHold(15.0D);
+        AnimationClip parallelPose = new AnimationClip("custom.pose");
+        parallelPose.boneTracks().put("custom_prop", rotation(0.0D, 0.0D, 75.0D));
+        int prop = layout.entryForBoneName("custom_prop").auxiliaryIndex();
+
+        for (String name : List.of("player.parallel_4", "player.parallel_prop")) {
+            AnimationController controller = constantController(name, parallelPose);
+            ParallelAnimationProgram program = new ParallelAnimationProgram(
+                    geometry, Map.of(pre.name(), pre, hold.name(), hold,
+                    parallelPose.name(), parallelPose),
+                    Map.of(controller.name(), controller), layout, 1.0F, 1.0F);
+
+            ParallelAnimationProgram.Frame frame = program.sampleAutomaticAndControllersAt(
+                    0.0D, List.of(hold.name()), new NeutralEnvironment(),
+                    new AnimationControllerProgram.RuntimeState());
+
+            assertFalse(frame.replaceEpicFightPose(), name);
+            assertFalse(frame.customFullBodyPose(), name);
+            assertTrue(frame.replaceEpicFightAnchors()[prop], name);
+            assertEquals(HumanoidRig.RIGHT_TOOL, frame.heldItemAnchorJoints()[prop], name);
+            assertTrue(frame.suppressParallelDeltas()[prop], name);
+            assertFalse(frame.hiddenBones().contains("custom_prop"), name);
+            assertMatrix(new Matrix4f().translation(0.0F, 1.0F, 0.0F)
+                            .rotateZ((float) Math.toRadians(75.0D))
+                            .translate(0.0F, -1.0F, 0.0F),
+                    frame.heldItemDeltas()[prop]);
+            assertIdentity(frame.wholeModelDeltas()[prop]);
+        }
+    }
+
+    @Test
     void movementComposesTheCompleteHeldPoseAfterItsFullBodyMain() {
         GeometryDocument geometry = handPropGeometry();
         AuxiliaryBoneLayout layout = AuxiliaryBoneLayout.create(geometry);
@@ -2231,6 +2269,53 @@ class ParallelAnimationProgramTest {
         assertFalse(isIdentity(frame.heldItemDeltas()[effect]));
         assertEquals(6.0F, frame.heldItemDeltas()[effect].m30, 0.0001F);
         assertFalse(frame.hiddenBones().contains("custom_bow"));
+    }
+
+    @Test
+    void ordinaryParallelControllerKeepsCustomBowPropAndMajorBonesInTheFullBodyPose() {
+        GeometryDocument geometry = bowUpperBodyGeometry();
+        AuxiliaryBoneLayout layout = AuxiliaryBoneLayout.create(geometry);
+        AnimationClip pre = hiddenCustomBow();
+        AnimationClip hold = customBowHold();
+        AnimationClip use = new AnimationClip("use_mainhand:bow");
+        use.boneTracks().put("RightArm", rotation(0.0D, 0.0D, 15.0D));
+        use.boneTracks().put("Head", rotation(0.0D, 0.0D, 5.0D));
+        use.boneTracks().put("custom_bow", rotation(0.0D, 0.0D, 10.0D));
+        use.boneTracks().get("custom_bow").scale(constantTrack(1.0D, 1.0D, 1.0D));
+        AnimationClip parallelPose = new AnimationClip("custom.pose");
+        parallelPose.boneTracks().put("RightArm", rotation(0.0D, 0.0D, 35.0D));
+        parallelPose.boneTracks().put("Head", rotation(0.0D, 0.0D, -25.0D));
+        parallelPose.boneTracks().put("custom_bow", rotation(0.0D, 0.0D, 75.0D));
+        AnimationController controller = constantController("player.parallel_prop", parallelPose);
+        ParallelAnimationProgram program = new ParallelAnimationProgram(
+                geometry, Map.of(pre.name(), pre, hold.name(), hold,
+                use.name(), use, parallelPose.name(), parallelPose),
+                Map.of(controller.name(), controller), layout, 1.0F, 1.0F);
+
+        ParallelAnimationProgram.Frame frame = program.sampleAutomaticAndControllersAt(
+                0.0D, List.of(hold.name(), use.name()), new NeutralEnvironment(),
+                new AnimationControllerProgram.RuntimeState());
+        int rightArm = layout.entryForBoneName("RightArm").auxiliaryIndex();
+        int head = layout.entryForBoneName("Head").auxiliaryIndex();
+        int prop = layout.entryForBoneName("custom_bow").auxiliaryIndex();
+
+        assertTrue(frame.replaceEpicFightPose());
+        assertTrue(frame.customFullBodyPose());
+        assertFalse(frame.replaceEpicFightAnchors()[prop]);
+        assertEquals(-1, frame.heldItemAnchorJoints()[prop]);
+        assertTrue(frame.suppressParallelDeltas()[prop]);
+        assertFalse(frame.hiddenBones().contains("custom_bow"));
+        assertMatrix(new Matrix4f().rotateZ((float) Math.toRadians(35.0D)),
+                frame.wholeModelDeltas()[rightArm]);
+        assertMatrix(new Matrix4f().rotateZ((float) Math.toRadians(-25.0D)),
+                frame.wholeModelDeltas()[head]);
+        assertMatrix(new Matrix4f().rotateZ((float) Math.toRadians(35.0D))
+                        .rotateZ((float) Math.toRadians(75.0D)),
+                frame.wholeModelDeltas()[prop]);
+        assertIdentity(frame.heldItemDeltas()[prop]);
+        assertIdentity(frame.parallelDeltas()[rightArm]);
+        assertIdentity(frame.parallelDeltas()[head]);
+        assertIdentity(frame.parallelDeltas()[prop]);
     }
 
     @Test

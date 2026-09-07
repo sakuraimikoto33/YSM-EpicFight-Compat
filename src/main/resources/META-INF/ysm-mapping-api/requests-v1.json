@@ -74,6 +74,16 @@
       "required": true
     },
     {
+      "key": "ysm.molang.ground_speed2.query.method",
+      "kind": "METHOD",
+      "required": false
+    },
+    {
+      "key": "ysm.molang.query.context_get.method",
+      "kind": "METHOD",
+      "required": false
+    },
+    {
       "key": "ysm.player_state.animation_playing_getter.method",
       "kind": "METHOD",
       "required": true
