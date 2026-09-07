@@ -151,6 +151,16 @@ public final class CompatHumanoidMesh extends HumanoidMesh {
         return parallelAnimations.replacesBodyPose(entity);
     }
 
+    private static boolean isModAnimationPose(ParallelAnimationProgram.Frame animationFrame) {
+        return animationFrame != null && animationFrame.replaceEpicFightPose()
+                && animationFrame.movementPoseKey() != null
+                && animationFrame.movementPoseKey().startsWith("mod:");
+    }
+
+    public boolean modAnimationOwnsPose(LivingEntity entity, float partialTick) {
+        return parallelAnimations.modAnimationOwnsPose(entity, partialTick);
+    }
+
     /** Whether a held-item switch temporarily owns the complete YSM body pose. */
     public boolean itemSwitchOwnsPose(LivingEntity entity) {
         return parallelAnimations.itemSwitchOwnsPose(entity);
@@ -258,7 +268,8 @@ public final class CompatHumanoidMesh extends HumanoidMesh {
                             animationFrame == null ? null
                                     : animationFrame.movementPoseKey(),
                             currentItemSwitchHands,
-                            frame.epicFightActionActive(), auxiliaryPoses, complete);
+                            frame.epicFightActionActive()
+                                    && !isModAnimationPose(animationFrame), auxiliaryPoses, complete);
                 }
                 if (frame != null) {
                     parallelAnimations.publishBoneQueries(frame.entity(), complete,

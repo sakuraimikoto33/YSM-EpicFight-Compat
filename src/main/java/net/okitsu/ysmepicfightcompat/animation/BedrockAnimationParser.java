@@ -40,7 +40,8 @@ public final class BedrockAnimationParser {
         }
         String normalized = name.toLowerCase(Locale.ROOT);
         if (normalized.startsWith("pre_parallel") || normalized.startsWith("parallel")
-                || STATES.contains(normalized) || HAND_ITEM_STATES.contains(normalized)) {
+                || STATES.contains(normalized) || HAND_ITEM_STATES.contains(normalized)
+                || ModAnimationClips.type(normalized) != null) {
             return true;
         }
         int separator = firstConditionSeparator(normalized);

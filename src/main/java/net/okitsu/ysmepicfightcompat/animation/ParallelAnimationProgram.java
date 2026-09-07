@@ -8,11 +8,13 @@ import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.item.ItemStack;
 import net.okitsu.ysmepicfightcompat.CompatMod;
 import net.okitsu.ysmepicfightcompat.geometry.GeometryDocument;
+import net.okitsu.ysmepicfightcompat.integration.parcool.EpicParCoolAnimationAccess;
 import net.okitsu.ysmepicfightcompat.mesh.AuxiliaryBoneLayout;
 import net.okitsu.ysmepicfightcompat.mesh.DisplayedBoneQueries;
 import net.okitsu.ysmepicfightcompat.mesh.HumanoidRig;
 import net.okitsu.ysmepicfightcompat.network.ClientHeldItemModelPreferences;
 import net.okitsu.ysmepicfightcompat.network.ClientMovementAnimationPreferences;
+import net.okitsu.ysmepicfightcompat.render.SubEntityRenderPolicy;
 import org.joml.Matrix4f;
 import org.joml.Vector3f;
 import yesman.epicfight.api.utils.math.OpenMatrix4f;
@@ -148,9 +150,16 @@ public final class ParallelAnimationProgram {
     }
 
     private record MovementPose(AutomaticAnimationSelector.ActiveClip active,
-                                MovementAnimationType movement) {
+                                MovementAnimationType movement,
+                                ModAnimationType modAnimation) {
+        private MovementPose(AutomaticAnimationSelector.ActiveClip active,
+                             MovementAnimationType movement) {
+            this(active, movement, null);
+        }
+
         private String key() {
-            return movement.configKey() + ':' + active.name();
+            return modAnimation == null ? movement.configKey() + ':' + active.name()
+                    : "mod:" + modAnimation.name() + ':' + active.name();
         }
     }
 
@@ -870,6 +879,32 @@ public final class ParallelAnimationProgram {
                         entity, hand, selectorState));
     }
 
+    /** Uses the same native state, clip availability and owner preference as body sampling. */
+    public boolean modAnimationOwnsPose(LivingEntity entity, float partialTick) {
+        RuntimeState state = stateFor(entity, false);
+        boolean hiddenMain = state != null && state.scriptOutputs.entrySet().stream()
+                .anyMatch(entry -> channelKey(entry.getKey()).equals("player.main")
+                        && entry.getValue().overridden() && !entry.getValue().visible());
+        return configuredModAnimation(entity, partialTick) != null
+                && !hiddenMain && !replacesBodyPose(entity)
+                && !OfficialRoamingVariables.rouletteState(entity).playing();
+    }
+
+    @Nullable
+    private ModAnimationSample configuredModAnimation(LivingEntity entity, float partialTick) {
+        ModAnimationSample sample = ModAnimationResolver.sample(entity, partialTick);
+        return sample != null && supportsModAnimation(sample.clipName())
+                && ClientMovementAnimationPreferences.usesYsmMod(
+                        entity, modelId, sample.type(), sample.clipName())
+                ? sample : null;
+    }
+
+    boolean supportsModAnimation(String clipName) {
+        ClipProgram program = automaticClips.get(clipName);
+        return ModAnimationClips.type(clipName) != null && program != null
+                && program.bones().stream().anyMatch(bone -> bone.auxiliaryIndex() >= 0);
+    }
+
     public Frame sample(LivingEntity entity, float partialTick, boolean firstPerson) {
         return sample(entity, partialTick, firstPerson, null, false);
     }
@@ -899,6 +934,9 @@ public final class ParallelAnimationProgram {
                         boolean epicFightActionActive,
                         @Nullable MovementAnimationType renderedYsmMovement,
                         boolean renderingInInventory) {
+        // These addon-owned movements also block ordinary locomotion/item-switch
+        // fallback, including callers that did not supply an Epic Fight action bit.
+        epicFightActionActive |= EpicParCoolAnimationAccess.ownsMovementPose(entity);
         boolean preview = renderingInInventory && !firstPerson;
         RuntimeState state = states.computeIfAbsent(entity,
                 ignored -> new RenderContextState<>()).getOrCreate(preview,
@@ -947,7 +985,9 @@ public final class ParallelAnimationProgram {
                 entity, modelId) : renderedYsmMovement;
         AutomaticAnimationSelector.Selection selected =
                 automaticSelector.select(entity, now, state.automaticState,
-                        synchronizedMovement);
+                        synchronizedMovement,
+                        !entity.isPassenger() || SubEntityRenderPolicy.usesYsmVehicleForRider(entity),
+                        configuredModAnimation(entity, stablePartialTick));
         state.environment.renderingContext(preview, false, false);
         state.environment.update(stablePartialTick, firstPerson, deltaTime);
         // Publish the same official snapshot used above, before init/update/sync and
@@ -971,7 +1011,8 @@ public final class ParallelAnimationProgram {
                 && (!state.fullBodySwingState.endpointPublished
                 || now - state.fullBodySwingState.playback.startedAt()
                 <= state.fullBodySwingState.playback.duration()));
-        boolean builtinItemSwitch = !epicFightActionActive && rouletteClip == null
+        boolean builtinItemSwitch = !epicFightActionActive && selected.modAnimation() == null
+                && rouletteClip == null
                 && !builtinBodyAction && selected.main() != null
                 && (state.itemSwitchState.hasPotential(enabledItemAnimationHands, now)
                 || selected.heldItemChanges().stream().anyMatch(enabledItemAnimationHands::contains));
@@ -998,7 +1039,8 @@ public final class ParallelAnimationProgram {
                 state, selectedAutomatic, now);
         Set<InteractionHand> fullBodyHands = customFullBodyHands(
                 selectedAutomatic);
-        boolean itemSwitchBlocked = epicFightActionActive || !fullBodyHands.isEmpty()
+        boolean itemSwitchBlocked = epicFightActionActive || selected.modAnimation() != null
+                || !fullBodyHands.isEmpty()
                 || fullBodyEnding != null || rouletteClip != null;
         observeItemSwitchEdges(selected.clips(), selected.heldItemChanges(), now,
                 itemSwitchBlocked, state.itemSwitchState);
@@ -1009,6 +1051,12 @@ public final class ParallelAnimationProgram {
                 && ClientMovementAnimationPreferences.usesYsm(
                 entity, modelId, selected.movement())
                 ? new MovementPose(selected.main(), selected.movement()) : null;
+        // Parkour bridges may mark these same native motions as Epic Fight actions.
+        // This only replaces the displayed mesh, never the gameplay armature.
+        if (selected.modAnimation() != null && selected.main() != null
+                && fullBodyHands.isEmpty() && fullBodyEnding == null && rouletteClip == null) {
+            movementPose = new MovementPose(selected.main(), null, selected.modAnimation());
+        }
         LadderRenderPolicy ladderPolicy = ladderRenderPolicy(
                 entity, movementPose);
         boolean customBowHeadYaw = shouldUseCustomBowHeadYaw(
@@ -1209,7 +1257,7 @@ public final class ParallelAnimationProgram {
             }
         }
         return new AutomaticAnimationSelector.Selection(automatic, main,
-                selected.movement(), selected.heldItemChanges());
+                selected.movement(), selected.heldItemChanges(), selected.modAnimation());
     }
 
     static String scriptChannel(AutomaticAnimationSelector.ActiveClip active,
@@ -1596,7 +1644,8 @@ public final class ParallelAnimationProgram {
 
     private LadderRenderPolicy ladderRenderPolicy(
             LivingEntity entity, @Nullable MovementPose movementPose) {
-        if (movementPose == null || !movementPose.movement().isLadder()) {
+        if (movementPose == null || movementPose.movement() == null
+                || !movementPose.movement().isLadder()) {
             return LadderRenderPolicy.NONE;
         }
         boolean naturalRequested =
@@ -1982,6 +2031,22 @@ public final class ParallelAnimationProgram {
         return frame(testScratch);
     }
 
+    Frame sampleModAnimationAt(double now, ModAnimationSample sample,
+                               ExpressionEngine.Environment environment) {
+        if (!supportsModAnimation(sample.clipName())) {
+            return sampleAt(now, environment);
+        }
+        AutomaticAnimationSelector.ActiveClip main = automaticSelector.trackMod(
+                new AutomaticAnimationSelector.State(), sample, now);
+        testScratch.automaticChannels = Map.of(main.name(), "player.main");
+        List<AnimationControllerProgram.ActiveAnimation> controlled = controllerProgram.select(
+                now, environment, new AnimationControllerProgram.RuntimeState());
+        evaluate(now, List.of(main), controlled, null,
+                new MovementPose(main, null, sample.type()), LadderRenderPolicy.NONE,
+                null, null, 0.0D, environment, null, testScratch);
+        return frame(testScratch);
+    }
+
     boolean supportsNaturalLadderPose(
             String animationName, MovementAnimationType movement) {
         ClipProgram program = automaticClips.get(normalize(animationName));
@@ -2246,6 +2311,7 @@ public final class ParallelAnimationProgram {
         // Keep the outer EF ownership transition, but do not add a second fixed
         // three-tick blend on every clip change (including an authored zero seconds).
         String movementKey = movementPose == null ? null
+                : movementPose.modAnimation() != null ? movementPose.key()
                 : scriptOutputs.entrySet().stream().anyMatch(entry ->
                 channelKey(entry.getKey()).equals("player.main") && entry.getValue().transition() != null)
                 ? "script-movement" : movementPose.key();
@@ -3045,7 +3111,9 @@ public final class ParallelAnimationProgram {
         }
         PoseScratch pose = scratch.wholeModelPose;
         MovementAnimationType movement = movementPose == null ? null : movementPose.movement();
-        boolean completeOfficialPost = customFullBodyPose || usesCompleteOfficialHeadPost(movement);
+        boolean completeOfficialPost = customFullBodyPose
+                || movementPose != null && movementPose.modAnimation() != null
+                || usesCompleteOfficialHeadPost(movement);
         boolean applyPitch = completeOfficialPost
                 || (movement != null && tracksCameraPitchDuringMovement(movement)
                 && !scratch.authoredHeadPitch);
@@ -5031,6 +5099,9 @@ public final class ParallelAnimationProgram {
     }
 
     private static float automaticTime(ClipProgram program, double elapsed) {
+        if (ModAnimationClips.type(program.clip().name()) != null) {
+            return modAnimationTime(program, elapsed);
+        }
         if (program.duration() <= EPSILON) {
             return 0.0F;
         }
@@ -5047,12 +5118,26 @@ public final class ParallelAnimationProgram {
      * run) omit Bedrock's loop flag even though the main-state player cycles them.
      */
     private static float movementTime(ClipProgram program, double elapsed) {
+        // Native generation owns restart; ONCE clips hold their endpoint until
+        // that native action retires instead of starting over every clip duration.
+        if (ModAnimationClips.type(program.clip().name()) != null) {
+            return modAnimationTime(program, elapsed);
+        }
         if (program.duration() <= EPSILON) {
             return 0.0F;
         }
         return program.clip().playback() == AnimationClip.Playback.HOLD_LAST_FRAME
                 ? (float) Math.min(elapsed, program.duration())
                 : (float) (elapsed % program.duration());
+    }
+
+    private static float modAnimationTime(ClipProgram program, double elapsed) {
+        // Expression-only native animations (e.g. hanging sway) intentionally have
+        // no declared duration, but their q.anim_time must still follow the animator.
+        return program.duration() <= EPSILON ? (float) elapsed
+                : program.clip().playback() == AnimationClip.Playback.REPEAT
+                ? (float) (elapsed % program.duration())
+                : (float) Math.min(elapsed, program.duration());
     }
 
     private static float controllerTime(ClipProgram program, double elapsed) {

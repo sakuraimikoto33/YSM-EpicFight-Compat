@@ -47,6 +47,18 @@
   "config.ysm_epicfight_compat.movement_animation_exclusions.tooltip": "各モデルIDに、メイン設定が有効な場合でもYSM移動アニメーションを無効として扱う移動状態を設定します。メイン設定が無効な場合、この一覧は何も有効化しません。Configuredでは現在選択中のモデルが自動で追加されます。ルールは同期せず、現在の解決済み姿勢だけを同期します。",
   "config.ysm_epicfight_compat.movement_animation_entry.tooltip": "このYSMモデルでYSM移動アニメーションを無効として扱う移動状態です。",
   "config.ysm_epicfight_compat.movement_animation_entry.invalid": "walk、run、sneak_idle、sneak_move、jump、creative_flight、elytra_flight、swim、water_idle、crawl_idle、crawl_move、ladder_idle、ladder_up、ladder_down のいずれかを入力してください。",
+  "config.ysm_epicfight_compat.use_ysm_parcool_animations": "YSMのParCoolアニメーションを使用",
+  "config.ysm_epicfight_compat.use_ysm_parcool_animations.tooltip": "Epic Fightの戦闘モード中、モデル別のParCool除外設定に該当しないYSMのParCool動作アニメーションを優先します。Epic ParCoolを読み込んでいる場合、Chain movementとWall movementはこの設定や除外一覧にかかわらずEpic ParCoolのアニメーションを使用します。攻撃・防御・被弾などの戦闘動作はEpic Fightの姿勢を維持します。SWEMや通常の移動アニメーション設定とは独立しています。設定や除外一覧は同期せず、現在の動作種別・動作名・解決済み姿勢の使用可否だけを同期します。",
+  "config.ysm_epicfight_compat.parcool_animation_exclusions": "モデル別のParCoolアニメーション除外",
+  "config.ysm_epicfight_compat.parcool_animation_exclusions.tooltip": "各モデルIDに、ParCool設定が有効な場合でもYSMアニメーションを使用しないParCoolの短い動作名を設定します。既定は空で、メイン設定が無効な場合、この一覧は何も有効化しません。SWEMや通常の移動アニメーションの除外とは独立しています。Configuredでは現在選択中のモデルが自動で追加されます。Epic ParCoolを読み込んでいる場合、Chain movementとWall movementは引き続きEpic ParCoolの姿勢を使用します。除外一覧は同期せず、現在の動作種別・動作名・解決済み姿勢の使用可否だけを同期します。",
+  "config.ysm_epicfight_compat.parcool_animation_entry.tooltip": "このモデルでYSMアニメーションを使用しないParCoolの短い動作名です。parcool: 接頭辞を付けずに入力してください。* などのワイルドカードや、別のアニメーション種別の名前は使用できません。",
+  "config.ysm_epicfight_compat.parcool_animation_entry.invalid": "使用できる動作名: backward_wall_jump, cat_leap, climb_up, cling_to_cliff, cling_to_cliff_left, cling_to_cliff_right, dive_animation_host, dive_into_water, dodge_front, dodge_back, dodge_left, dodge_right, fast_running, fast_swim, flipping_front, flipping_back, horizontal_wall_run_right, horizontal_wall_run_left, vertical_wall_run, jump_from_bar, hang, hang_vertical, kong_vault, speed_vault_left, speed_vault_right, roll_front, roll_back, roll_left, roll_right, sliding, tap, wall_jump_left, wall_jump_right, wall_slide_left, wall_slide_right, jump_charging, charge_jump, ride_zipline.",
+  "config.ysm_epicfight_compat.use_ysm_swem_animations": "YSMのSWEM騎乗アニメーションを使用",
+  "config.ysm_epicfight_compat.use_ysm_swem_animations.tooltip": "Epic Fightの戦闘モード中、モデル別のSWEM除外設定に該当しないYSMのSWEM騎乗アニメーションを優先します。攻撃・防御・被弾などの戦闘動作はEpic Fightの姿勢を維持します。ParCoolや通常の移動アニメーション設定とは独立しています。設定や除外一覧は同期せず、現在の動作種別・動作名・解決済み姿勢の使用可否だけを同期します。",
+  "config.ysm_epicfight_compat.swem_animation_exclusions": "モデル別のSWEMアニメーション除外",
+  "config.ysm_epicfight_compat.swem_animation_exclusions.tooltip": "各モデルIDに、SWEM設定が有効な場合でもYSMアニメーションを使用しないSWEM騎乗アニメーションの短い動作名を設定します。既定は空で、メイン設定が無効な場合、この一覧は何も有効化しません。ParCoolや通常の移動アニメーションの除外とは独立しています。Configuredでは現在選択中のモデルが自動で追加されます。除外一覧は同期せず、現在の動作種別・動作名・解決済み姿勢の使用可否だけを同期します。",
+  "config.ysm_epicfight_compat.swem_animation_entry.tooltip": "このモデルでYSMアニメーションを使用しないSWEM騎乗アニメーションの短い動作名です。swem: 接頭辞を付けずに入力してください。* などのワイルドカードや、別のアニメーション種別の名前は使用できません。",
+  "config.ysm_epicfight_compat.swem_animation_entry.invalid": "使用できる動作名: idle, walk, trot, canter, canter_ext, gallop, jump_lv1, jump_lv2, jump_lv3, jump_lv4, jump_lv5.",
   "config.ysm_epicfight_compat.warning_acknowledged": "互換性警告を確認済み",
   "config.ysm_epicfight_compat.warning_acknowledged.tooltip": "公式YSMとEpic Fightの互換性警告が既に表示されたかを記録します。"
 }

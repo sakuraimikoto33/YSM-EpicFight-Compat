@@ -30,6 +30,7 @@ public final class RenderFrameContext {
         private final boolean epicFightActionActive;
         @Nullable
         private final MovementAnimationType ysmMovement;
+        private boolean ysmModAnimation;
         private CompatHumanoidMesh mesh;
         private ModelLayerOrder layerOrder;
         private OpenMatrix4f[] inputPoses;
@@ -111,6 +112,11 @@ public final class RenderFrameContext {
         @Nullable
         public MovementAnimationType ysmMovement() {
             return ysmMovement;
+        }
+
+        /** Optional native mod animation owns the canonical outer model transform. */
+        public boolean ysmModAnimation() {
+            return ysmModAnimation;
         }
 
         public boolean isBoundTo(CompatHumanoidMesh expected) {
@@ -299,6 +305,16 @@ public final class RenderFrameContext {
         frame.formOffHandPose = null;
         frame.hideFormMainHand = false;
         frame.hideFormOffHand = false;
+    }
+
+    public static Frame pushThirdPerson(LivingEntity entity,
+                                        @Nullable Float epicModelYaw,
+                                        boolean epicFightActionActive,
+                                        @Nullable MovementAnimationType ysmMovement,
+                                        boolean ysmModAnimation) {
+        Frame frame = pushThirdPerson(entity, epicModelYaw, epicFightActionActive, ysmMovement);
+        frame.ysmModAnimation = ysmModAnimation;
+        return frame;
     }
 
     /**

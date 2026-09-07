@@ -3,6 +3,7 @@ package net.okitsu.ysmepicfightcompat.network.message;
 import net.minecraft.network.FriendlyByteBuf;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraftforge.network.NetworkEvent;
+import net.okitsu.ysmepicfightcompat.animation.ModAnimationType;
 import net.okitsu.ysmepicfightcompat.animation.MovementAnimationType;
 import net.okitsu.ysmepicfightcompat.network.MovementAnimationDisplayState;
 import net.okitsu.ysmepicfightcompat.network.MovementAnimationPolicy;
@@ -44,6 +45,10 @@ public record MovementAnimationPreferenceUpdateMessage(
         output.writeByte(state.movement() == null ? -1 : state.movement().ordinal());
         output.writeBoolean(state.ysmOwned());
         output.writeBoolean(state.naturalLadderPose());
+        output.writeByte(state.modAnimation() == null ? -1 : state.modAnimation().ordinal());
+        output.writeBoolean(state.modAnimationOwned());
+        output.writeUtf(state.modAnimationClip(),
+                MovementAnimationDisplayState.MAX_MOD_ANIMATION_CLIP_LENGTH);
     }
 
     static MovementAnimationDisplayState readState(FriendlyByteBuf input) {
@@ -57,7 +62,21 @@ public record MovementAnimationPreferenceUpdateMessage(
         } else {
             throw new IllegalArgumentException("Invalid movement-animation kind");
         }
-        return new MovementAnimationDisplayState(
-                modelId, movement, input.readBoolean(), input.readBoolean());
+        boolean ysmOwned = input.readBoolean();
+        boolean naturalLadderPose = input.readBoolean();
+        int modOrdinal = input.readByte();
+        ModAnimationType modAnimation;
+        if (modOrdinal == -1) {
+            modAnimation = null;
+        } else if (modOrdinal >= 0 && modOrdinal < ModAnimationType.values().length) {
+            modAnimation = ModAnimationType.values()[modOrdinal];
+        } else {
+            throw new IllegalArgumentException("Invalid mod-animation kind");
+        }
+        boolean modAnimationOwned = input.readBoolean();
+        String modAnimationClip = input.readUtf(
+                MovementAnimationDisplayState.MAX_MOD_ANIMATION_CLIP_LENGTH);
+        return new MovementAnimationDisplayState(modelId, movement, ysmOwned,
+                naturalLadderPose, modAnimation, modAnimationOwned, modAnimationClip);
     }
 }

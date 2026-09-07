@@ -9,9 +9,11 @@ import com.mrcrayfish.configured.client.screen.list.ListTypes;
 import net.minecraft.client.Minecraft;
 import net.minecraft.network.chat.Component;
 import net.minecraft.world.entity.player.Player;
+import net.okitsu.ysmepicfightcompat.animation.ModAnimationType;
 import net.okitsu.ysmepicfightcompat.config.ClientPreferences;
 import net.okitsu.ysmepicfightcompat.network.EntityModelPolicy;
 import net.okitsu.ysmepicfightcompat.network.HeldItemModelPolicy;
+import net.okitsu.ysmepicfightcompat.network.ModAnimationPolicy;
 import net.okitsu.ysmepicfightcompat.network.MovementAnimationPolicy;
 import net.okitsu.ysmepicfightcompat.render.PlayerSelectionResolver;
 
@@ -38,6 +40,12 @@ public final class ConfiguredHeldItemRules {
 
     static boolean recognizesRuleEntry(String entryName) {
         return RuleKind.fromEntryName(entryName) != null;
+    }
+
+    /** The same bounded selector validation used by the optional list editor. */
+    static boolean acceptsRuleSelectors(String entryName, List<?> selectors) {
+        RuleKind kind = RuleKind.fromEntryName(entryName);
+        return kind != null && kind.acceptsSelectors(selectors);
     }
 
     /** Called through an Object-only mixin boundary to avoid hard optional linkage. */
@@ -222,10 +230,7 @@ public final class ConfiguredHeldItemRules {
 
         @Override
         public boolean isValid(List<String> value) {
-            return value != null
-                    && value.size()
-                    <= kind.maxSelectorsPerModel()
-                    && value.stream().allMatch(kind::isValidSelector);
+            return kind.acceptsSelectors(value);
         }
 
         @Override
@@ -336,7 +341,15 @@ public final class ConfiguredHeldItemRules {
         MOVEMENT("movementAnimationExclusions",
                 "config.ysm_epicfight_compat.movement_animation_exclusions",
                 "config.ysm_epicfight_compat.movement_animation_entry.tooltip",
-                "config.ysm_epicfight_compat.movement_animation_entry.invalid");
+                "config.ysm_epicfight_compat.movement_animation_entry.invalid"),
+        PARCOOL("parcoolAnimationExclusions",
+                "config.ysm_epicfight_compat.parcool_animation_exclusions",
+                "config.ysm_epicfight_compat.parcool_animation_entry.tooltip",
+                "config.ysm_epicfight_compat.parcool_animation_entry.invalid"),
+        SWEM("swemAnimationExclusions",
+                "config.ysm_epicfight_compat.swem_animation_exclusions",
+                "config.ysm_epicfight_compat.swem_animation_entry.tooltip",
+                "config.ysm_epicfight_compat.swem_animation_entry.invalid");
 
         private final String entryName;
         private final String translationKey;
@@ -368,6 +381,8 @@ public final class ConfiguredHeldItemRules {
                 case HELD_ITEM_SWITCH ->
                         ClientPreferences.heldItemSwitchAnimationExclusions();
                 case MOVEMENT -> ClientPreferences.movementAnimationExclusions();
+                case PARCOOL -> ClientPreferences.parCoolAnimationExclusions();
+                case SWEM -> ClientPreferences.swemAnimationExclusions();
             };
         }
 
@@ -379,12 +394,15 @@ public final class ConfiguredHeldItemRules {
                 case HELD_ITEM_SWITCH ->
                         ClientPreferences.setHeldItemSwitchAnimationExclusions(rules);
                 case MOVEMENT -> ClientPreferences.setMovementAnimationExclusions(rules);
+                case PARCOOL -> ClientPreferences.setParCoolAnimationExclusions(rules);
+                case SWEM -> ClientPreferences.setSwemAnimationExclusions(rules);
             }
         }
 
         private int maxModels() {
             return switch (this) {
                 case MOVEMENT -> MovementAnimationPolicy.MAX_MODELS;
+                case PARCOOL, SWEM -> ModAnimationPolicy.MAX_MODELS;
                 case PROJECTILE, VEHICLE -> EntityModelPolicy.MAX_MODELS;
                 default -> HeldItemModelPolicy.MAX_MODELS;
             };
@@ -393,6 +411,8 @@ public final class ConfiguredHeldItemRules {
         private int maxSelectorsPerModel() {
             return switch (this) {
                 case MOVEMENT -> MovementAnimationPolicy.MAX_SELECTORS_PER_MODEL;
+                case PARCOOL -> ModAnimationPolicy.maxSelectorsPerModel(ModAnimationType.PARCOOL);
+                case SWEM -> ModAnimationPolicy.maxSelectorsPerModel(ModAnimationType.SWEM);
                 case PROJECTILE, VEHICLE ->
                         EntityModelPolicy.MAX_SELECTORS_PER_MODEL;
                 default -> HeldItemModelPolicy.MAX_SELECTORS_PER_MODEL;
@@ -402,9 +422,16 @@ public final class ConfiguredHeldItemRules {
         private boolean isValidSelector(Object value) {
             return switch (this) {
                 case MOVEMENT -> MovementAnimationPolicy.isValidSelector(value);
+                case PARCOOL -> ModAnimationPolicy.isValidSelector(ModAnimationType.PARCOOL, value);
+                case SWEM -> ModAnimationPolicy.isValidSelector(ModAnimationType.SWEM, value);
                 case PROJECTILE, VEHICLE -> EntityModelPolicy.isValidSelector(value);
                 default -> HeldItemModelPolicy.isValidSelector(value);
             };
+        }
+
+        private boolean acceptsSelectors(List<?> value) {
+            return value != null && value.size() <= maxSelectorsPerModel()
+                    && value.stream().allMatch(this::isValidSelector);
         }
 
         private String entryName() {

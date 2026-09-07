@@ -30,7 +30,13 @@ final class AutomaticAnimationSelector {
 
     record Selection(List<ActiveClip> clips, ActiveClip main,
                      MovementAnimationType movement,
-                     Set<InteractionHand> heldItemChanges) {
+                     Set<InteractionHand> heldItemChanges,
+                     ModAnimationType modAnimation) {
+        Selection(List<ActiveClip> clips, ActiveClip main,
+                  MovementAnimationType movement, Set<InteractionHand> heldItemChanges) {
+            this(clips, main, movement, heldItemChanges, null);
+        }
+
         Selection {
             clips = List.copyOf(clips);
             heldItemChanges = Set.copyOf(heldItemChanges);
@@ -149,6 +155,12 @@ final class AutomaticAnimationSelector {
     Selection select(LivingEntity entity, double now, State state,
                      MovementAnimationType synchronizedMovement,
                      boolean ysmVehicle) {
+        return select(entity, now, state, synchronizedMovement, ysmVehicle, null);
+    }
+
+    Selection select(LivingEntity entity, double now, State state,
+                     MovementAnimationType synchronizedMovement,
+                     boolean ysmVehicle, ModAnimationSample modSample) {
         boolean ysmMountedAnimations = usesYsmMountedAnimations(
                 entity.isPassenger(), ysmVehicle);
         observeAttacked(entity, now, state);
@@ -157,8 +169,12 @@ final class AutomaticAnimationSelector {
         List<ActiveClip> result = new ArrayList<>();
         MainState selectedMain = mainState(
                 entity, now, state, synchronizedMovement, ysmMountedAnimations);
-        ActiveClip main = track(state, "main", selectedMain.clip(),
-                selectedMain.clip(), now);
+        boolean modActive = modSample != null && has(modSample.clipName())
+                && !entity.isDeadOrDying() && !entity.isSleeping()
+                && !entity.isAutoSpinAttack() && entity.hurtTime <= 0;
+        if (modActive) selectedMain = main(modSample.clipName());
+        ActiveClip main = modActive ? trackMod(state, modSample, now)
+                : track(state, "main", selectedMain.clip(), selectedMain.clip(), now);
         add(result, main);
 
         addHand(result, entity, InteractionHand.OFF_HAND, state, now);
@@ -169,7 +185,7 @@ final class AutomaticAnimationSelector {
         addArmor(result, entity, EquipmentSlot.FEET, "feet", state, now);
         addRide(result, entity, state, now, ysmMountedAnimations);
         return new Selection(result, main, selectedMain.movement(),
-                state.heldItemChanges);
+                state.heldItemChanges, modActive ? modSample.type() : null);
     }
 
     static boolean usesYsmMountedAnimations(boolean passenger,
@@ -410,6 +426,13 @@ final class AutomaticAnimationSelector {
                 ? new Channel(name, normalizedToken, now) : previous;
         state.channels.put(channel, current);
         return new ActiveClip(name, Math.max(0.0D, now - current.startedAt()), restarted);
+    }
+
+    ActiveClip trackMod(State state, ModAnimationSample sample, double now) {
+        ActiveClip tracked = track(state, "main", sample.clipName(),
+                "mod:" + sample.type() + ':' + sample.restartToken(), now);
+        return new ActiveClip(tracked.name(), Double.isFinite(sample.elapsedSeconds())
+                ? sample.elapsedSeconds() : tracked.elapsed(), tracked.restarted());
     }
 
     private ActiveClip paused(State state, String channel, double now) {

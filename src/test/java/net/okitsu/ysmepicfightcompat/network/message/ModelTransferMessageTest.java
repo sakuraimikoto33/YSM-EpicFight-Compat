@@ -4,6 +4,7 @@ import io.netty.buffer.Unpooled;
 import net.minecraft.network.FriendlyByteBuf;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.world.InteractionHand;
+import net.okitsu.ysmepicfightcompat.animation.ModAnimationType;
 import net.okitsu.ysmepicfightcompat.animation.MovementAnimationType;
 import net.okitsu.ysmepicfightcompat.cache.ModelDiskCache;
 import net.okitsu.ysmepicfightcompat.network.MovementAnimationDisplayState;
@@ -99,6 +100,134 @@ class ModelTransferMessageTest {
 
         assertThrows(IllegalArgumentException.class, () ->
                 MovementAnimationPreferenceUpdateMessage.read(buffer));
+    }
+
+    @Test
+    void modPreferenceMessagesRoundTripOwnedDisabledAndInactiveStates() {
+        for (ModAnimationType family : ModAnimationType.values()) {
+            for (boolean enabled : new boolean[]{false, true}) {
+                String[] clips = family == ModAnimationType.PARCOOL
+                        ? new String[]{"parcool:fast_running", "parcool:roll_front"}
+                        : new String[]{"swem:walk", "swem:gallop"};
+                for (String clip : clips) {
+                    MovementAnimationDisplayState state = new MovementAnimationDisplayState(
+                            "wine_fox/21_saint", null, false, false, family, enabled, clip);
+                    assertEquals(enabled, state.modAnimationOwned());
+                    assertEquals(clip, state.modAnimationClip());
+                    assertMovementStateRoundTrip(state);
+                }
+            }
+        }
+        assertMovementStateRoundTrip(MovementAnimationDisplayState.DEFAULT);
+    }
+
+    @Test
+    void modPreferenceWireContainsOnlyCurrentClipAndResolvedDecisionWithoutRulesOrNativeClock() {
+        MovementAnimationDisplayState state = new MovementAnimationDisplayState(
+                "wine_fox/21_saint", MovementAnimationType.RUN, true, false,
+                ModAnimationType.PARCOOL, false, "parcool:fast_running");
+        FriendlyByteBuf buffer = new FriendlyByteBuf(Unpooled.buffer());
+        MovementAnimationPreferenceUpdateMessage.write(
+                new MovementAnimationPreferenceUpdateMessage(state), buffer);
+
+        assertEquals(state.modelId(), buffer.readUtf(MovementAnimationPolicy.MAX_MODEL_ID_LENGTH));
+        assertEquals(MovementAnimationType.RUN.ordinal(), buffer.readByte());
+        assertTrue(buffer.readBoolean());
+        assertFalse(buffer.readBoolean());
+        assertEquals(ModAnimationType.PARCOOL.ordinal(), buffer.readByte());
+        assertFalse(buffer.readBoolean());
+        assertEquals("parcool:fast_running",
+                buffer.readUtf(MovementAnimationDisplayState.MAX_MOD_ANIMATION_CLIP_LENGTH));
+        assertEquals(0, buffer.readableBytes());
+    }
+
+    @Test
+    void movementPreferenceDecoderRejectsUnknownCrossFamilyAndNonCanonicalClips() {
+        for (String clip : new String[]{"swem:jump_lv6", "parcool:roll_front",
+                "SWEM:WALK", "swem:*", "swem:", "walk", "swem:walk\n"}) {
+            FriendlyByteBuf buffer = modStatePrefix(ModAnimationType.SWEM, true);
+            buffer.writeUtf(clip);
+            assertThrows(IllegalArgumentException.class,
+                    () -> MovementAnimationPreferenceUpdateMessage.read(buffer));
+        }
+        FriendlyByteBuf absentFamily = modStatePrefix(null, true);
+        absentFamily.writeUtf("swem:walk");
+        assertThrows(IllegalArgumentException.class,
+                () -> MovementAnimationPreferenceUpdateMessage.read(absentFamily));
+    }
+
+    @Test
+    void movementPreferenceDecoderBoundsClipLengthAndRejectsTruncatedClipData() {
+        FriendlyByteBuf oversized = modStatePrefix(ModAnimationType.PARCOOL, true);
+        oversized.writeUtf("x".repeat(MovementAnimationDisplayState.MAX_MOD_ANIMATION_CLIP_LENGTH + 1));
+        assertThrows(RuntimeException.class,
+                () -> MovementAnimationPreferenceUpdateMessage.read(oversized));
+
+        FriendlyByteBuf missing = modStatePrefix(ModAnimationType.PARCOOL, true);
+        assertThrows(RuntimeException.class,
+                () -> MovementAnimationPreferenceUpdateMessage.read(missing));
+
+        FriendlyByteBuf truncated = modStatePrefix(ModAnimationType.PARCOOL, true);
+        truncated.writeVarInt(10);
+        truncated.writeByte('p');
+        assertThrows(RuntimeException.class,
+                () -> MovementAnimationPreferenceUpdateMessage.read(truncated));
+    }
+
+    @Test
+    void movementPreferenceDecoderCannotAuthorizeACliplessFamily() {
+        FriendlyByteBuf buffer = modStatePrefix(ModAnimationType.SWEM, true);
+        buffer.writeUtf("");
+        MovementAnimationDisplayState state = MovementAnimationPreferenceUpdateMessage.read(buffer).state();
+        assertEquals(ModAnimationType.SWEM, state.modAnimation());
+        assertEquals("", state.modAnimationClip());
+        assertFalse(state.modAnimationOwned());
+        assertFalse(state.usesYsmMod("wine_fox/21_saint", ModAnimationType.SWEM, "swem:walk"));
+        assertEquals(0, buffer.readableBytes());
+        assertMovementStateRoundTrip(state);
+    }
+
+    @Test
+    void movementPreferenceDecoderRejectsUnknownModOrdinals() {
+        for (int ordinal : new int[]{-2, ModAnimationType.values().length, 127}) {
+            FriendlyByteBuf buffer = new FriendlyByteBuf(Unpooled.buffer());
+            buffer.writeUtf("wine_fox/21_saint",
+                    MovementAnimationPolicy.MAX_MODEL_ID_LENGTH);
+            buffer.writeByte(-1);
+            buffer.writeBoolean(false);
+            buffer.writeBoolean(false);
+            buffer.writeByte(ordinal);
+            buffer.writeBoolean(true);
+
+            assertThrows(IllegalArgumentException.class, () ->
+                    MovementAnimationPreferenceUpdateMessage.read(buffer));
+        }
+    }
+
+    private static FriendlyByteBuf modStatePrefix(ModAnimationType family, boolean owned) {
+        FriendlyByteBuf buffer = new FriendlyByteBuf(Unpooled.buffer());
+        buffer.writeUtf("wine_fox/21_saint", MovementAnimationPolicy.MAX_MODEL_ID_LENGTH);
+        buffer.writeByte(-1);
+        buffer.writeBoolean(false);
+        buffer.writeBoolean(false);
+        buffer.writeByte(family == null ? -1 : family.ordinal());
+        buffer.writeBoolean(owned);
+        return buffer;
+    }
+
+    private static void assertMovementStateRoundTrip(MovementAnimationDisplayState state) {
+        MovementAnimationPreferenceUpdateMessage update =
+                new MovementAnimationPreferenceUpdateMessage(state);
+        MovementAnimationPreferenceSnapshotMessage snapshot =
+                new MovementAnimationPreferenceSnapshotMessage(UUID.randomUUID(), state);
+        FriendlyByteBuf updateBuffer = new FriendlyByteBuf(Unpooled.buffer());
+        MovementAnimationPreferenceUpdateMessage.write(update, updateBuffer);
+        assertEquals(update, MovementAnimationPreferenceUpdateMessage.read(updateBuffer));
+        assertEquals(0, updateBuffer.readableBytes());
+        FriendlyByteBuf snapshotBuffer = new FriendlyByteBuf(Unpooled.buffer());
+        MovementAnimationPreferenceSnapshotMessage.write(snapshot, snapshotBuffer);
+        assertEquals(snapshot, MovementAnimationPreferenceSnapshotMessage.read(snapshotBuffer));
+        assertEquals(0, snapshotBuffer.readableBytes());
     }
 
     @Test

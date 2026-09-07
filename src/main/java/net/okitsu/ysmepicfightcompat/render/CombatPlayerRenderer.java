@@ -85,15 +85,16 @@ public final class CombatPlayerRenderer extends PHumanoidRenderer<
         boolean epicFightActionActive =
                 EpicFightPoseOwnership.actionOwnsPose(entity, patch);
         float epicModelYaw = patch.getAccurateYRot(partialTick);
-        MovementAnimationType ysmMovement = configuredFullBodyMovement(
+        boolean ysmModAnimation = configuredModAnimation(entity, partialTick);
+        MovementAnimationType ysmMovement = ysmModAnimation ? null : configuredFullBodyMovement(
                 entity, epicFightActionActive);
         Float ladderYaw = isLadderMovement(ysmMovement)
                 ? officialLadderYaw(entity) : null;
-        float renderedModelYaw = usesOfficialBodyYaw(ysmMovement)
+        float renderedModelYaw = ysmModAnimation || usesOfficialBodyYaw(ysmMovement)
                 ? officialBodyYaw(entity.yBodyRotO, entity.yBodyRot, partialTick)
                 : ladderYaw == null ? epicModelYaw : ladderYaw;
         RenderFrameContext.Frame scope = RenderFrameContext.pushThirdPerson(
-                entity, renderedModelYaw, epicFightActionActive, ysmMovement);
+                entity, renderedModelYaw, epicFightActionActive, ysmMovement, ysmModAnimation);
         try {
             super.render(entity, patch, renderer, buffers, matrices, light, partialTick);
         } finally {
@@ -117,7 +118,8 @@ public final class CombatPlayerRenderer extends PHumanoidRenderer<
         super.mulPoseStack(matrices, armature, entity, patch, partialTick);
         RenderFrameContext.Frame frame = RenderFrameContext.current();
         if (frame == null || frame.entity() != entity
-                || frame.epicModelYaw() == null || frame.ysmMovement() == null) {
+                || frame.epicModelYaw() == null
+                || frame.ysmMovement() == null && !frame.ysmModAnimation()) {
             return;
         }
         if (entity.getPose() == Pose.SWIMMING) {
@@ -134,6 +136,14 @@ public final class CombatPlayerRenderer extends PHumanoidRenderer<
         if (Math.abs(correction) > 1.0E-4F) {
             matrices.mulPose(Axis.YP.rotationDegrees(correction));
         }
+    }
+
+    private static boolean configuredModAnimation(AbstractClientPlayer entity, float partialTick) {
+        if (!CombatMeshResolver.hasReadyMesh(entity)) return false;
+        PlayerSelectionResolver.Selection selection = PlayerSelectionResolver.current(entity);
+        if (selection == null) return false;
+        CompatHumanoidMesh mesh = CombatMeshCache.readyMesh(selection.modelId());
+        return mesh != null && mesh.modAnimationOwnsPose(entity, partialTick);
     }
 
     @Nullable

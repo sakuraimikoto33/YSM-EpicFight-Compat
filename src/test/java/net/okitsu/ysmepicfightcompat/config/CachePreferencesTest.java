@@ -1,5 +1,6 @@
 package net.okitsu.ysmepicfightcompat.config;
 
+import com.electronwill.nightconfig.core.Config;
 import net.minecraftforge.common.ForgeConfigSpec;
 import org.junit.jupiter.api.Test;
 
@@ -53,10 +54,26 @@ class CachePreferencesTest {
         assertTrue(ClientPreferences.CLIENT_SPEC.getRaw(List.of(
                 "client", "movementAnimationExclusions"))
                 instanceof ForgeConfigSpec.ValueSpec);
+        assertTrue(ClientPreferences.CLIENT_SPEC.getRaw(List.of(
+                "client", "useYsmParCoolAnimations"))
+                instanceof ForgeConfigSpec.ValueSpec);
+        assertTrue(ClientPreferences.CLIENT_SPEC.getRaw(List.of(
+                "client", "useYsmSwemAnimations"))
+                instanceof ForgeConfigSpec.ValueSpec);
+        assertTrue(ClientPreferences.CLIENT_SPEC.getRaw(List.of(
+                "client", "parcoolAnimationExclusions"))
+                instanceof ForgeConfigSpec.ValueSpec);
+        assertTrue(ClientPreferences.CLIENT_SPEC.getRaw(List.of(
+                "client", "swemAnimationExclusions"))
+                instanceof ForgeConfigSpec.ValueSpec);
         assertTrue(ClientPreferences.USE_YSM_MOVEMENT_ANIMATIONS
                 .getDefault());
         assertTrue(ClientPreferences.USE_NATURAL_LADDER_ANIMATIONS
                 .getDefault());
+        assertTrue(ClientPreferences.USE_YSM_PARCOOL_ANIMATIONS.getDefault());
+        assertTrue(ClientPreferences.USE_YSM_SWEM_ANIMATIONS.getDefault());
+        assertTrue(ClientPreferences.PARCOOL_ANIMATION_EXCLUSIONS.getDefault().isEmpty());
+        assertTrue(ClientPreferences.SWEM_ANIMATION_EXCLUSIONS.getDefault().isEmpty());
         assertTrue(ClientPreferences
                 .USE_YSM_HELD_ITEM_SWITCH_ANIMATIONS.getDefault());
         assertTrue(ClientPreferences.USE_YSM_PROJECTILE_MODELS.getDefault());
@@ -104,6 +121,14 @@ class CachePreferencesTest {
                 List.of("client", "movementAnimationExclusions"),
                 "Example: \"wine_fox/21_saint\" = [\"run\", \"creative_flight\"].",
                 "Default: {}");
+        assertCommentTail(ClientPreferences.CLIENT_SPEC,
+                List.of("client", "parcoolAnimationExclusions"),
+                "Example: \"wine_fox/21_saint\" = [\"fast_running\", \"hang\"].",
+                "Default: {}");
+        assertCommentTail(ClientPreferences.CLIENT_SPEC,
+                List.of("client", "swemAnimationExclusions"),
+                "Example: \"wine_fox/21_saint\" = [\"gallop\", \"jump_lv1\"].",
+                "Default: {}");
 
         assertCommentTail(ClientPreferences.CLIENT_SPEC,
                 List.of("client", "suppressBattleModeOverlay"),
@@ -127,6 +152,12 @@ class CachePreferencesTest {
                 List.of("client", "useNaturalLadderAnimations"),
                 "Default: true");
         assertCommentTail(ClientPreferences.CLIENT_SPEC,
+                List.of("client", "useYsmParCoolAnimations"),
+                "Default: true");
+        assertCommentTail(ClientPreferences.CLIENT_SPEC,
+                List.of("client", "useYsmSwemAnimations"),
+                "Default: true");
+        assertCommentTail(ClientPreferences.CLIENT_SPEC,
                 List.of("client", "epicFightCompatibilityWarningShown"),
                 "Default: false");
         assertCommentTail(ServerPreferences.COMMON_SPEC,
@@ -144,6 +175,30 @@ class CachePreferencesTest {
                 List.of("client", "remoteModelDiskCacheMiB"), 0, 4096);
         assertNumericRange(ServerPreferences.COMMON_SPEC,
                 List.of("server", "serverModelDiskCacheMiB"), 0, 4096);
+    }
+
+    @Test
+    void modAnimationExclusionTablesValidateOnlyTheirOwnShortNames() {
+        ForgeConfigSpec.ValueSpec parcool = (ForgeConfigSpec.ValueSpec)
+                ClientPreferences.CLIENT_SPEC.getRaw(List.of("client", "parcoolAnimationExclusions"));
+        ForgeConfigSpec.ValueSpec swem = (ForgeConfigSpec.ValueSpec)
+                ClientPreferences.CLIENT_SPEC.getRaw(List.of("client", "swemAnimationExclusions"));
+        Config rules = Config.inMemory();
+        assertTrue(parcool.test(rules));
+        assertTrue(swem.test(rules));
+
+        rules.set(List.of("wine_fox/21_saint"), List.of("fast_running", "hang"));
+        assertTrue(parcool.test(rules));
+        assertFalse(swem.test(rules));
+        rules.set(List.of("wine_fox/21_saint"), List.of("gallop", "jump_lv1"));
+        assertFalse(parcool.test(rules));
+        assertTrue(swem.test(rules));
+        rules.set(List.of("wine_fox/21_saint"), List.of("parcool:hang"));
+        assertFalse(parcool.test(rules));
+        assertFalse(swem.test(rules));
+        rules.set(List.of("wine_fox/21_saint"), List.of("*"));
+        assertFalse(parcool.test(rules));
+        assertFalse(swem.test(rules));
     }
 
     private static void assertCommentTail(

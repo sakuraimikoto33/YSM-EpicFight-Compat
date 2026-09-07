@@ -1,14 +1,18 @@
 package net.okitsu.ysmepicfightcompat.render;
 
 import net.minecraft.world.entity.LivingEntity;
+import net.okitsu.ysmepicfightcompat.integration.parcool.EpicParCoolAnimationAccess;
 import yesman.epicfight.api.animation.AnimationPlayer;
 import yesman.epicfight.api.animation.LivingMotion;
 import yesman.epicfight.api.animation.LivingMotions;
+import yesman.epicfight.api.animation.types.AttackAnimation;
 import yesman.epicfight.api.animation.types.DynamicAnimation;
 import yesman.epicfight.api.animation.types.EntityState;
+import yesman.epicfight.api.animation.types.GuardAnimation;
 import yesman.epicfight.api.asset.AssetAccessor;
 import yesman.epicfight.api.client.animation.ClientAnimator;
 import yesman.epicfight.api.client.animation.Layer;
+import yesman.epicfight.world.capabilities.EpicFightCapabilities;
 import yesman.epicfight.world.capabilities.entitypatch.LivingEntityPatch;
 
 import java.util.Set;
@@ -33,9 +37,89 @@ public final class EpicFightPoseOwnership {
     private EpicFightPoseOwnership() {
     }
 
+    /**
+     * Protects combat while allowing an independently observed native parkour/riding
+     * pose. Generic INACTION, movement locks and main-frame animations are not combat
+     * evidence: parkour bridges use those same public Epic Fight mechanisms.
+     */
+    public static boolean combatActionOwnsPose(LivingEntity entity) {
+        if (entity == null) {
+            return false;
+        }
+        LivingEntityPatch<?> patch = EpicFightCapabilities.getEntityPatch(
+                entity, LivingEntityPatch.class);
+        if (patch == null) {
+            return false;
+        }
+        EntityState state = patch.getEntityState();
+        ClientAnimator animator = patch.getClientAnimator();
+        if (state == null || animator == null) {
+            return true;
+        }
+        return entity.isDeadOrDying() || entity.isSleeping() || entity.hurtTime > 0
+                || combatFlagsRequireEpicPose(state, entity.isUsingItem(),
+                entity.swinging, animator.isAiming())
+                || isCombatMotion(animator.currentMotion())
+                || isCombatMotion(animator.currentCompositeMotion())
+                || visibleCombatAnimation(animator);
+    }
+
+    static boolean combatFlagsRequireEpicPose(
+            EntityState state, boolean usingItem, boolean swinging, boolean aiming) {
+        return state == null || state.attacking() || state.hurt() || state.knockDown()
+                || usingItem || swinging || aiming;
+    }
+
+    static boolean isCombatMotion(LivingMotion motion) {
+        return motion != LivingMotions.INACTION && motion != LivingMotions.LANDING_RECOVERY
+                && isActionMotion(motion);
+    }
+
+    private static boolean visibleCombatAnimation(ClientAnimator animator) {
+        boolean[] found = {false};
+        animator.iterVisibleLayersUntilFalse(layer -> {
+            if (layer != null && combatAnimationsRequireEpicPose(
+                    currentAnimation(layer), nextAnimation(layer))) {
+                found[0] = true;
+                return false;
+            }
+            return true;
+        });
+        return found[0];
+    }
+
+    static boolean combatAnimationsRequireEpicPose(
+            DynamicAnimation current, DynamicAnimation next) {
+        return isCombatAnimation(current) || isCombatAnimation(next);
+    }
+
+    static boolean isCombatAnimation(DynamicAnimation current) {
+        if (current == null) {
+            return false;
+        }
+        if (isCombatAnimationKind(current.getClass(), current.isReboundAnimation())) {
+            return true;
+        }
+        // LinkAnimation publicly exposes its target here, including attack startup
+        // before ATTACKING becomes true. An AttackAnimation's recovery remains covered.
+        DynamicAnimation real = animation(current.getRealAnimation());
+        return real != null
+                && isCombatAnimationKind(real.getClass(), real.isReboundAnimation());
+    }
+
+    static boolean isCombatAnimationKind(
+            Class<? extends DynamicAnimation> animationType, boolean rebound) {
+        return rebound || animationType != null
+                && (AttackAnimation.class.isAssignableFrom(animationType)
+                || GuardAnimation.class.isAssignableFrom(animationType));
+    }
+
     public static boolean actionOwnsPose(
             LivingEntity entity, LivingEntityPatch<?> patch) {
         if (entity == null || patch == null) {
+            return true;
+        }
+        if (EpicParCoolAnimationAccess.ownsMovementPose(entity, patch)) {
             return true;
         }
         EntityState state = patch.getEntityState();

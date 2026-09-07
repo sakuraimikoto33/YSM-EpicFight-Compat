@@ -4,17 +4,22 @@ import net.minecraft.client.Minecraft;
 import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.entity.player.Player;
 import net.okitsu.ysmepicfightcompat.CompatMod;
+import net.okitsu.ysmepicfightcompat.animation.ModAnimationResolver;
+import net.okitsu.ysmepicfightcompat.animation.ModAnimationSample;
+import net.okitsu.ysmepicfightcompat.animation.ModAnimationType;
 import net.okitsu.ysmepicfightcompat.animation.MovementAnimationType;
 import net.okitsu.ysmepicfightcompat.config.ClientPreferences;
 import net.okitsu.ysmepicfightcompat.integration.tlm.TouhouMaidSelectionAccess;
 import net.okitsu.ysmepicfightcompat.render.PlayerSelectionResolver;
 
 import javax.annotation.Nullable;
+import java.util.EnumMap;
+import java.util.EnumSet;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 
-/** Resolves local movement rules and synchronizes only the current pose decision. */
+/** Resolves local movement/mod rules and synchronizes only the current pose decisions. */
 public final class ClientMovementAnimationPreferences {
     private static MovementAnimationDisplayState lastSent;
     private static MovementAnimationPolicy cachedPolicy = MovementAnimationPolicy.DEFAULT;
@@ -22,6 +27,13 @@ public final class ClientMovementAnimationPreferences {
     private static boolean cachedEnabled;
     private static boolean policyInitialized;
     private static boolean invalidRulesLogged;
+    private static final Map<ModAnimationType, CachedModPolicy> MOD_POLICIES =
+            new EnumMap<>(ModAnimationType.class);
+    private static final EnumSet<ModAnimationType> INVALID_MOD_RULES_LOGGED =
+            EnumSet.noneOf(ModAnimationType.class);
+
+    private record CachedModPolicy(boolean enabled, Map<String, List<String>> rules,
+                                   ModAnimationPolicy policy) { }
 
     private ClientMovementAnimationPreferences() {
     }
@@ -50,6 +62,43 @@ public final class ClientMovementAnimationPreferences {
         }
         return RemoteMovementAnimationPreferences.find(entity.getUUID())
                 .usesYsm(selectedModelId, movement);
+    }
+
+    /** A current canonical clip is required to resolve optional-mod pose ownership. */
+    public static boolean usesYsmMod(
+            LivingEntity entity, String selectedModelId, ModAnimationType modAnimation) {
+        return usesYsmMod(entity, selectedModelId, modAnimation, "");
+    }
+
+    /** Optional-mod poses follow the player's per-clip decision, never the observer's rules. */
+    public static boolean usesYsmMod(
+            LivingEntity entity, String selectedModelId, ModAnimationType modAnimation,
+            String modAnimationClip) {
+        if (!(entity instanceof Player) || modAnimation == null) {
+            return false;
+        }
+        Player local = Minecraft.getInstance().player;
+        return usesYsmMod(entity.getUUID(), local == null ? null : local.getUUID(),
+                selectedModelId, modAnimation, modAnimationClip);
+    }
+
+    static boolean usesYsmMod(
+            UUID playerId, @Nullable UUID localPlayerId,
+            String selectedModelId, @Nullable ModAnimationType modAnimation) {
+        return usesYsmMod(playerId, localPlayerId, selectedModelId, modAnimation, "");
+    }
+
+    static boolean usesYsmMod(
+            UUID playerId, @Nullable UUID localPlayerId,
+            String selectedModelId, @Nullable ModAnimationType modAnimation,
+            String modAnimationClip) {
+        if (playerId == null || modAnimation == null) {
+            return false;
+        }
+        return playerId.equals(localPlayerId)
+                ? localModAnimationOwned(selectedModelId, modAnimation, modAnimationClip)
+                : RemoteMovementAnimationPreferences.find(playerId)
+                        .usesYsmMod(selectedModelId, modAnimation, modAnimationClip);
     }
 
     /** Resolves only the current visual choice; the underlying client setting is not sent. */
@@ -108,7 +157,10 @@ public final class ClientMovementAnimationPreferences {
         }
         String modelId = selectedModelId(local);
         MovementAnimationType movement = MovementAnimationType.resolve(local);
-        MovementAnimationDisplayState current = resolveState(modelId, movement);
+        ModAnimationSample modSample = ModAnimationResolver.sample(local, 0.0F);
+        MovementAnimationDisplayState current = resolveState(
+                modelId, movement, modSample == null ? null : modSample.type(),
+                modSample == null ? "" : modSample.clipName());
         if (!current.equals(lastSent)) {
             lastSent = current;
             CompatNetwork.sendMovementAnimationPreferences(current);
@@ -118,16 +170,71 @@ public final class ClientMovementAnimationPreferences {
     public static void beginConnection() {
         lastSent = null;
         invalidRulesLogged = false;
+        MOD_POLICIES.clear();
+        INVALID_MOD_RULES_LOGGED.clear();
         RemoteMovementAnimationPreferences.beginConnection();
+        ModAnimationResolver.clear();
     }
 
     static MovementAnimationDisplayState resolveState(
             String modelId, @Nullable MovementAnimationType movement) {
+        return resolveState(modelId, movement, null);
+    }
+
+    static MovementAnimationDisplayState resolveState(
+            String modelId, @Nullable MovementAnimationType movement,
+            @Nullable ModAnimationType modAnimation) {
+        return resolveState(modelId, movement, modAnimation, "");
+    }
+
+    static MovementAnimationDisplayState resolveState(
+            String modelId, @Nullable MovementAnimationType movement,
+            @Nullable ModAnimationType modAnimation, String modAnimationClip) {
         boolean ysmOwned = movement != null
                 && localPolicy().usesYsm(modelId, movement);
         return new MovementAnimationDisplayState(modelId, movement, ysmOwned,
                 ysmOwned && movement.isLadder()
-                        && ClientPreferences.USE_NATURAL_LADDER_ANIMATIONS.get());
+                        && ClientPreferences.USE_NATURAL_LADDER_ANIMATIONS.get(),
+                modAnimation, localModAnimationOwned(modelId, modAnimation, modAnimationClip),
+                modAnimationClip);
+    }
+
+    private static boolean localModAnimationOwned(
+            String modelId, @Nullable ModAnimationType modAnimation, String modAnimationClip) {
+        if (modAnimation == null || !MovementAnimationPolicy.isValidModelId(
+                MovementAnimationPolicy.normalizeModelId(modelId))) {
+            return false;
+        }
+        return localModPolicy(modAnimation).usesYsm(modelId, modAnimationClip);
+    }
+
+    private static ModAnimationPolicy localModPolicy(ModAnimationType modAnimation) {
+        boolean enabled = switch (modAnimation) {
+            case PARCOOL -> ClientPreferences.USE_YSM_PARCOOL_ANIMATIONS.get();
+            case SWEM -> ClientPreferences.USE_YSM_SWEM_ANIMATIONS.get();
+        };
+        Map<String, List<String>> rules = switch (modAnimation) {
+            case PARCOOL -> ClientPreferences.parCoolAnimationExclusions();
+            case SWEM -> ClientPreferences.swemAnimationExclusions();
+        };
+        CachedModPolicy cached = MOD_POLICIES.get(modAnimation);
+        if (cached != null && cached.enabled() == enabled && cached.rules().equals(rules)) {
+            return cached.policy();
+        }
+        ModAnimationPolicy policy;
+        try {
+            policy = ModAnimationPolicy.create(modAnimation, enabled, rules);
+            INVALID_MOD_RULES_LOGGED.remove(modAnimation);
+        } catch (IllegalArgumentException exception) {
+            if (INVALID_MOD_RULES_LOGGED.add(modAnimation)) {
+                CompatMod.LOG.warn(
+                        "YSM-EF Compat: invalid {} animation exclusions; using the main setting without exclusions",
+                        modAnimation, exception);
+            }
+            policy = ModAnimationPolicy.create(modAnimation, enabled, Map.of());
+        }
+        MOD_POLICIES.put(modAnimation, new CachedModPolicy(enabled, Map.copyOf(rules), policy));
+        return policy;
     }
 
     private static boolean localNaturalLadderPose(

@@ -3,14 +3,86 @@ package net.okitsu.ysmepicfightcompat.render;
 import org.junit.jupiter.api.Test;
 import yesman.epicfight.api.animation.AnimationManager;
 import yesman.epicfight.api.animation.LivingMotions;
+import yesman.epicfight.api.animation.types.AttackAnimation;
 import yesman.epicfight.api.animation.types.DynamicAnimation;
+import yesman.epicfight.api.animation.types.EntityState;
+import yesman.epicfight.api.animation.types.GuardAnimation;
 import yesman.epicfight.api.animation.types.StaticAnimation;
 import yesman.epicfight.api.asset.AssetAccessor;
+import yesman.epicfight.api.utils.datastruct.TypeFlexibleHashMap;
 
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class EpicFightPoseOwnershipTest {
+    @Test
+    void nativeParkourLocksDoNotBecomeCombatOwnership() {
+        EntityState state = new EntityState(new TypeFlexibleHashMap<>(false));
+        state.setState(EntityState.INACTION, true);
+        state.setState(EntityState.MOVEMENT_LOCKED, true);
+
+        assertFalse(EpicFightPoseOwnership.combatFlagsRequireEpicPose(
+                state, false, false, false));
+        assertFalse(EpicFightPoseOwnership.isCombatMotion(LivingMotions.INACTION));
+        assertFalse(EpicFightPoseOwnership.isCombatMotion(LivingMotions.LANDING_RECOVERY));
+        assertFalse(EpicFightPoseOwnership.isCombatAnimation(new ClassifiedAnimation(true, false)));
+        // The pre-existing, ordinary-locomotion ownership policy remains stricter.
+        assertTrue(EpicFightPoseOwnership.actionFlagsRequireEpicPose(
+                true, false, false, false, true, false, false, false));
+    }
+
+    @Test
+    void trueCombatFlagsWinEvenWhileNativeParkourLocksArePresent() {
+        for (int active = 0; active < 6; active++) {
+            EntityState state = new EntityState(new TypeFlexibleHashMap<>(false));
+            state.setState(EntityState.INACTION, true);
+            state.setState(EntityState.MOVEMENT_LOCKED, true);
+            state.setState(EntityState.ATTACKING, active == 0);
+            state.setState(EntityState.HURT_LEVEL, active == 1 ? 1 : 0);
+            state.setState(EntityState.KNOCKDOWN, active == 2);
+            assertTrue(EpicFightPoseOwnership.combatFlagsRequireEpicPose(
+                    state, active == 3, active == 4, active == 5));
+        }
+    }
+
+    @Test
+    void aimBlockItemActionsDeathAndSleepRemainProtected() {
+        for (LivingMotions motion : new LivingMotions[]{LivingMotions.AIM,
+                LivingMotions.BLOCK, LivingMotions.BLOCK_SHIELD, LivingMotions.RELOAD,
+                LivingMotions.SHOT, LivingMotions.SPELLCAST, LivingMotions.DIGGING,
+                LivingMotions.DRINK, LivingMotions.EAT, LivingMotions.DEATH, LivingMotions.SLEEP}) {
+            assertTrue(EpicFightPoseOwnership.isCombatMotion(motion), motion.toString());
+        }
+        assertFalse(EpicFightPoseOwnership.isCombatMotion(LivingMotions.IDLE));
+        assertFalse(EpicFightPoseOwnership.isCombatMotion(LivingMotions.RUN));
+        assertFalse(EpicFightPoseOwnership.isCombatMotion(LivingMotions.CLIMB));
+        assertFalse(EpicFightPoseOwnership.isCombatMotion(null));
+    }
+
+    @Test
+    void attackAndGuardTypesRemainCombatWithoutGenericMainFrameClassification() {
+        assertTrue(EpicFightPoseOwnership.isCombatAnimationKind(AttackAnimation.class, false));
+        assertTrue(EpicFightPoseOwnership.isCombatAnimationKind(GuardAnimation.class, false));
+        assertTrue(EpicFightPoseOwnership.isCombatAnimationKind(ClassifiedAnimation.class, true));
+        assertFalse(EpicFightPoseOwnership.isCombatAnimationKind(ClassifiedAnimation.class, false));
+    }
+
+    @Test
+    void currentAndQueuedCombatAnimationsBothProtectThePose() {
+        DynamicAnimation parkour = new ClassifiedAnimation(true, false);
+        DynamicAnimation rebound = new ClassifiedAnimation(false, true);
+        assertTrue(EpicFightPoseOwnership.combatAnimationsRequireEpicPose(rebound, parkour));
+        assertTrue(EpicFightPoseOwnership.combatAnimationsRequireEpicPose(parkour, rebound));
+        assertFalse(EpicFightPoseOwnership.combatAnimationsRequireEpicPose(parkour, null));
+        assertFalse(EpicFightPoseOwnership.combatAnimationsRequireEpicPose(null, null));
+    }
+
+    @Test
+    void missingCombatStateFailsClosedButMissingEntityHasNoPatchToProtect() {
+        assertTrue(EpicFightPoseOwnership.combatFlagsRequireEpicPose(null, false, false, false));
+        assertFalse(EpicFightPoseOwnership.combatActionOwnsPose(null));
+    }
+
     @Test
     void ordinaryLocomotionDoesNotClaimThePose() {
         assertFalse(EpicFightPoseOwnership.actionFlagsRequireEpicPose(
