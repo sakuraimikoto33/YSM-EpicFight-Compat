@@ -28,6 +28,8 @@ EpicFight_TouhouLittleMaidはモデル行列へ `0.8` のスケールを適用�
 
 `LocalModelRepository` は公式YSMのモデルカタログからモデルを探索します。`ysm.json` で構成される現行フォルダモデル、`main.json`・`arm.json`・PNGテクスチャを同じ階層に置く旧フォルダモデル、`.ysm` パッケージに対応します。フォルダモデルのジオメトリとアニメーションはBedrock JSONとして解析します。パッケージは `PackageEnvelopeDecoder` がメモリ内で展開し、`BinaryPackageParser` が同じ内部表現である `ModelBundle` へ変換します。
 
+モデル内のMolang関数は、manifestの `files.function_path` ディレクトリ（既定は `functions`）、またはパッケージ内の関数エントリから保持します。`ModelFunctionAssets` が正規化名とUTF-8ソースを検証し、関数数4,096、ソースごと1 MiB、合計16 MiBに制限します。解析済みbundleはアニメーションとControllerに加え、モデルの `merge_multiline_expr`、`all_cutout`、`render_layers_first` プロパティも保持します。
+
 選択可能な各ベーステクスチャには、任意のLabPBR normal・specular補助テクスチャを保持できます。フォルダモデルでは対応する `ysm.json` のtexture object、パッケージモデルでは型付きsubtextureから取得します。補助テクスチャが欠落していれば省略し、フォールバック用補助画像のデコードに失敗しても使用可能なベーステクスチャは無効にしません。PBRスキーマのsaltをローカル入力元fingerprintへ含め、補助テクスチャを保持していなかった旧ディスクエントリはそのまま再利用せず再構築します。
 
 公式のプライマリモデルである `default` 以外の各モデルでは、`OfficialDefaultAnimationLibrary` が、導入済みの公式YSM Mod内にあるプライマリモデルのアセットから、モデル側で定義されていないアニメーション名だけを補います。プライマリアセットのdigestと継承処理のrevisionもローカルモデルキャッシュのfingerprintへ含めるため、継承元アニメーションが変化した場合は古いクリップを再利用せず、対象の解析済みキャッシュを無効化します。
@@ -40,11 +42,17 @@ EpicFight_TouhouLittleMaidはモデル行列へ `0.8` のスケールを適用�
 
 大文字と小文字を区別する名前が `ysmGlow` で始まるボーン自身に定義されたジオメトリは、別のpart集合へコンパイルします。`CompatHumanoidMesh` は通常メッシュと同じskin行列、表示状態、テクスチャ、material経路を適用しながら、そのpartをフルブライトで描画します。このマーカーは子ボーンのジオメトリへ暗黙には継承されません。
 
-`HumanoidRig` は、厳密に分類した人型の主要ボーンだけにEpic Fightの20個のbiped jointを割り当てます。`AuxiliaryBoneLayout` は装飾用の補助ボーンを親から子の順で追加のスキニング番号へ割り当てます。上限はEpic Fightの行列上限である1,000です。各補助ボーンは最も近い主要jointを基準にしつつ、モデルが定義したbind階層を維持します。
+`HumanoidRig` は、厳密に分類したボーンの役割をEpic Fightの20個の予約済みbiped jointへ対応付けます。`AuxiliaryBoneLayout` はモデルボーンも親から子の順で専用スキニング番号へ割り当て、モデル定義のbind階層を維持します。行列の合計上限は1,000で、モデルボーンには最大980個を使用します。
+
+人型経路では、`AllHead` をchest基準に維持して首のジオメトリへ頭蓋の回転を加えず、`MHead` または `Head` からhead skinningを開始します。モデル定義のhead-control階層は、YSMのカメラ追従とその遷移状態へ引き続き参加します。
+
+`RigBindingPlan` は、モデルIDやボーンの別名だけでなくジオメトリ構造から、Epic Fightへリターゲットするボーンとモデル定義の連続したサブツリーを分離します。自動判定の対象は、人型の身体構造を持たない適格なrootと、左右のhand・Tool階層が腕ではなく頭の配下にある身体ブランチです。これにより、通常の人型ブランチではEpic Fightの戦闘姿勢を維持しつつ、非人型フォームではモデル定義の姿勢を使用できます。単独のhand・Toolだけを持つ疎なモデルは従来のリターゲットを維持し、曖昧な構造や解析上限へ達した場合も既存のフォールバックを使用します。任意の非人型リグを推定したり、動物用の新しい戦闘アニメーションを生成したりする機能ではありません。内部の明示的root指定経路も、ユーザー設定可能なリグprofileではありません。
 
 ## アニメーションとMolangランタイム
 
 `ParallelAnimationProgram` はEpic Fightのanimatorを書き換えずにYSMアニメーションデータを評価します。`AuxiliaryPoseMatrices` はEpic Fightの主要jointスキニング行列を戦闘姿勢との接続点として受け取り、変換モデルの完全なbind階層まで展開したうえで、parallel・全身・手持ち品の各レイヤーを合成します。通常のEpic Fight担当経路では、現在の戦闘jointを基準に互換性のあるYSM補助差分と表示スケールを追加します。全身姿勢の担当経路では、root、胴体、手足、髪、スカート、尻尾などが異なる座標空間へ分離しないよう、モデル定義の連続した階層として評価します。
+
+モデル定義のサブツリーでは、別の数値姿勢へ連続したYSM階層を保持し、モデル空間または一つの外部Epic Fight装着基準へ接続します。共有する祖先の式は一度だけ実行し、その評価値を両方の姿勢領域へ渡します。構造を維持するmain・hold・Controllerの評価は、人型の戦闘姿勢を奪わずpose-onlyデータとして継続できます。この経路は変数代入と入れ子の関数のデータフローを維持しますが、サウンド、パーティクル、`ysm.sync` の出力は抑止し、抑止中のtimelineイベントを後から再生しません。
 
 `MovementAnimationType` は、設定対象の移動状態として `walk`、`run`、`sneak_idle`、`sneak_move`、`jump`、`creative_flight`、`elytra_flight`、`swim`、`water_idle`、`crawl_idle`、`crawl_move`、`ladder_idle`、`ladder_up`、`ladder_down` を解決します。特殊状態は公式YSMと同じく、水泳、匍匐、はしごの順で優先します。匍匐の待機・移動は描画用walk-animation速度の絶対値を閾値 `0.05` で分け、はしごの上昇・下降・停止はdead zoneを設けず現在のY座標と前tickのY座標の差の符号で分けます。水中待機は水中かつ接地していない場合だけです。専用はしご状態は `ladder_up`、`ladder_down`、`ladder_stillness` だけを使用してからidleクリップへフォールバックし、似た名前の匍匐クリップを流用しません。
 
@@ -56,11 +64,33 @@ YSMが対応する移動または持ち替え姿勢を担当している間、�
 
 初期状態で有効な自然なはしご方針は、YSMが専用はしごクリップを担当し、そのクリップが左腕の動作を定義している場合だけ使用します。対応するHOLDレイヤーを外して両腕を昇降へ使い、右腕が未定義の場合は左腕controlのサブツリーだけをミラーして生成します。通常のEpic Fight手持ち品はclimb用の収納位置を維持し、有効なモデル独自手持ち品のサブツリーは強制的に非表示として重複するEpic Fight品も抑止します。専用のはしご腕動作がないモデルは従来のHOLD動作を維持します。自然なはしごを無効にした場合、通常アイテムを論理上のTool手へ戻し、メインハンドの弓だけはEpic Fightの左手補正を使用します。モデルが定義した残りのはしご腕動作は維持し、互換フォールバックで必要な場合だけ、未定義の右腕を定義済み左腕からミラーします。
 
-`AutomaticAnimationSelector` はさらに、YSMの状態、装備条件、手持ち品条件、乗り物、同乗者用クリップを保持します。モデル使用者の解決済み設定によりYSMが騎乗中の乗り物を描画する場合、騎乗状態は完全姿勢の経路で処理し、Epic Fightの騎乗ポーズを二重に適用しません。YSM乗り物経路を無効にした場合は乗り物・同乗者用クリップとlocator補正も適用せず、乗り物と騎乗姿勢をEpic Fightまたはバニラへ委ねます。ルーレットクリップはモデル空間のroot・胴体移動を維持します。プレイヤーのルーレット音声は公式YSMが担当しますが、EFTLMレンダラーが公式メイド描画を迂回する対応メイドでは互換ランタイムが音声を担当し、監視したルーレットgenerationにより同名アニメーションの再開始を識別します。手持ち品用クリップは後述の置換・エフェクトのみ・持ち替え規則に従います。通常アイテムはYSMの持ち替え姿勢だけが再生されている間もEpic Fightのアイテムレイヤーに残ります。
+`AutomaticAnimationSelector` はさらに、YSMの状態、装備条件、手持ち品条件、乗り物、同乗者用クリップを保持します。モデル使用者の解決済み設定によりYSMが騎乗中の乗り物を描画する場合、騎乗状態は完全姿勢の経路で処理し、Epic Fightの騎乗ポーズを二重に適用しません。YSM乗り物経路を無効にした場合は乗り物・同乗者用クリップとlocator補正も適用せず、その通常騎乗経路をEpic Fightまたはバニラへ委ねます。後述する別設定のSWEM騎乗者アニメーション経路は独立しています。ルーレットクリップはモデル空間のroot・胴体移動を維持します。プレイヤーのルーレット音声は公式YSMが担当しますが、EFTLMレンダラーが公式メイド描画を迂回する対応メイドでは互換ランタイムが音声を担当し、監視したルーレットgenerationにより同名アニメーションの再開始を識別します。手持ち品用クリップは後述の置換・エフェクトのみ・持ち替え規則に従います。通常アイテムはYSMの持ち替え姿勢だけが再生されている間もEpic Fightのアイテムレイヤーに残ります。
 
 アニメーションクリップでは、ループまたは最終フレーム保持の再生方式、Molang `blend_weight`、キーフレーム補間、ループ境界をまたぐタイムラインの時系列順を保持します。ジオメトリに存在しないMolang疑似ボーンのトラックも、変数更新の副作用を維持するため定義順に評価しますが、姿勢行列は割り当てません。入れ子のMolang関数は呼び出し階層ごとに引数フレームを分離し、内側の関数が呼び出し元の引数を書き換えないようにします。
 
 `ExpressionEngine` は、これらのクリップに必要なMolang演算子、対応する公式数学関数と読み取り専用Query、`ysm.first_order`・`ysm.second_order`・`ysm.perlin_noise` などのYSM補助関数を実装します。エンティティ、装備、アイテム、バイオーム、ブロック、カメラ距離、アニメーション時間の値を読み取り専用Queryとして公開します。通常変数では `v.*` と `variable.*`、永続roaming変数では `v.roaming.*` と `variable.roaming.*` を同一のものとして扱います。設定変数のスナップショットをリモートプレイヤーにも同期し、変数による表示と条件アニメーションを所有プレイヤーと一致させます。対応メイドではメイド自身の `LivingEntity` Queryとモデル内ランタイム変数を使用できますが、所有者の公式YSM設定変数やroaming変数の状態は継承しません。
+
+`OfficialGroundSpeedQuery` は、既に生成されたクライアントのプレイヤーcontextに対し、Mapping APIを通じて公式の `ysm.ground_speed2` 最終結果を読み取ります。公式の移動状態を再構築することはなく、contextやmappingが取得できない場合と、プレイヤー以外のエンティティでは0を返します。`ysm.in_shield_block_cooldown` は、エンティティの同一性を検証したサーバーからの盾防御成功通知を使用し、受信からエンティティの5tick間だけtrueになります。盾を使用しているだけではこの期間を開始しません。
+
+`DisplayedBoneQueries` は、`ysm.bone_rot`、`ysm.bone_pos`、`ysm.bone_scale`、`ysm.bone_pivot_abs` 向けに完了済みフレームの不変スナップショットを公開します。正確なボーン名に対する `x`、`y`、`z` 成分を返し、回転は度、位置はモデル定義の単位で表します。評価中の姿勢自身ではなく直前の完了済みスナップショットを読み、存在しないボーンは各成分0、親の縮退により復元できないデータは直前またはbind値を使用します。この正規のモデル空間スナップショットへ一人称のview変換は含めません。`ctrl.playing_extra_animation` は、対応するローカルクリップがなくても公式のルーレット再生状態に従います。
+
+型付きエンティティ参照は、`EntityReferenceEnvironment` を通じて読み取り専用の `->` 評価を行い、参照先モデルの変数、入力、スクリプト、出力は公開しません。`ysm.projectile_owner` の参照元は、投射物の所有者が同じワールドの有効なプレイヤーである場合だけ解決します。現在のプレイヤー・メイド描画contextではnullになり、互換Modが投射物描画を担当する経路を追加するものではありません。
+
+## モデル内スクリプト
+
+`MolangScriptRuntime` は、`fn.<name>` の呼び出し可能な関数と、`@player_init`、`@player_update`、`@sync`、対応する `@player_ctrl_<slot>` の購読をコンパイルします。初期化、フレーム更新、待機中の同期callbackの順で実行します。ソースは引数フレームと呼び出し深度上限を持つ制限付きMolang評価器の中で実行し、JVMやOSのコードとしては実行しません。
+
+Controller hookは `ctrl.set_animation`、`ctrl.reset`、`ctrl.indicate_reload`、`ctrl.set_beginning_transition_length` を使用し、`ctrl.state_continue`、`ctrl.state_stop`、`ctrl.state_pause`、`ctrl.state_bypass` の明示的なreturnで動作を選択します。hookは自動providerをカスタマイズしますが、モデル定義のBedrock Controllerがある場合はそちらを優先し、現在の `ysm-builtin` 状態がproviderへ委譲している場合だけhookを適用します。スクリプトの開始遷移と `ysm-builtin` 対応Controller slotの遷移では、旧クリップを再評価せず保存済み姿勢をブレンドし、イベントと再生時計を独立して維持します。
+
+`ysm.sync` は最大16個の有限な数値引数だけを送信します。ローカルプレイヤーの現在の選択モデルだけが送信でき、`ServerScriptEvents` が選択状態とレート上限を検証してから、送信者と追跡クライアントへ同じ認証済みスナップショットを中継します。送信者は返信前にイベントをローカルでechoしません。エンティティの同一性、モデル、sequence、キュー数、有効期限の検証により古い配信を拒否します。このイベント通信にソースコード、任意オブジェクト、メイド所有者のスクリプト中継は含めません。
+
+## ParCool・SWEMの任意プレイヤーアニメーション連携
+
+`ModAnimationResolver` は、リモートプレイヤーを含め、プレイヤーだけについて対応するnativeアニメーション状態を読み取ります。メイドアダプターは拡張しません。`ModAnimationClips` は選択を既知の公式YSM `parcool:*`・`swem:*` クリップ名へ限定します。選択モデルには、モデル自身の定義または通常のdefaultアニメーション継承経路から得られた、使用可能なボーントラック付きの対応クリップが必要です。任意APIがない場合、未対応nativeアニメーション、対応クリップの欠落、使用者設定の無効時は、既存の描画経路を維持します。変更するのは変換済みプレイヤーの表示姿勢だけで、移動、hitbox、Epic Fightのゲームプレイ用アーマチュア、馬のレンダラーは変更しません。
+
+`ParCoolAnimationStateAccess` は、キャッシュした反射を通じてParCoolのcapability、現在のanimator、終了判定、時計、方向別状態を読み取ります。対応する壁移動、vault、roll、dodge、ぶら下がり、水泳などの定義済みアクションを正確なクリップへ対応付け、native animator自体は進めません。`SwemAnimationAccess` は、生存中のSWEM馬に直接乗る生存中のプレイヤーを対象に、有効な `swem:animations` PlayerAnimatorレイヤーを読み取ります。対応する騎乗者クリップは `idle`、`walk`、`trot`、`canter`、`canter_ext`、`gallop`、`jump_lv1`～`jump_lv5` です。どちらもnativeの経過時間と再開始の識別情報を使用し、repeatクリップはループ、1回再生はnativeアクション終了まで最終姿勢を保持、長さ未定義の式クリップもnativeのアニメーション時計を維持します。SWEM騎乗を古いParCool状態より優先し、ほかの乗客もParCoolクリップを選択しません。
+
+許可されたModクリップは、全身のmain・Controller構成、公式のbody yawと終端の頭部補正を使用し、持ち替え遷移をキャンセルします。ダメージ、死亡、睡眠、spin attack、実際のEpic Fight戦闘アクション、ルーレット、モデル独自の全身アクションは、それぞれの優先順位を維持します。Epic Fightの一般的な移動lockや `INACTION` だけでは、独立して観測したnativeのparkour・騎乗姿勢を拒否しません。さらに `EpicParCoolAnimationAccess` は、Epic ParCoolのChain movement・Wall movementに対応する特定のアニメーションIDを、表示中のcurrent・next・link先を含めて予約します。これらのアドオン姿勢では、通常のYSM移動や持ち替えへのフォールバックも抑止します。ぶら下がり、wall running、wall jumping全体を一律に除外するものではありません。
 
 ## モデル独自の手持ち品
 
@@ -69,6 +99,8 @@ YSMが対応する移動または持ち替え姿勢を担当している間、�
 置換が有効な場合、`ParallelAnimationProgram` はモデル定義のプロップrootと必要な親階層だけを評価します。プロップをEpic Fightの現在の左右Tool jointへrebaseし、描画されている拳位置とEpic Fightのアイテム固有補正を維持します。`PatchedItemInHandLayerMixin` は、同じ変換メッシュを描画している厳密なスコープ内だけ、その手のEpic Fightアイテムを抑止します。置換を検出できない場合、ローカル設定で無効にした場合、Epic Fightのデフォルトメッシュへフォールバックした場合は、Epic Fightが通常どおりアイテムを描画します。
 
 YSMが移動姿勢を担当している間は、対応する通常のHOLDクリップも移動mainの後へpose-onlyの全身データとして合成します。これにより、Epic Fightが描画する通常アイテムを維持したまま、モデル定義の腕・手・Tool locatorを一致させます。この経路ではHOLDクリップのtimelineを進行・発火させないため、timelineで定義されたサウンドやパーティクルを再出力しません。前述の自然なはしご方針だけは明示的な例外です。
+
+モデル定義フォームの手持ちlocatorを持つジオメトリでは、`HandLocatorSelection` が身体の遷移後の完成済み表示skinとモデル定義の表示状態から、物理的な左右のTool候補を解決します。表示中かつ縮退していない候補が正確に一つ必要です。候補が欠落、曖昧、不正な場合は装着を上書きせず、全候補が非表示の場合はそのアイテムを抑止します。口、足、尻尾のlocator自身にジオメトリがなくても構いません。通常の表示中の人型locatorは、既存のEpic Fightの握り位置を維持します。`RenderFrameContext` が利き腕を使ってモデル定義フォームのlocatorを論理上の手へ対応付け、アイテムごとの一時装着スコープを開くため、両手持ちレンダラーがもう一方の手を移動させません。このフォーム装着は三人称だけで使用し、モデル定義の表示状態の判定には一人称のパーツ非表示を含めません。また、独自アイテム置換や自然なはしご方針を上書きしません。
 
 アイテム変更は、公式YSMの手持ち品providerと同じ、破損スタック・完全スタック比較を使って手ごとに検出します。モデル独自の置換品では、その遷移も手持ち品モデル設定を共有します。Epic Fightが通常アイテムを描画する場合は、独立した持ち替えアニメーション設定によって、現在のYSM main状態、対応するholdクリップ、有効なpre・hold・postのControllerレイヤーを一時的に一つの全身姿勢として構成するかを決定します。アイテム自体の描画はEpic Fightに残し、装着変換だけをモデル定義のTool locatorへ追従させます。通常のメインハンド弓では、この一時的なhold経路をEpic Fightの反対腕側Tool jointへ反転し、独自YSM弓では右手規則を維持します。
 
@@ -90,9 +122,15 @@ Epic Fightのアクション、ルーレット再生、独自の全身アクシ�
 
 `BedrockAnimationControllerParser` と `AnimationControllerProgram` は、対応するControllerステートマシンとして、初期状態の選択、定義順の遷移、アニメーションweight、`on_entry`、`on_exit`、固定時間またはカーブによるブレンド、最短経路の回転ブレンドを実装します。状態の `variables` は、その状態のクリップより先にフレームローカルな変数オーバーレイへ評価します。`remap_curve` は入力順に並べ、定義範囲外では端点の値に固定し、隣接点の間では線形補間します。
 
+`ControllerOrder` はトップレベルのphaseを、pre-parallel、pre・main・post-main、pre・hold・post-hold、pre・swing・post-swing、pre・use・post-use、passenger、その他のController、parallelの順へ並べます。同じphase内は元のController名の辞書順です。動的suffixは、対応するトップレベルの `player.pre_*_suffix`、`player.post_*_suffix`、`player.pre_parallel_suffix`、`player.parallel_suffix` 群だけで認識し、固定parallel slot `0`～`7` も維持します。動的Controllerは固定の手持ち品slotではなく独立したレイヤーです。空のController状態は循環を検出する上限付きの1ステップ内で連続遷移でき、空の状態ごとに1フレームの遅延を追加しません。
+
 アニメーションタイムラインとController状態は、モデル内音源データをディスクへ保存せずにサウンドを出力できます。`ClientSoundOutput` はMapping APIの契約を使用し、公式YSMのメモリ内サウンドキャッシュからモデル内音源を解決します。名前空間付きのMinecraftサウンドイベントも使用できます。サウンドはクリップまたはController状態のスコープ単位で管理し、スコープ終了時に停止し、モデルまたはセッションの無効化時に消去します。一時停止と再開はMinecraftのサウンドエンジンが担当します。プレイヤーのルーレット音声は公式YSMが担当するため互換レンダラーから二重に開始しません。EFTLMのpatched rendererが本来音声を担当する公式メイド描画を迂回するため、限定されたメイド経路では互換ランタイムがルーレット音声を出力します。
 
 パーティクルは、Molangの `ysm.particle`・`ysm.abs_particle` 補助関数、またはBedrockアニメーション・Controllerの `particle_effects` から出力できます。宣言型エントリでは `effect`、`locator`、`pre_effect_script`、`bind_to_actor` を保持します。Controller状態に属するパーティクルは状態終了時に削除し、actorへbindしたパーティクルはエンティティへ追従します。一般的な人型locatorには一定範囲内に制限した身体相対の近似位置を使用します。任意モデルのボーンlocator行列はパーティクルエンジンへ公開されていないため、未知のlocatorはエンティティ中央へフォールバックします。
+
+## インベントリプレビューの分離
+
+`InventoryRenderScopeMixin` は明示的なインベントリ内のエンティティプレビューを識別し、`InventoryRenderScope` は一致する主要な三人称描画だけにそのcontextを使用させます。入れ子のワールド描画や一人称描画はこれを継承しません。`RenderContextState` は、ワールドとプレビューの時計、スクリプト変数、Controller状態、bone query、キャッシュ姿勢、姿勢遷移を分離します。プレビューは `ysm.rendering_in_inventory` を公開し、ローカルなスクリプト状態を維持しますが、ワールドのサウンド、パーティクル、roaming変数への書き込み、スクリプト同期を出力しません。エンティティやモデルの無効化時には両contextを破棄します。
 
 ## Molang評価のスケジューリング
 
@@ -112,7 +150,7 @@ Epic Fightのアクション、ルーレット再生、独自の全身アクシ�
 
 オンラインプレイヤーまたは同期済みの対応メイドが選択したモデルをクライアントが持っていない場合、クライアントは専用サーバーへそのモデルを要求します。`ModelRequestMessage` は対象エンティティのIDとUUIDを指定します。`ServerModelTransfers` は要求受付時と配信直前の両方でその組を検証し、受信者が対象を追跡していることと、現在の公式YSM選択が要求モデルと一致することを確認してから、サーバーtick外でモデルを解析し `GeometryTransferCodec` でエンコードします。受信者ごとの要求数、待機処理数、データ量を制限して、このエンティティ認可付き転送経路を保護します。
 
-通信には、サイズ制限付きで圧縮されたジオメトリ、スケール設定、互換レンダラーが必要とするアニメーションクリップ、Animation Controllerデータ、宣言された全ベース・normal・specularテクスチャを含めます。クリップ時間、blend weight、タイムライン、Controller変数、remap curve、サウンド参照、パーティクル宣言、テクスチャ数、個別テクスチャサイズ、テクスチャ合計サイズを明示的な上限付きでエンコードします。元の `.ysm` パッケージとモデル内音源データは含めません。データを制限付きのチャンクへ分割し、クライアント側でも同時組み立て数、合計サイズ、タイムアウト、ハッシュ、展開後サイズを検証してから `ModelBundle` として受け入れます。
+通信には、サイズ制限付きで圧縮されたジオメトリ、スケール・描画設定、互換レンダラーが必要とするアニメーションクリップ、Animation Controllerデータ、Molang関数ソース、宣言された全ベース・normal・specularテクスチャを含めます。クリップ時間、blend weight、タイムライン、Controller変数、remap curve、関数数とソースサイズ、サウンド参照、パーティクル宣言、テクスチャ数、個別テクスチャサイズ、テクスチャ合計サイズを明示的な上限付きでエンコードします。元の `.ysm` パッケージとモデル内音源データは含めません。データを制限付きのチャンクへ分割し、クライアント側でも同時組み立て数、合計サイズ、タイムアウト、ハッシュ、展開後サイズを検証してから `ModelBundle` として受け入れます。
 
 `ModelRequestMessage` はremoteディスクキャッシュのSHA-256を任意で送信します。サーバーは完全な `DATA`、`UNCHANGED`、`UNAVAILABLE` のいずれかを返します。`UNCHANGED` は現在のサーバー名前空間にある一致済みデータだけを使用可能にします。キャッシュが欠落、破損、不一致の場合は削除し、ハッシュなしで再要求します。初回公開までは互換Modのネットワークプロトコルとシリアライズ済み転送形式をバージョン `1` に固定します。
 
@@ -134,7 +172,9 @@ Epic Fightのアクション、ルーレット再生、独自の全身アクシ�
 
 `CombatFirstPersonMixin` はEpic Fightの一人称レンダラーでも同じ変換メッシュを選択し、一人称設定のパーツ表示状態を適用します。`FirstPersonArmorGateMixin` は変換済み一人称メッシュの使用中にbiped用防具描画を抑止します。
 
-プレイヤー用patched rendererでは、二足歩行モデル用の装着変換を任意比率のモデルへ適用できないため、変換済みプレイヤーメッシュの防具と頭装備を非表示にします。`ConvertedElytraLayer` は代わりに、使用可能な `ElytraLocator` が一つだけ存在する場合、その最終アニメーション姿勢とスケールへバニラのエリトラを取り付けます。曖昧でないlocatorを持たない変換モデルでは、エリトラを非表示のままにします。マント、刺さった矢、ハチの針、通常の手持ち品はEpic Fightのpatched layerで描画を続けます。変換済みモデルの非アクションフレームと、YSMが完全姿勢を担当するアクションでは、これらのEpic Fight装着行列を最終表示骨格から投影します。Epic Fightが担当するアクションではEpic Fightの装着姿勢を維持します。`ElytraLocator` 対応のエリトラは、代わりに専用の `elytraLocatorPose` 経路を使用します。手持ち品は、有効なモデル独自ルールとモデル使用者の解決済み設定がその手を置き換える場合だけ抑止します。プレイヤーレンダラーがEpic Fightのデフォルトメッシュへフォールバックした場合は、すべての標準レイヤーを利用できます。メイドアダプターはEFTLMの既存レイヤーと変換を維持し、有効なYSM置換がそのアイテムを担当する手だけ手持ち品レイヤーを抑止します。
+プレイヤー用patched rendererでは、二足歩行モデル用の装着変換を任意比率のモデルへ適用できないため、変換済みプレイヤーメッシュの防具と頭装備を非表示にします。`ConvertedElytraLayer` は代わりに、使用可能な `ElytraLocator` が一つだけ存在する場合、その最終アニメーション姿勢とスケールへバニラのエリトラを取り付けます。曖昧でないlocatorを持たない変換モデルでは、エリトラを非表示のままにします。マント、刺さった矢、ハチの針、通常の手持ち品はEpic Fightのpatched layerで描画を続けます。変換済みモデルの非アクションフレームと、YSMが完全姿勢を担当するアクションでは、これらのEpic Fight装着行列を最終表示骨格から投影します。Epic Fightが担当するアクションでは、前述のスコープ付きモデル定義フォームTool経路を除き、Epic Fightの装着姿勢を維持します。`ElytraLocator` 対応のエリトラは、代わりに専用の `elytraLocatorPose` 経路を使用します。手持ち品の抑止は、有効なモデル置換とモデル使用者の設定、または前述のモデル定義locatorの非表示規則に従います。プレイヤーレンダラーがEpic Fightのデフォルトメッシュへフォールバックした場合は、すべての標準レイヤーを利用できます。メイドアダプターはEFTLMの既存レイヤーとスケール補正を維持しつつ、同じスコープ付き手持ち品置換とモデル定義フォームlocator規則を適用します。
+
+モデルの `all_cutout` プロパティは、対応する身体render typeの裏面カリングだけを変更し、shader、alpha、描画順ソート、materialの動作を維持します。outlineや未対応の拡張render typeは元の状態を維持します。`render_layers_first` が有効な場合、`ModelLayerOrder` が最終装着姿勢の公開後かつ身体ジオメトリの描画前に、既存の三人称レイヤーを正確に一度だけ実行します。不変の描画スナップショットとスコープ付きguardにより、レイヤーの入れ子描画が現在の身体姿勢を上書きすることを防ぎます。どちらのプロパティも既定値はfalseで、モデル転送とキャッシュにも保持します。
 
 ## 互換性警告
 
@@ -150,6 +190,8 @@ Epic Fightのアクション、ルーレット再生、独自の全身アクシ�
 
 `useYsmMovementAnimations` も初期状態で有効です。`movementAnimationExclusions` はモデルIDごとに、アニメーション節で列挙した移動状態名を指定します。指定した状態はメイン設定が有効な場合だけYSM移動アニメーションを無効とし、メイン設定が無効な場合に姿勢担当を有効化することはありません。`useNaturalLadderAnimations` は独立して初期状態で有効で、YSMが担当するはしご状態では自然なはしご処理を要求します。実際に両手の構成を使うのは、選択した専用クリップに必要な腕動作があることを描画時に確認できた場合だけです。`ClientMovementAnimationPreferences` は、現在の正規化済みモデルID、意味上の移動状態、解決済みの姿勢担当bit、現在の自然なはしご要求bitを送信します。リモートプレイヤーの速度とクリエイティブ飛行能力だけではモデル使用者の状態を常に再構築できないため、`MovementAnimationPreferenceBroadcaster` がその結果を追跡クライアントへ中継します。`useYsmMovementAnimations`、`useNaturalLadderAnimations`、`movementAnimationExclusions` の値自体はローカルに残し、自然なはしご方針は任意のメイドアダプターには適用しません。
 
+`useYsmParCoolAnimations` と `useYsmSwemAnimations` は独立して初期状態で有効です。既定では空の `parcoolAnimationExclusions`・`swemAnimationExclusions` テーブルへ、正規化済みモデルIDごとに `roll_front` や `jump_lv2` などの短いアクション名を指定します。`parcool:`・`swem:` 接頭辞は付けません。対応する `ModAnimationClips` の群で既知の名前だけを受け入れ、wildcard、アイテム、タグのselectorは使用できません。除外は有効な群を無効にするだけで、この2つの方針は通常の移動設定や乗り物モデル設定から独立しています。移動表示メッセージへは、現在のアニメーション群、正規の完全なクリップ名、解決済み姿勢担当bitも含めます。リモート描画では観測したnativeクリップと選択モデルの完全一致を要求し、古い判定や群だけの判定で別クリップを許可しません。トグル、除外テーブル、nativeの再生時計は、この互換通信では送信しません。これらの任意Mod方針はプレイヤーだけに適用し、メイド所有者の設定同期へは含めません。
+
 プレイヤー描画では、モデル別ルールをすべてモデル使用者のクライアントだけに残します。`ClientHeldItemModelPreferences` は解決済みのメインハンド・オフハンドの置換表示と持ち替えアニメーションの真偽値だけを送信し、`HeldItemPreferenceBroadcaster` が追跡クライアントへ中継します。これにより、他プレイヤーの既定値、モデル別ルール、アイテムID、アイテムタグを受信せずに、全クライアントで同じ外観上の姿勢を再現します。
 
 ### メイド所有者の設定結果同期
@@ -158,17 +200,27 @@ Epic Fightのアクション、ルーレット再生、独自の全身アクシ�
 
 手持ち品方針と移動方針は、別々の不透明epoch、source revision、pending要求、query、update、判定キャッシュ、リモートfingerprintを使用します。手持ち品fingerprintには所有者、メイド、正規化済みモデルID、両手のアイテムIDを含めます。手持ち品・持ち替え設定、それぞれの除外、クライアントのitem tag generationが変化した場合も、そのepochを更新します。移動fingerprintには所有者、メイド、正規化済みモデルID、サーバーが確定した意味上の移動状態を含め、そのepochは移動設定と除外だけで変化します。一方の方針の更新や応答が、もう一方のpending状態を無効化することはありません。
 
-Configured 2.2.3以降は任意です。文字列targetの `@Pseudo` Mixinで、Configuredが扱えない動的テーブルのleafだけを `ConfiguredHeldItemRules` へ置き換え、Configured APIへのリンクを任意統合の境界内へ限定します。自然なはしごのトグルと通常のscalar設定は、一般のClient設定と同じ場所に表示します。手持ち品置換、持ち替えアニメーション、移動状態、投射物、乗り物の各除外エディターは現在選択中のモデルIDを空の編集行として追加し、空の行は設定ファイルへ書きません。Configuredがない場合は対象クラスを読み込まず、TOML設定は引き続き有効で、ゲーム内設定画面だけが利用できなくなります。
+### Configuredの任意設定画面
+
+Configured 2.2.3以降は任意です。文字列targetの `@Pseudo` Mixinで、Configuredが扱えない動的テーブルのleafを `ConfiguredHeldItemRules` へ置き換えた後、`ConfiguredClientLayout` がこのModのClient項目を表示専用の2フォルダへ整理します。
+
+| フォルダ | 設定 | 除外サブフォルダ |
+| --- | --- | --- |
+| アニメーション | 持ち替え、移動、ParCool、SWEM、自然なはしご | 持ち替え、移動、ParCool、SWEM |
+| モデル | 手持ち品、投射物、乗り物 | 手持ち品、投射物、乗り物 |
+
+オーバーレイとクライアントキャッシュ設定は既存の階層に残し、Common設定は整理対象にしません。同じconfig-entry・valueオブジェクトと動的エディターを維持するため、TOMLのパス、既定値、検証、保存、reset、変更状態は変わりません。7種類すべての除外エディターへ現在選択中のモデルIDを空の編集行として追加し、空の行は設定ファイルへ書きません。Configured APIへのリンクは任意統合の境界内へ限定します。Configuredがない場合は対象クラスを読み込まず、TOML設定は引き続き有効で、ゲーム内設定画面だけが利用できなくなります。
 
 ## ソース構成
 
 | 領域 | パッケージ |
 | --- | --- |
 | モデルとテクスチャ入力 | `assets`, `assets.binary`, `geometry` |
-| アニメーション、Molang、Controller、サウンド、パーティクル | `animation` |
+| アニメーション、Molang、モデル内スクリプト、Controller、サウンド、パーティクル | `animation` |
 | リグ対応、変換、キャッシュ | `mesh`, `cache` |
 | Epic Fight描画とレイヤー | `render`, `render.layer`, `event`, `mixin` |
-| 選択状態、ジオメトリ、モデル変数、移動姿勢担当、手持ち品表示、サブエンティティ表示の同期 | `network`, `network.geometry`, `network.message` |
+| 選択状態、ジオメトリ、モデル変数、スクリプトイベント、移動・Modアニメーション姿勢担当、盾防御通知、手持ち品表示、サブエンティティ表示の同期 | `network`, `network.geometry`, `network.message` |
 | Touhou Little Maid・EFTLM任意アダプター | `integration.tlm`、一部の `mixin`・`network` クラス |
+| ParCool・Epic ParCoolの任意姿勢参照とSWEM騎乗者アニメーション参照 | `integration.parcool`, `integration.swem` |
 | Oculus/Iris任意LabPBRブリッジ | `integration.oculus` |
 | クライアント設定、Configured任意統合、警告処理 | `config`, `integration.configured`, `compat` |
