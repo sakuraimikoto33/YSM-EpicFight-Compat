@@ -33,7 +33,8 @@ class YSMCompatibilityWarningStateTest {
     @Test
     void acknowledgementSurvivesAClientConfigReload(@TempDir Path directory) {
         Path path = directory.resolve("ysm-epicfight-compat-client.toml");
-        try (CommentedFileConfig config = CommentedFileConfig.of(path)) {
+        // Match Forge's synchronous writes so defaults cannot race with the acknowledgement save.
+        try (CommentedFileConfig config = CommentedFileConfig.builder(path).sync().build()) {
             config.load();
             ClientPreferences.CLIENT_SPEC.setConfig(config);
             assertFalse(ClientPreferences.YSM_WARNING_ACKNOWLEDGED.get());
@@ -42,7 +43,7 @@ class YSMCompatibilityWarningStateTest {
         } finally {
             ClientPreferences.CLIENT_SPEC.setConfig(null);
         }
-        try (CommentedFileConfig config = CommentedFileConfig.of(path)) {
+        try (CommentedFileConfig config = CommentedFileConfig.builder(path).sync().build()) {
             config.load();
             assertEquals(Boolean.TRUE,
                     config.<Boolean>get(List.of("client", "epicFightCompatibilityWarningShown")));

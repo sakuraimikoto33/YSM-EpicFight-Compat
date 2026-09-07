@@ -30,7 +30,8 @@ class YSMCompatibilityWarningFilterTest {
     void firstLaunchKeepsAndNextLaunchRemovesOnlyTheTarget(@TempDir Path directory)
             throws ReflectiveOperationException {
         Path path = directory.resolve("ysm-epicfight-compat-client.toml");
-        try (CommentedFileConfig first = CommentedFileConfig.of(path)) {
+        // Match Forge's synchronous writes before simulating the next client launch.
+        try (CommentedFileConfig first = CommentedFileConfig.builder(path).sync().build()) {
             first.load();
             ClientPreferences.CLIENT_SPEC.setConfig(first);
             List<ModLoadingWarning> warnings = samples();
@@ -40,7 +41,7 @@ class YSMCompatibilityWarningFilterTest {
         } finally {
             ClientPreferences.CLIENT_SPEC.setConfig(null);
         }
-        try (CommentedFileConfig next = CommentedFileConfig.of(path)) {
+        try (CommentedFileConfig next = CommentedFileConfig.builder(path).sync().build()) {
             next.load();
             ClientPreferences.CLIENT_SPEC.setConfig(next);
             List<ModLoadingWarning> warnings = samples();
