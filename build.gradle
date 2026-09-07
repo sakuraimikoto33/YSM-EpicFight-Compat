@@ -68,6 +68,7 @@ dependencies {
 
     testImplementation platform('org.junit:junit-bom:5.10.2')
     testImplementation 'org.junit.jupiter:junit-jupiter'
+    testImplementation fg.deobf('curse.maven:configured-457570:5180900')
     testCompileOnly "net.okitsu.ysmmapping:api:${ysmMappingApiDependencyVersion}"
     testRuntimeOnly "net.okitsu.ysmmapping:api:${ysmMappingApiDependencyVersion}"
 }
@@ -166,6 +167,7 @@ tasks.register('verifyDistributions') {
              mixinRefmapName,
              'net/okitsu/ysmepicfightcompat/CompatMod.class',
              'net/okitsu/ysmepicfightcompat/integration/configured/ConfiguredHeldItemRules.class',
+             'net/okitsu/ysmepicfightcompat/integration/configured/ConfiguredClientLayout.class',
              'net/okitsu/ysmepicfightcompat/mixin/ConfiguredForgeConfigMixin.class',
              'net/okitsu/ysmepicfightcompat/mixin/ConfiguredForgeFolderEntryMixin.class',
              'net/okitsu/ysmepicfightcompat/integration/tlm/TouhouMaidSelectionAccess.class',
@@ -244,8 +246,10 @@ tasks.register('verifyDistributions') {
                 def classText = new String(zip.getInputStream(classEntry).bytes,
                         java.nio.charset.StandardCharsets.ISO_8859_1)
                 if (classText.contains('com/mrcrayfish/configured/') &&
-                        !classEntry.name.startsWith(
-                                'net/okitsu/ysmepicfightcompat/integration/configured/ConfiguredHeldItemRules')) {
+                        !['net/okitsu/ysmepicfightcompat/integration/configured/ConfiguredHeldItemRules',
+                          'net/okitsu/ysmepicfightcompat/integration/configured/ConfiguredClientLayout'].any {
+                            classEntry.name == it + '.class' || classEntry.name.startsWith(it + '$')
+                        }) {
                     throw new GradleException(
                             "Configured API linkage escaped the optional integration boundary: ${classEntry.name}")
                 }

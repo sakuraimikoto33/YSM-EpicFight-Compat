@@ -2,6 +2,7 @@ package net.okitsu.ysmepicfightcompat.mixin;
 
 import net.minecraftforge.common.ForgeConfigSpec;
 import net.okitsu.ysmepicfightcompat.config.ClientPreferences;
+import net.okitsu.ysmepicfightcompat.integration.configured.ConfiguredClientLayout;
 import net.okitsu.ysmepicfightcompat.integration.configured.ConfiguredHeldItemRules;
 import org.spongepowered.asm.mixin.Final;
 import org.spongepowered.asm.mixin.Mixin;
@@ -17,7 +18,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
-/** Embeds the dynamic rule tables in Configured's normal Client folder. */
+/** Organizes Configured's Client view without changing the underlying Forge config paths. */
 @Pseudo
 @Mixin(targets = "com.mrcrayfish.configured.impl.forge.ForgeFolderEntry",
         remap = false)
@@ -48,19 +49,15 @@ public abstract class ConfiguredForgeFolderEntryMixin {
         }
         List<?> original = info.getReturnValue();
         List<Object> adjusted = new ArrayList<>(original.size());
-        boolean replaced = false;
         for (Object entry : original) {
             if (ConfiguredHeldItemRules.isPlaceholder(entry)) {
                 String key = ConfiguredHeldItemRules.placeholderKey(entry);
                 adjusted.add(ysmEpicFightCompat$dynamicRules.computeIfAbsent(
                         key, ignored -> ConfiguredHeldItemRules.createEntry(entry)));
-                replaced = true;
             } else {
                 adjusted.add(entry);
             }
         }
-        if (replaced) {
-            info.setReturnValue(List.copyOf(adjusted));
-        }
+        info.setReturnValue(ConfiguredClientLayout.groupClientEntries(adjusted));
     }
 }
