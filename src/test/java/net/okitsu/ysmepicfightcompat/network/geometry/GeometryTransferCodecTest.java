@@ -6,7 +6,9 @@ import net.okitsu.ysmepicfightcompat.animation.DeclarativeParticleEffect;
 import net.okitsu.ysmepicfightcompat.assets.ModelBundle;
 import net.okitsu.ysmepicfightcompat.assets.ModelFunctionAssets;
 import net.okitsu.ysmepicfightcompat.cache.ModelDiskCache;
+import net.okitsu.ysmepicfightcompat.geometry.BedrockGeometryParser;
 import net.okitsu.ysmepicfightcompat.geometry.GeometryDocument;
+import net.okitsu.ysmepicfightcompat.mesh.SkinMeshCompiler;
 import net.okitsu.ysmepicfightcompat.network.CompatNetwork;
 import org.joml.Vector3f;
 import org.junit.jupiter.api.Test;
@@ -36,6 +38,50 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class GeometryTransferCodecTest {
+    @ParameterizedTest
+    @ValueSource(booleans = {false, true})
+    void retainsFlatFaceGeometryAndUvsAcrossTransferAndEveryCacheRegion(
+            boolean allCutout, @TempDir Path root) throws IOException {
+        GeometryDocument geometry = BedrockGeometryParser.parse("""
+                {"minecraft:geometry":[{
+                  "description":{"texture_width":32,"texture_height":32},
+                  "bones":[{"name":"head","cubes":[{
+                    "origin":[0,0,0],"size":[8,8,0],
+                    "uv":{"north":{"uv":[0,0],"uv_size":[8,8]},
+                          "south":{"uv":[16,0],"uv_size":[8,8]}}
+                  }]}]
+                }]}
+                """, allCutout);
+        ModelBundle model = ModelBundle.remote("flat", geometry, Map.of(), 1.0F, 1.0F, "");
+        model.allCutout(allCutout);
+        var expected = geometry.bones().get("head").faces();
+        assertEquals(allCutout ? 2 : 1, expected.size());
+        byte[] payload = GeometryTransferCodec.encode(model);
+        byte[] digest = ModelDiskCache.sha256(payload);
+        for (String region : List.of("client", "remote", "server")) {
+            Path directory = root.resolve(region);
+            assertTrue(ModelDiskCache.write(directory, "flat",
+                    new ModelDiskCache.Entry(digest, digest, payload), 1024 * 1024));
+            ModelBundle decoded = GeometryTransferCodec.decode("flat",
+                    ModelDiskCache.read(directory, "flat", 1024 * 1024).orElseThrow().payload());
+            ModelBundle forwarded = GeometryTransferCodec.decode("flat", GeometryTransferCodec.encode(decoded));
+            for (ModelBundle restored : List.of(decoded, forwarded)) {
+                assertEquals(allCutout, restored.allCutout());
+                var actual = restored.geometry().bones().get("head").faces();
+                assertEquals(expected.size(), actual.size());
+                for (int face = 0; face < expected.size(); face++) {
+                    assertEquals(expected.get(face).normal(), actual.get(face).normal());
+                    assertArrayEquals(expected.get(face).positions(), actual.get(face).positions());
+                    for (int corner = 0; corner < 4; corner++) {
+                        assertArrayEquals(expected.get(face).textureCoordinates()[corner],
+                                actual.get(face).textureCoordinates()[corner]);
+                    }
+                }
+                assertEquals(expected.size(), SkinMeshCompiler.compile(restored).faceCount());
+            }
+        }
+    }
+
     @ParameterizedTest
     @CsvSource({"false,false", "false,true", "true,false", "true,true"})
     void preservesIndependentRenderFlagsAcrossTransferAndEveryCacheRegion(

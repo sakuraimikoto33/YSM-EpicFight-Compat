@@ -9,6 +9,7 @@ import java.nio.file.attribute.FileTime;
 import java.util.Arrays;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -83,5 +84,75 @@ class ModelDiskCacheTest {
 
         assertFalse(Files.exists(first));
         assertTrue(Files.exists(second));
+    }
+
+    @Test
+    void delayedCleanupKeepsAReplacementPayloadAndOtherServersEntry() throws Exception {
+        Path root = temporary.resolve("remote");
+        String firstKey = "remote\0first.example\0shared/model";
+        String secondKey = "remote\0second.example\0shared/model";
+        byte[] oldPayload = {1, 2, 3};
+        byte[] replacement = {4, 5, 6};
+        byte[] oldDigest = ModelDiskCache.sha256(oldPayload);
+        byte[] newDigest = ModelDiskCache.sha256(replacement);
+        ModelDiskCache.Entry old = new ModelDiskCache.Entry(oldDigest, oldDigest, oldPayload);
+        assertTrue(ModelDiskCache.write(root, firstKey, old, 4096));
+        assertTrue(ModelDiskCache.write(root, secondKey, old, 4096));
+
+        assertTrue(ModelDiskCache.write(root, firstKey,
+                new ModelDiskCache.Entry(newDigest, newDigest, replacement), 4096));
+        Path updatedFile = root.resolve(ModelDiskCache.hashKey(firstKey) + ".cache");
+        FileTime age = FileTime.fromMillis(2_000L);
+        Files.setLastModifiedTime(updatedFile, age);
+
+        assertFalse(ModelDiskCache.removeIfPayloadDigestMatches(root, firstKey, oldDigest));
+        assertEquals(age, Files.getLastModifiedTime(updatedFile));
+        assertArrayEquals(replacement, ModelDiskCache.read(root, firstKey, 4096).orElseThrow().payload());
+        assertTrue(ModelDiskCache.removeIfPayloadDigestMatches(root, secondKey, oldDigest));
+        assertTrue(ModelDiskCache.read(root, secondKey, 4096).isEmpty());
+        assertArrayEquals(replacement, ModelDiskCache.read(root, firstKey, 4096).orElseThrow().payload());
+    }
+
+    @Test
+    void matchingCleanupRemovesOnlyTheCapturedPayload() {
+        Path root = temporary.resolve("remote");
+        byte[] payload = {1, 2, 3};
+        byte[] digest = ModelDiskCache.sha256(payload);
+        assertTrue(ModelDiskCache.write(root, "model",
+                new ModelDiskCache.Entry(digest, digest, payload), 1024));
+
+        assertTrue(ModelDiskCache.removeIfPayloadDigestMatches(root, "model", digest));
+        assertFalse(ModelDiskCache.removeIfPayloadDigestMatches(root, "model", digest));
+        assertTrue(ModelDiskCache.read(root, "model", 1024).isEmpty());
+    }
+
+    @Test
+    void conditionalCleanupComparesThePayloadDigestNotTheValidationDigest() {
+        Path root = temporary.resolve("remote");
+        byte[] payload = {1, 2, 3};
+        byte[] digest = ModelDiskCache.sha256(payload);
+        byte[] validation = ModelDiskCache.sha256(new byte[]{4});
+        assertTrue(ModelDiskCache.write(root, "model",
+                new ModelDiskCache.Entry(validation, digest, payload), 1024));
+
+        assertFalse(ModelDiskCache.removeIfPayloadDigestMatches(root, "model", validation));
+        assertArrayEquals(payload, ModelDiskCache.read(root, "model", 1024).orElseThrow().payload());
+        assertTrue(ModelDiskCache.removeIfPayloadDigestMatches(root, "model", digest));
+    }
+
+    @Test
+    void conditionalCleanupLeavesUnrecognizedFilesAndDirectoriesAlone() throws Exception {
+        Path root = temporary.resolve("remote");
+        Files.createDirectories(root);
+        byte[] digest = ModelDiskCache.sha256(new byte[]{1});
+        Path malformed = root.resolve(ModelDiskCache.hashKey("malformed") + ".cache");
+        Files.write(malformed, new byte[128]);
+        Path directory = root.resolve(ModelDiskCache.hashKey("directory") + ".cache");
+        Files.createDirectory(directory);
+
+        assertFalse(ModelDiskCache.removeIfPayloadDigestMatches(root, "malformed", digest));
+        assertTrue(Files.exists(malformed));
+        assertFalse(ModelDiskCache.removeIfPayloadDigestMatches(root, "directory", digest));
+        assertTrue(Files.isDirectory(directory));
     }
 }

@@ -68,13 +68,22 @@ public final class CombatPlayerRenderer extends PHumanoidRenderer<
     public AssetAccessor<HumanoidMesh> getMeshProvider(
             AbstractClientPlayerPatch<AbstractClientPlayer> patch) {
         AssetAccessor<HumanoidMesh> converted = CombatMeshResolver.forPlayer(patch.getOriginal());
-        AssetAccessor<HumanoidMesh> selected = converted == null
-                ? super.getMeshProvider(patch) : converted;
+        AssetAccessor<HumanoidMesh> selected = selectMeshProvider(
+                converted, patch.getOriginal().getModelName());
         HumanoidMesh mesh = selected.get();
         if (mesh instanceof CompatHumanoidMesh compat) {
             RenderFrameContext.bindMesh(patch.getOriginal(), false, compat);
         }
         return selected;
+    }
+
+    /** Keeps converted models first while matching Epic Fight's player-skin fallback. */
+    static AssetAccessor<HumanoidMesh> selectMeshProvider(
+            @Nullable AssetAccessor<HumanoidMesh> converted, @Nullable String modelName) {
+        if (converted != null) {
+            return converted;
+        }
+        return "slim".equals(modelName) ? Meshes.ALEX : Meshes.BIPED;
     }
 
     @Override

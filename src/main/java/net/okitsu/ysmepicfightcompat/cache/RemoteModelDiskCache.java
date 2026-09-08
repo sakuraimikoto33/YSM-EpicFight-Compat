@@ -26,6 +26,12 @@ public final class RemoteModelDiskCache {
         ModelDiskCache.remove(CompatCachePaths.remote(), key(serverIdentity, modelId));
     }
 
+    public static boolean removeIfPayloadDigestMatches(String serverIdentity, String modelId,
+                                                       byte[] expectedPayloadDigest) {
+        return ModelDiskCache.removeIfPayloadDigestMatches(CompatCachePaths.remote(),
+                key(serverIdentity, modelId), expectedPayloadDigest);
+    }
+
     public static void maintain() {
         ModelDiskCache.maintain(CompatCachePaths.remote(), maximumBytes());
     }

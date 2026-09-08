@@ -1,9 +1,12 @@
 package net.okitsu.ysmepicfightcompat.mesh;
 
 import net.okitsu.ysmepicfightcompat.assets.ModelBundle;
+import net.okitsu.ysmepicfightcompat.geometry.BedrockGeometryParser;
 import net.okitsu.ysmepicfightcompat.geometry.GeometryDocument;
 import org.joml.Vector3f;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
 
 import java.util.Set;
 import java.util.stream.Collectors;
@@ -14,6 +17,52 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class SkinMeshCompilerTest {
+    @ParameterizedTest
+    @CsvSource({"head,true", "ysmGlowHalo,true", "head,false", "ysmGlowHalo,false"})
+    void keepsCulledFlatFaceWindingsAndUvsWithoutRestoringNonCulledGlowOverdraw(
+            String boneName, boolean allCutout) {
+        GeometryDocument geometry = BedrockGeometryParser.parse("""
+                {"minecraft:geometry":[{
+                  "description":{"texture_width":32,"texture_height":32},
+                  "bones":[{"name":"%s","cubes":[{
+                    "origin":[0,0,0],"size":[8,8,0],
+                    "uv":{"north":{"uv":[0,0],"uv_size":[8,8]},
+                          "south":{"uv":[16,0],"uv_size":[8,8]}}
+                  }]}]
+                }]}
+                """.formatted(boneName), allCutout);
+        ModelBundle model = ModelBundle.remote("flat", geometry, null, 1.0F, 1.0F, "");
+        model.allCutout(allCutout);
+
+        SkinMeshCompiler.Result result = SkinMeshCompiler.compile(model);
+
+        assertNotNull(result);
+        int expectedFaces = allCutout ? 2 : 1;
+        assertEquals(expectedFaces, result.faceCount());
+        assertEquals(expectedFaces * 4 * 3, result.arrays().get("positions").length,
+                "Coincident faces still require distinct normal/UV vertices");
+        var parts = boneName.startsWith("ysmGlow") ? result.glowParts() : result.parts();
+        var vertices = parts.entrySet().stream()
+                .filter(entry -> entry.getKey().partName().equals(SkinMeshCompiler.BONE_PART_PREFIX + boneName))
+                .findFirst().orElseThrow().getValue();
+        assertEquals(expectedFaces * 6, vertices.size());
+        for (int triangle = 0; triangle < vertices.size(); triangle += 3) {
+            Vector3f first = vector(result.arrays().get("positions"), vertices.get(triangle).position);
+            Vector3f second = vector(result.arrays().get("positions"), vertices.get(triangle + 1).position);
+            Vector3f third = vector(result.arrays().get("positions"), vertices.get(triangle + 2).position);
+            Vector3f normal = vector(result.arrays().get("normals"), vertices.get(triangle).normal);
+            assertTrue(second.sub(first).cross(third.sub(first)).dot(normal) > 0.0F,
+                    "Each compiled triangle must retain its authored winding");
+        }
+        for (var vertex : vertices) {
+            float normalZ = result.arrays().get("normals")[vertex.normal * 3 + 2].floatValue();
+            float u = result.arrays().get("uvs")[vertex.uv * 2].floatValue();
+            assertEquals(1.0F, Math.abs(normalZ));
+            assertTrue(normalZ < 0.0F ? u <= 0.25F : u >= 0.5F,
+                    "Front and back must use their own UV rectangles");
+        }
+    }
+
     @Test
     void scalesPositionsWithoutChangingNormalsOrUvs() {
         GeometryDocument geometry = new GeometryDocument();
@@ -142,5 +191,10 @@ class SkinMeshCompilerTest {
                 new float[][]{{0, 0}, {1, 0}, {1, 1}, {0, 1}},
                 new Vector3f(0, 0, 1)));
         return bone;
+    }
+
+    private static Vector3f vector(Number[] values, int index) {
+        return new Vector3f(values[index * 3].floatValue(),
+                values[index * 3 + 1].floatValue(), values[index * 3 + 2].floatValue());
     }
 }

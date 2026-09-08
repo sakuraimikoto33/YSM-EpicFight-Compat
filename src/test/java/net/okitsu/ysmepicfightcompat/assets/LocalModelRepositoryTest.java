@@ -40,6 +40,41 @@ class LocalModelRepositoryTest {
         assertEquals(renderLayersFirst, loaded.renderLayersFirst());
     }
 
+    @ParameterizedTest
+    @ValueSource(strings = {"absent", "false", "true"})
+    void forwardsBackfaceCullingToFlatCubeGeometry(String mode, @TempDir Path root) throws Exception {
+        Path model = writeFunctionModel(root, null);
+        String properties = mode.equals("absent") ? "" :
+                "\"properties\":{\"all_cutout\":" + mode + "},";
+        Files.writeString(model.resolve("ysm.json"), "{" + properties + """
+                "files":{"player":{"model":{"main":"main.json"}}}}
+                """);
+        Files.writeString(model.resolve("main.json"), """
+                {"minecraft:geometry":[{
+                  "description":{"texture_width":64,"texture_height":64},
+                  "bones":[{"name":"ysmGlow_plane","cubes":[{
+                    "origin":[0,0,0],"size":[8,8,0],"uv":{
+                      "north":{"uv":[0,0],"uv_size":[8,8]},
+                      "south":{"uv":[16,0],"uv_size":[8,8]}
+                    }
+                  }]}]
+                }]}
+                """);
+
+        ModelBundle loaded = LocalModelRepository.load(root, "function-model");
+        assertNotNull(loaded);
+        boolean culled = mode.equals("true");
+        assertEquals(culled, loaded.allCutout());
+        var faces = loaded.geometry().bones().get("ysmGlow_plane").faces();
+        assertEquals(culled ? 2 : 1, faces.size());
+        assertEquals(-1.0F, faces.get(0).normal().z());
+        assertEquals(8.0F / 64.0F, faces.get(0).textureCoordinates()[0][0]);
+        if (culled) {
+            assertEquals(1.0F, faces.get(1).normal().z());
+            assertEquals(24.0F / 64.0F, faces.get(1).textureCoordinates()[0][0]);
+        }
+    }
+
     @Test
     void absentModelRenderFlagsRemainDisabled(@TempDir Path root) throws Exception {
         Path model = writeFunctionModel(root, null);
@@ -173,8 +208,9 @@ class LocalModelRepositoryTest {
     @ParameterizedTest
     @ValueSource(strings = {"ysm-ef-model-bundle:pbr-materials:molang-sources-v1",
             "ysm-ef-model-bundle:pbr-materials:molang-sources:multiline-timelines-v1",
-            "ysm-ef-model-bundle:pbr-materials:molang-sources:multiline-timelines-v1:first-clip-wins"})
-    void invalidatesCachesCreatedBeforeMultilineAndRenderFlagSupport(
+            "ysm-ef-model-bundle:pbr-materials:molang-sources:multiline-timelines-v1:first-clip-wins",
+            "ysm-ef-model-bundle:pbr-materials:molang-sources:multiline-timelines-v1:first-clip-wins:render-flags-v1"})
+    void invalidatesCachesCreatedBeforeCurrentGeometryAndAnimationSemantics(
             String previousSchema, @TempDir Path root)
             throws Exception {
         Path model = writeFunctionModel(root, null);

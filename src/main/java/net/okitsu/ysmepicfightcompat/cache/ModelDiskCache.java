@@ -167,6 +167,43 @@ public final class ModelDiskCache {
         }
     }
 
+    /** Delayed cleanup must not remove a replacement written for the same cache key. */
+    public static boolean removeIfPayloadDigestMatches(Path root, String key,
+                                                       byte[] expectedPayloadDigest) {
+        byte[] expected = copyDigest(expectedPayloadDigest, "payload");
+        Path normalized = normalize(root);
+        synchronized (lock(normalized)) {
+            if (!safeDirectory(normalized)) {
+                return false;
+            }
+            Path target = file(normalized, key);
+            if (!regularFile(target)) {
+                return false;
+            }
+            boolean matches;
+            try {
+                long size = Files.size(target);
+                if (size < HEADER_BYTES || size > MAX_FILE_BYTES) {
+                    return false;
+                }
+                // Only inspect the bounded envelope; do not load the payload or refresh its LRU age.
+                try (DataInputStream input = new DataInputStream(Files.newInputStream(target))) {
+                    if (input.readInt() != MAGIC || input.readInt() != VERSION) {
+                        return false;
+                    }
+                    digest(input);
+                    byte[] actual = digest(input);
+                    int payloadLength = input.readInt();
+                    matches = payloadLength > 0 && size == HEADER_BYTES + (long) payloadLength
+                            && MessageDigest.isEqual(expected, actual);
+                }
+            } catch (IOException | RuntimeException ignored) {
+                return false;
+            }
+            return matches && deleteRegular(target);
+        }
+    }
+
     public static void maintain(Path root, long maximumBytes) {
         Path normalized = normalize(root);
         synchronized (lock(normalized)) {

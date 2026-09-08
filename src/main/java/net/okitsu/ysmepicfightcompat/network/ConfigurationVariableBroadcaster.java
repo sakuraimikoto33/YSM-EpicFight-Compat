@@ -9,10 +9,7 @@ import java.util.concurrent.ConcurrentHashMap;
 
 /** Server-owned, session-only ordinary-variable snapshots scoped to the selected model. */
 public final class ConfigurationVariableBroadcaster {
-    private record Snapshot(String modelId, Map<String, Double> values) {
-    }
-
-    private static final Map<UUID, Snapshot> STATES = new ConcurrentHashMap<>();
+    private static final Map<UUID, ModelConfigurationSnapshot> STATES = new ConcurrentHashMap<>();
 
     private ConfigurationVariableBroadcaster() {
     }
@@ -23,22 +20,21 @@ public final class ConfigurationVariableBroadcaster {
         }
         PlayerSelectionNbt.Selection selection = PlayerSelectionNbt.read(player);
         if (selection == null) {
+            SelectionBroadcaster.synchronize(player, null);
             STATES.remove(player.getUUID());
             return;
         }
-        Snapshot next;
+        ModelConfigurationSnapshot next;
         try {
-            next = STATES.compute(player.getUUID(), (ignored, current) -> {
-                Map<String, Double> previous = current != null
-                        && current.modelId().equals(selection.modelId())
-                        ? current.values() : Map.of();
-                return new Snapshot(selection.modelId(),
-                        ConfigurationVariableValues.merge(previous, changes));
-            });
+            next = STATES.compute(player.getUUID(), (ignored, current) ->
+                    ModelConfigurationSnapshot.reconcile(current, selection.modelId()).merge(changes));
         } catch (IllegalArgumentException ignored) {
             return;
         }
-        CompatNetwork.toTrackersAndSelf(player, message(player, next));
+        // Merge before publishing the selection so its first snapshot already includes the edit.
+        if (!SelectionBroadcaster.synchronize(player, selection)) {
+            CompatNetwork.toTrackersAndSelf(player, message(player, next));
+        }
     }
 
     public static void send(ServerPlayer selectedPlayer, ServerPlayer recipient) {
@@ -54,6 +50,13 @@ public final class ConfigurationVariableBroadcaster {
                 player.getUUID(), modelId == null ? "" : modelId, Map.of()));
     }
 
+    /** Send after the selection notification, preserving values already received for this model. */
+    static void synchronize(ServerPlayer player, String modelId) {
+        ModelConfigurationSnapshot next = STATES.compute(player.getUUID(), (ignored, current) ->
+                ModelConfigurationSnapshot.reconcile(current, modelId));
+        CompatNetwork.toTrackersAndSelf(player, message(player, next));
+    }
+
     public static void remove(ServerPlayer player) {
         if (player != null) {
             STATES.remove(player.getUUID());
@@ -64,16 +67,14 @@ public final class ConfigurationVariableBroadcaster {
         STATES.clear();
     }
 
-    private static Snapshot current(ServerPlayer player) {
+    private static ModelConfigurationSnapshot current(ServerPlayer player) {
         PlayerSelectionNbt.Selection selection = PlayerSelectionNbt.read(player);
         String modelId = selection == null ? "" : selection.modelId();
-        Snapshot current = STATES.get(player.getUUID());
-        return current != null && current.modelId().equals(modelId)
-                ? current : new Snapshot(modelId, Map.of());
+        return ModelConfigurationSnapshot.reconcile(STATES.get(player.getUUID()), modelId);
     }
 
     private static ConfigurationVariableSnapshotMessage message(ServerPlayer player,
-                                                                 Snapshot snapshot) {
+                                                                 ModelConfigurationSnapshot snapshot) {
         return new ConfigurationVariableSnapshotMessage(player.getUUID(),
                 snapshot.modelId(), snapshot.values());
     }

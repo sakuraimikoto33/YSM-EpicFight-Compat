@@ -36,6 +36,11 @@ public final class BedrockGeometryParser {
     }
 
     public static GeometryDocument parse(String json) {
+        return parse(json, false);
+    }
+
+    /** Culled models need both authored sides of an otherwise zero-thickness cube. */
+    public static GeometryDocument parse(String json, boolean allCutout) {
         JsonObject root = JsonParser.parseString(json).getAsJsonObject();
         JsonArray geometries = root.getAsJsonArray("minecraft:geometry");
         if (geometries == null || geometries.isEmpty() || !geometries.get(0).isJsonObject()) {
@@ -55,14 +60,15 @@ public final class BedrockGeometryParser {
         }
         for (JsonElement element : boneArray) {
             if (element.isJsonObject()) {
-                result.add(readBone(result, element.getAsJsonObject()));
+                result.add(readBone(result, element.getAsJsonObject(), allCutout));
             }
         }
         result.linkHierarchy();
         return result;
     }
 
-    private static GeometryDocument.Bone readBone(GeometryDocument document, JsonObject source) {
+    private static GeometryDocument.Bone readBone(
+            GeometryDocument document, JsonObject source, boolean allCutout) {
         String name = source.get("name").getAsString();
         GeometryDocument.Bone bone = new GeometryDocument.Bone(name);
         if (source.has("parent")) {
@@ -80,7 +86,7 @@ public final class BedrockGeometryParser {
             for (JsonElement element : cubes) {
                 if (element.isJsonObject()) {
                     bone.faces().addAll(readCube(document, element.getAsJsonObject(),
-                            inheritedMirror, inheritedInflate));
+                            inheritedMirror, inheritedInflate, allCutout));
                 }
             }
         }
@@ -89,7 +95,7 @@ public final class BedrockGeometryParser {
 
     private static List<GeometryDocument.Face> readCube(
             GeometryDocument document, JsonObject source,
-            boolean boneMirror, float boneInflate) {
+            boolean boneMirror, float boneInflate, boolean allCutout) {
         float[] origin = vector(source, "origin");
         float[] size = vector(source, "size");
         boolean cubeMirror = flag(source, "mirror");
@@ -131,10 +137,11 @@ public final class BedrockGeometryParser {
                 continue;
             }
             int collapsedAxis = collapsedNormalAxis(side, extentX, extentY, extentZ);
-            if (collapsedAxis >= 0 && collapsedPairEmitted[collapsedAxis]) {
+            if (!allCutout && collapsedAxis >= 0 && collapsedPairEmitted[collapsedAxis]) {
                 // Both UV entries of a zero-thickness cube can be populated even though
-                // they describe the same plane. Rendering both produces the dense line
-                // artifacts seen on official YSM glow circles through depth fighting.
+                // they describe the same plane. Preserve the existing non-culled glow
+                // depth-fighting guard, but keep both authored windings when all_cutout
+                // makes the opposite face necessary for viewing the plane from behind.
                 continue;
             }
             if (collapsedAxis >= 0) {

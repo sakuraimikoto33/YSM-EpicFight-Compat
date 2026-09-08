@@ -3,12 +3,47 @@ package net.okitsu.ysmepicfightcompat.render;
 import net.minecraft.core.Direction;
 import net.okitsu.ysmepicfightcompat.animation.MovementAnimationType;
 import org.junit.jupiter.api.Test;
+import yesman.epicfight.api.client.model.Meshes;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 final class CombatPlayerRendererTest {
+    @Test
+    void missingConvertedMeshPreservesTheSlimSkinFallback() {
+        assertSame(Meshes.ALEX, CombatPlayerRenderer.selectMeshProvider(null, "slim"));
+    }
+
+    @Test
+    void otherSkinNamesKeepTheOrdinaryBipedFallback() {
+        for (String modelName : new String[]{"default", "unknown", "", null}) {
+            assertSame(Meshes.BIPED,
+                    CombatPlayerRenderer.selectMeshProvider(null, modelName),
+                    "Unexpected fallback for skin model " + modelName);
+        }
+    }
+
+    @Test
+    void convertedMeshKeepsPriorityRegardlessOfTheSkinModel() {
+        // Compare accessor identity only; resolving meshes would require render resources.
+        for (String modelName : new String[]{"slim", "default", "unknown", "", null}) {
+            assertSame(Meshes.BIPED_OUTLAYER,
+                    CombatPlayerRenderer.selectMeshProvider(Meshes.BIPED_OUTLAYER, modelName));
+        }
+    }
+
+    @Test
+    void eachSelectionFollowsCurrentMeshAvailabilityAndSkinModel() {
+        assertSame(Meshes.BIPED, CombatPlayerRenderer.selectMeshProvider(null, "default"));
+        assertSame(Meshes.ALEX, CombatPlayerRenderer.selectMeshProvider(null, "slim"));
+        assertSame(Meshes.BIPED_OUTLAYER,
+                CombatPlayerRenderer.selectMeshProvider(Meshes.BIPED_OUTLAYER, "slim"));
+        assertSame(Meshes.ALEX, CombatPlayerRenderer.selectMeshProvider(null, "slim"));
+        assertSame(Meshes.BIPED, CombatPlayerRenderer.selectMeshProvider(null, "default"));
+    }
+
     @Test
     void officialCreativeFlightYawUsesWrappedBodyInterpolation() {
         assertEquals(180.0F,

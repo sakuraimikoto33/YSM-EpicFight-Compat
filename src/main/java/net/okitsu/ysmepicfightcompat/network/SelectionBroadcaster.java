@@ -85,15 +85,22 @@ public final class SelectionBroadcaster {
             return;
         }
         for (ServerPlayer player : server.getPlayerList().getPlayers()) {
-            Snapshot current = snapshot(player);
-            Snapshot previous = LAST_SENT.put(player.getUUID(), current);
-            if (!current.equals(previous)) {
-                broadcast(player, current);
-            }
-            if (previous != null && !current.modelId().equals(previous.modelId())) {
-                ConfigurationVariableBroadcaster.reset(player, current.modelId());
-            }
+            synchronize(player, PlayerSelectionNbt.read(player));
         }
+    }
+
+    /** Shared by polling and edits; returns whether a model change also sent its variables. */
+    static boolean synchronize(ServerPlayer player, PlayerSelectionNbt.Selection selection) {
+        Snapshot current = snapshot(selection);
+        Snapshot previous = LAST_SENT.put(player.getUUID(), current);
+        if (!current.equals(previous)) {
+            broadcast(player, current);
+        }
+        if (previous == null || !current.modelId().equals(previous.modelId())) {
+            ConfigurationVariableBroadcaster.synchronize(player, current.modelId());
+            return true;
+        }
+        return false;
     }
 
     @SubscribeEvent
@@ -121,7 +128,10 @@ public final class SelectionBroadcaster {
     }
 
     private static Snapshot snapshot(ServerPlayer player) {
-        PlayerSelectionNbt.Selection selection = PlayerSelectionNbt.read(player);
+        return snapshot(PlayerSelectionNbt.read(player));
+    }
+
+    private static Snapshot snapshot(PlayerSelectionNbt.Selection selection) {
         return selection == null
                 ? new Snapshot("", "")
                 : new Snapshot(selection.modelId(), selection.textureName());

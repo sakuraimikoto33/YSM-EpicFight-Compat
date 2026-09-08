@@ -32,7 +32,7 @@ import java.util.stream.Stream;
 /** Reads official YSM model sources while leaving all generated state in YSM's own folders. */
 public final class LocalModelRepository {
     private static final byte[] MODEL_BUNDLE_SCHEMA =
-            "ysm-ef-model-bundle:pbr-materials:molang-sources:multiline-timelines-v1:first-clip-wins:render-flags-v1"
+            "ysm-ef-model-bundle:pbr-materials:molang-sources:multiline-timelines-v1:first-clip-wins:render-flags-v1:culled-flat-faces-v1"
                     .getBytes(StandardCharsets.UTF_8);
     private static final Path DEFAULT_ROOT = Path.of("config", "yes_steve_model");
     private static final List<String> CATALOGS = List.of("builtin", "built", "custom", "auth");
@@ -165,7 +165,7 @@ public final class LocalModelRepository {
             MessageDigest digest = MessageDigest.getInstance("SHA-256");
             // Parsed bundle semantics changed while the unreleased wire/cache version remains 1.
             // Rebuild old payloads that discarded material/script/render flags or
-            // ignored package and inherited-animation multiline settings.
+            // ignored package/inherited-animation multiline settings or culled flat faces.
             digest.update(MODEL_BUNDLE_SCHEMA);
             digest.update(modelId.getBytes(StandardCharsets.UTF_8));
             if (located.archive()) {
@@ -210,7 +210,8 @@ public final class LocalModelRepository {
         if (models != null && models.has("main")) {
             Path geometry = confine(directory, models.get("main").getAsString());
             if (Files.isRegularFile(geometry, LinkOption.NOFOLLOW_LINKS)) {
-                bundle.geometry(BedrockGeometryParser.parse(textBounded(geometry, MAX_GEOMETRY)));
+                bundle.geometry(BedrockGeometryParser.parse(
+                        textBounded(geometry, MAX_GEOMETRY), bundle.allCutout()));
             }
         }
         JsonObject animations = object(player, "animation");

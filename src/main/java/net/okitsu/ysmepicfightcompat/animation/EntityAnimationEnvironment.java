@@ -276,7 +276,7 @@ final class EntityAnimationEnvironment implements MolangScriptRuntime.Host {
             return official.value();
         }
         ConfigurationVariableOverrides.Lookup configuration =
-                OfficialConfigurationVariables.lookup(entity, slot);
+                OfficialConfigurationVariables.lookup(entity, modelId, slot);
         if (configuration.present()) {
             return configuration.value();
         }
@@ -294,7 +294,7 @@ final class EntityAnimationEnvironment implements MolangScriptRuntime.Host {
         String name = ExpressionEngine.slotName(slot);
         RoamingVariableLookup.Lookup official = roamingVariables.lookup(name);
         return official.present()
-                || OfficialConfigurationVariables.lookup(entity, slot).present()
+                || OfficialConfigurationVariables.lookup(entity, modelId, slot).present()
                 || assigned.contains(slot);
     }
 

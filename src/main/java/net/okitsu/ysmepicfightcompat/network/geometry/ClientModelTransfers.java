@@ -2,6 +2,7 @@ package net.okitsu.ysmepicfightcompat.network.geometry;
 
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.multiplayer.ServerData;
+import net.minecraft.network.Connection;
 import net.minecraft.world.entity.LivingEntity;
 import net.okitsu.ysmepicfightcompat.CompatMod;
 import net.okitsu.ysmepicfightcompat.assets.ModelBundle;
@@ -18,43 +19,31 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.util.Arrays;
+import java.util.HashMap;
 import java.util.Locale;
 import java.util.Map;
-import java.util.Optional;
 import java.util.UUID;
-import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
-import java.util.concurrent.atomic.AtomicInteger;
 
 /** Client-side disk validation and bounded reassembly of server model data. */
 public final class ClientModelTransfers {
     private static final long RETRY_AFTER = 5_000_000_000L;
     private static final long ASSEMBLY_TIMEOUT = 30_000_000_000L;
     private static final int MAX_ASSEMBLIES = 2;
-    private static final Map<String, ModelBundle> READY = new ConcurrentHashMap<>();
-    private static final Map<String, Long> LAST_REQUEST = new ConcurrentHashMap<>();
-    private static final Map<UUID, Assembly> ASSEMBLIES = new ConcurrentHashMap<>();
-    private static final Map<String, Cached> CACHED = new ConcurrentHashMap<>();
-    private static final Map<String, Integer> LOOKUPS = new ConcurrentHashMap<>();
-    private static final Map<String, RequestSource> REQUEST_SOURCES =
-            new ConcurrentHashMap<>();
-    private static final AtomicInteger GENERATION = new AtomicInteger();
+    private static final Map<UUID, Assembly> ASSEMBLIES = new HashMap<>();
+    private static final ClientModelTransferSession SESSION = new ClientModelTransferSession(
+            task -> Minecraft.getInstance().execute(task), ClientModelTransfers::currentConnection,
+            ASSEMBLIES::clear, MAX_ASSEMBLIES, RETRY_AFTER);
     private static final ExecutorService DECODER = Executors.newSingleThreadExecutor(task -> {
         Thread worker = new Thread(task, "ysm-ef-model-receiver");
         worker.setDaemon(true);
         return worker;
     });
 
-    private record Cached(String serverIdentity, ModelDiskCache.Entry entry) {
-    }
-
-    private record RequestSource(int entityId, UUID entityUuid) {
-    }
-
     private static final class Assembly {
+        private final ClientModelTransferSession.Ticket ticket;
         private final String modelId;
-        private final String serverIdentity;
         private final byte[] payloadDigest;
         private final int expectedBytes;
         private final byte[][] chunks;
@@ -62,10 +51,11 @@ public final class ClientModelTransfers {
         private int chunksReceived;
         private int bytesReceived;
 
-        private Assembly(String modelId, String serverIdentity, byte[] payloadDigest,
+        private Assembly(ClientModelTransferSession.Ticket ticket, String modelId,
+                         byte[] payloadDigest,
                          int expectedBytes, int chunkCount) {
+            this.ticket = ticket;
             this.modelId = modelId;
-            this.serverIdentity = serverIdentity;
             this.payloadDigest = Arrays.copyOf(payloadDigest, payloadDigest.length);
             this.expectedBytes = expectedBytes;
             chunks = new byte[chunkCount][];
@@ -76,98 +66,100 @@ public final class ClientModelTransfers {
     }
 
     public static ModelBundle findOrRequest(String modelId, LivingEntity source) {
-        if (!validModelId(modelId) || source == null || source.getId() < 0) {
+        if (!Minecraft.getInstance().isSameThread() || !validModelId(modelId)
+                || source == null || source.getId() < 0) {
             return null;
         }
-        REQUEST_SOURCES.put(modelId,
-                new RequestSource(source.getId(), source.getUUID()));
-        ModelBundle ready = READY.remove(modelId);
-        if (ready != null || Minecraft.getInstance().getConnection() == null) {
+        ClientModelTransferSession.Ticket ticket = SESSION.capture(currentServerIdentity());
+        if (ticket == null) {
+            return null;
+        }
+        SESSION.rememberSource(modelId,
+                new ClientModelTransferSession.RequestSource(source.getId(), source.getUUID()));
+        ModelBundle ready = SESSION.takeReady(modelId);
+        if (ready != null) {
             return ready;
         }
         long now = System.nanoTime();
-        Long previous = LAST_REQUEST.putIfAbsent(modelId, now);
-        if (previous == null || now - previous >= RETRY_AFTER) {
-            LAST_REQUEST.put(modelId, now);
-            lookupAndRequest(modelId, GENERATION.get());
+        if (SESSION.requestDue(modelId, now)) {
+            lookupAndRequest(modelId, ticket);
         }
         return null;
     }
 
-    public static void accept(ModelChunkMessage message) {
+    public static void accept(ModelChunkMessage message, Connection sourceConnection) {
+        Minecraft client = Minecraft.getInstance();
+        if (!client.isSameThread()) {
+            client.execute(() -> accept(message, sourceConnection));
+            return;
+        }
+        if (sourceConnection == null || sourceConnection != currentConnection()) {
+            return;
+        }
+        ClientModelTransferSession.Ticket ticket = SESSION.capture(currentServerIdentity());
+        if (ticket == null) {
+            return;
+        }
         if (message.status() == ModelChunkMessage.Status.UNAVAILABLE) {
-            LAST_REQUEST.put(message.modelId(), System.nanoTime());
-            Cached cached = CACHED.remove(message.modelId());
-            if (cached != null) {
-                DECODER.execute(() -> RemoteModelDiskCache.remove(
-                        cached.serverIdentity(), message.modelId()));
-            }
+            removeCached(message.modelId(), SESSION.unavailable(
+                    message.modelId(), System.nanoTime()));
             return;
         }
         if (message.status() == ModelChunkMessage.Status.UNCHANGED) {
-            acceptUnchanged(message);
+            acceptUnchanged(message, ticket);
             return;
         }
-        acceptChunk(message);
+        acceptChunk(message, ticket);
     }
 
     public static void clear() {
-        GENERATION.incrementAndGet();
-        READY.clear();
-        LAST_REQUEST.clear();
-        ASSEMBLIES.clear();
-        CACHED.clear();
-        LOOKUPS.clear();
-        REQUEST_SOURCES.clear();
+        Minecraft client = Minecraft.getInstance();
+        if (!client.isSameThread()) {
+            client.execute(ClientModelTransfers::clear);
+            return;
+        }
+        SESSION.clear();
         DECODER.execute(() -> {
             ClientLocalModelCache.maintain();
             RemoteModelDiskCache.maintain();
         });
     }
 
-    private static void lookupAndRequest(String modelId, int expectedGeneration) {
-        if (LOOKUPS.putIfAbsent(modelId, expectedGeneration) != null) {
+    private static void lookupAndRequest(String modelId,
+                                         ClientModelTransferSession.Ticket ticket) {
+        if (!SESSION.beginLookup(ticket, modelId)) {
             return;
         }
-        String serverIdentity = currentServerIdentity();
         DECODER.execute(() -> {
             try {
-                Optional<ModelDiskCache.Entry> disk =
-                        RemoteModelDiskCache.read(serverIdentity, modelId);
-                if (expectedGeneration != GENERATION.get()) {
-                    return;
-                }
-                if (disk.isPresent()) {
-                    CACHED.put(modelId, new Cached(serverIdentity, disk.get()));
-                } else {
-                    CACHED.remove(modelId);
-                }
-                byte[] known = disk.map(ModelDiskCache.Entry::payloadDigest)
-                        .orElseGet(() -> new byte[0]);
-                Minecraft.getInstance().execute(() -> {
-                    if (expectedGeneration == GENERATION.get()
-                            && Minecraft.getInstance().getConnection() != null) {
-                        sendRequest(modelId, known);
-                    }
-                });
-            } finally {
-                LOOKUPS.remove(modelId, expectedGeneration);
+                ClientModelTransferSession.Cached cached = RemoteModelDiskCache.read(
+                        ticket.serverIdentity(), modelId).map(entry ->
+                        new ClientModelTransferSession.Cached(ticket.serverIdentity(), entry))
+                        .orElse(null);
+                SESSION.completeLookup(ticket, modelId, cached,
+                        known -> sendRequest(ticket, modelId, known));
+            } catch (RuntimeException exception) {
+                SESSION.failLookup(ticket, modelId, () -> CompatMod.LOG.warn(
+                        "YSM-EF Compat: failed to read cached server model '{}'",
+                        modelId, exception));
             }
         });
     }
 
-    private static void acceptUnchanged(ModelChunkMessage message) {
-        Cached cached = CACHED.get(message.modelId());
+    private static void acceptUnchanged(ModelChunkMessage message,
+                                         ClientModelTransferSession.Ticket ticket) {
+        ClientModelTransferSession.Cached cached = SESSION.cached(message.modelId());
         if (cached == null || !MessageDigest.isEqual(
                 message.payloadDigest(), cached.entry().payloadDigest())) {
-            forceFullRequest(message.modelId());
+            forceFullRequest(ticket, message.modelId());
             return;
         }
-        decode(message.modelId(), cached.serverIdentity(), cached.entry().payload(),
-                message.payloadDigest(), false, GENERATION.get());
+        decode(message.modelId(), cached.entry().payload(),
+                message.payloadDigest(), false, ticket, cached);
     }
 
-    private static void acceptChunk(ModelChunkMessage message) {
+    private static void acceptChunk(ModelChunkMessage message,
+                                     ClientModelTransferSession.Ticket ticket) {
         long now = System.nanoTime();
         ASSEMBLIES.entrySet().removeIf(entry ->
                 now - entry.getValue().startedAt >= ASSEMBLY_TIMEOUT);
@@ -176,12 +168,13 @@ public final class ClientModelTransfers {
             if (ASSEMBLIES.size() >= MAX_ASSEMBLIES) {
                 return;
             }
-            Assembly candidate = new Assembly(message.modelId(), currentServerIdentity(),
+            Assembly candidate = new Assembly(ticket, message.modelId(),
                     message.payloadDigest(), message.totalBytes(), message.chunkCount());
             Assembly concurrent = ASSEMBLIES.putIfAbsent(message.transferId(), candidate);
             assembly = concurrent == null ? candidate : concurrent;
         }
-        if (!assembly.modelId.equals(message.modelId())
+        if (!SESSION.isCurrent(assembly.ticket)
+                || !assembly.modelId.equals(message.modelId())
                 || !MessageDigest.isEqual(assembly.payloadDigest, message.payloadDigest())
                 || assembly.expectedBytes != message.totalBytes()
                 || assembly.chunks.length != message.chunkCount()) {
@@ -213,14 +206,15 @@ public final class ClientModelTransfers {
                 System.arraycopy(chunk, 0, payload, offset, chunk.length);
                 offset += chunk.length;
             }
-            decode(assembly.modelId, assembly.serverIdentity, payload,
-                    assembly.payloadDigest, true, GENERATION.get());
+            decode(assembly.modelId, payload, assembly.payloadDigest, true, assembly.ticket,
+                    SESSION.cached(assembly.modelId));
         }
     }
 
-    private static void decode(String modelId, String serverIdentity, byte[] payload,
+    private static void decode(String modelId, byte[] payload,
                                byte[] expectedDigest, boolean persist,
-                               int expectedGeneration) {
+                               ClientModelTransferSession.Ticket ticket,
+                               ClientModelTransferSession.Cached cached) {
         DECODER.execute(() -> {
             try {
                 byte[] actualDigest = ModelDiskCache.sha256(payload);
@@ -228,56 +222,62 @@ public final class ClientModelTransfers {
                     throw new IOException("Server model payload digest mismatch");
                 }
                 ModelBundle model = GeometryTransferCodec.decode(modelId, payload);
-                if (expectedGeneration != GENERATION.get()) {
-                    return;
-                }
                 if (persist) {
-                    RemoteModelDiskCache.write(serverIdentity, modelId,
+                    // A valid old-server disk entry may finish after disconnect; only
+                    // publication into the active session is generation/connection gated.
+                    RemoteModelDiskCache.write(ticket.serverIdentity(), modelId,
                             actualDigest, payload);
                 }
-                CACHED.remove(modelId);
-                if (READY.size() >= MAX_ASSEMBLIES) {
-                    READY.clear();
-                }
-                READY.put(modelId, model);
-                LAST_REQUEST.remove(modelId);
-                CombatMeshCache.remoteArrived(modelId);
-                ClientSubEntityModelPreferences.modelDefinitionsUpdated();
-                CompatMod.LOG.info(
-                        "YSM-EF Compat: received server model '{}'", modelId);
+                SESSION.completeModel(ticket, modelId, model, () -> {
+                    CombatMeshCache.remoteArrived(modelId);
+                    ClientSubEntityModelPreferences.modelDefinitionsUpdated();
+                    CompatMod.LOG.info("YSM-EF Compat: received server model '{}'", modelId);
+                });
             } catch (IOException | RuntimeException exception) {
-                if (expectedGeneration != GENERATION.get()) {
-                    return;
-                }
-                Cached cached = CACHED.remove(modelId);
-                if (cached != null) {
-                    RemoteModelDiskCache.remove(cached.serverIdentity(), modelId);
-                }
-                LAST_REQUEST.put(modelId, System.nanoTime());
-                CompatMod.LOG.warn(
-                        "YSM-EF Compat: rejected server model '{}'", modelId, exception);
-                if (!persist && expectedGeneration == GENERATION.get()) {
-                    Minecraft.getInstance().execute(() -> forceFullRequest(modelId));
-                }
+                SESSION.failModel(ticket, modelId, cached, System.nanoTime(), failed -> {
+                    removeCached(modelId, failed);
+                    CompatMod.LOG.warn(
+                            "YSM-EF Compat: rejected server model '{}'", modelId, exception);
+                    if (!persist) {
+                        forceFullRequest(ticket, modelId);
+                    }
+                });
             }
         });
     }
 
-    private static void forceFullRequest(String modelId) {
-        if (Minecraft.getInstance().getConnection() == null) {
+    private static void forceFullRequest(ClientModelTransferSession.Ticket ticket, String modelId) {
+        if (!SESSION.isCurrent(ticket)) {
             return;
         }
-        LAST_REQUEST.put(modelId, System.nanoTime());
-        sendRequest(modelId, new byte[0]);
+        SESSION.requested(modelId, System.nanoTime());
+        sendRequest(ticket, modelId, new byte[0]);
     }
 
-    private static void sendRequest(String modelId, byte[] knownPayloadDigest) {
-        RequestSource source = REQUEST_SOURCES.get(modelId);
-        if (source == null || Minecraft.getInstance().getConnection() == null) {
+    private static void sendRequest(ClientModelTransferSession.Ticket ticket, String modelId,
+                                    byte[] knownPayloadDigest) {
+        ClientModelTransferSession.RequestSource source = SESSION.source(modelId);
+        if (source == null || !SESSION.isCurrent(ticket)) {
             return;
         }
         CompatNetwork.CHANNEL.sendToServer(new ModelRequestMessage(
                 modelId, source.entityId(), source.entityUuid(), knownPayloadDigest));
+    }
+
+    private static void removeCached(String modelId, ClientModelTransferSession.Cached cached) {
+        if (cached != null) {
+            DECODER.execute(() -> RemoteModelDiskCache.removeIfPayloadDigestMatches(
+                    cached.serverIdentity(), modelId, cached.entry().payloadDigest()));
+        }
+    }
+
+    private static Connection currentConnection() {
+        var listener = Minecraft.getInstance().getConnection();
+        if (listener == null) {
+            return null;
+        }
+        Connection connection = listener.getConnection();
+        return connection.isConnected() ? connection : null;
     }
 
     private static String currentServerIdentity() {

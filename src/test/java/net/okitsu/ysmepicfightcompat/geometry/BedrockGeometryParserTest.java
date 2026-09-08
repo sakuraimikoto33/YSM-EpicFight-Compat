@@ -1,15 +1,137 @@
 package net.okitsu.ysmepicfightcompat.geometry;
 
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
+import org.junit.jupiter.params.provider.ValueSource;
+import org.joml.Vector3f;
 
 import java.util.Arrays;
+import java.util.List;
 
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class BedrockGeometryParserTest {
+    private static final String ALL_FACE_UVS = """
+            {"west":{"uv":[0,0],"uv_size":[8,8]},
+             "east":{"uv":[8,0],"uv_size":[8,8]},
+             "north":{"uv":[16,0],"uv_size":[8,8]},
+             "south":{"uv":[24,0],"uv_size":[8,8]},
+             "up":{"uv":[32,0],"uv_size":[8,8]},
+             "down":{"uv":[40,0],"uv_size":[8,8]}}
+            """;
+
+    @ParameterizedTest
+    @CsvSource({"0,false", "0,true", "1,false", "1,true", "2,false", "2,true"})
+    void culledFlatCubesKeepBothAuthoredSidesAndTheirUvs(int axis, boolean differentUvs) {
+        String[] firstSide = {"west", "up", "north"};
+        String[] secondSide = {"east", "down", "south"};
+        String[] sizes = {"[0,8,8]", "[8,0,8]", "[8,8,0]"};
+        int secondU = differentUvs ? 32 : 8;
+        String uv = """
+                {"%s":{"uv":[8,16],"uv_size":[8,8]},
+                 "%s":{"uv":[%d,16],"uv_size":[8,8]}}
+                """.formatted(firstSide[axis], secondSide[axis], secondU);
+        for (String boneName : List.of("plane", "ysmGlow_plane")) {
+            String source = cube(boneName, sizes[axis], uv, "", "");
+            List<GeometryDocument.Face> faces = faces(source, boneName, true);
+            assertOppositeFaces(faces);
+            assertEquals(16.0F / 64.0F, faces.get(0).textureCoordinates()[0][0]);
+            assertEquals((secondU + 8.0F) / 64.0F, faces.get(1).textureCoordinates()[0][0]);
+            assertEquals(16.0F / 64.0F, faces.get(0).textureCoordinates()[0][1]);
+            assertEquals(16.0F / 64.0F, faces.get(1).textureCoordinates()[0][1]);
+
+            GeometryDocument.Face defaultFace = BedrockGeometryParser.parse(source)
+                    .bones().get(boneName).faces().get(0);
+            List<GeometryDocument.Face> nonCulled = faces(source, boneName, false);
+            assertEquals(1, nonCulled.size());
+            assertArrayEquals(defaultFace.positions(), nonCulled.get(0).positions());
+            assertEquals(defaultFace.normal(), nonCulled.get(0).normal());
+            for (int corner = 0; corner < 4; corner++) {
+                assertArrayEquals(defaultFace.textureCoordinates()[corner],
+                        nonCulled.get(0).textureCoordinates()[corner]);
+            }
+        }
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {
+            "\"south\":{\"uv\":[24,0],\"uv_size\":[0,8]},",
+            "\"south\":{\"uv\":[24,0],\"uv_size\":[8,0]},",
+            "\"south\":{\"uv\":[24,0]},",
+            ""})
+    void cullingDoesNotRestoreDisabledMissingOrZeroAreaFaces(String oppositeUv) {
+        String uv = "{" + oppositeUv + """
+                "north":{"uv":[16,0],"uv_size":[8,8]},
+                "west":{"uv":[0,0],"uv_size":[8,8]},
+                "east":{"uv":[8,0],"uv_size":[8,8]},
+                "up":{"uv":[32,0],"uv_size":[8,8]},
+                "down":{"uv":[40,0],"uv_size":[8,8]}}
+                """;
+        for (boolean allCutout : new boolean[]{false, true}) {
+            List<GeometryDocument.Face> faces = faces(
+                    cube("plane", "[8,8,0]", uv, "", ""), "plane", allCutout);
+            assertEquals(1, faces.size());
+            assertEquals(-1.0F, faces.get(0).normal().z());
+        }
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"[8,0,0]", "[0,8,0]", "[0,0,8]", "[0,0,0]"})
+    void cullingDoesNotCreateFacesForLinesOrPoints(String size) {
+        for (boolean allCutout : new boolean[]{false, true}) {
+            assertTrue(faces(cube("plane", size, ALL_FACE_UVS, "", ""),
+                    "plane", allCutout).isEmpty());
+        }
+    }
+
+    @ParameterizedTest
+    @CsvSource({"false,false", "false,true", "true,false", "true,true"})
+    void culledMirroredAndNegativeSizedPlanesKeepOppositeWindings(
+            boolean boneMirror, boolean cubeMirror) {
+        for (String size : List.of("[0,8,8]", "[8,0,8]", "[8,8,0]",
+                "[0,-8,8]", "[-8,0,8]", "[-8,8,0]")) {
+            List<GeometryDocument.Face> faces = faces(cube("plane", size, ALL_FACE_UVS,
+                    ",\"mirror\":" + boneMirror, ",\"mirror\":" + cubeMirror), "plane", true);
+            assertOppositeFaces(faces);
+        }
+    }
+
+    @Test
+    void culledPlanesRetainNegativeUvExtents() {
+        String uv = """
+                {"north":{"uv":[16,16],"uv_size":[-8,8]},
+                 "south":{"uv":[32,16],"uv_size":[8,-8]}}
+                """;
+        List<GeometryDocument.Face> faces = faces(
+                cube("plane", "[8,8,0]", uv, "", ""), "plane", true);
+        assertOppositeFaces(faces);
+        assertEquals(8.0F / 64.0F, faces.get(0).textureCoordinates()[0][0]);
+        assertEquals(8.0F / 64.0F, faces.get(1).textureCoordinates()[2][1]);
+    }
+
+    @Test
+    void flatnessUsesInflatedExtentsAndCubeInflateOverridesTheBone() {
+        String expanded = cube("plane", "[8,8,0]", ALL_FACE_UVS, "", ",\"inflate\":1");
+        String collapsed = cube("plane", "[8,8,2]", ALL_FACE_UVS, "", ",\"inflate\":-1");
+        String inherited = cube("plane", "[8,8,2]", ALL_FACE_UVS, ",\"inflate\":-1", "");
+        String overridden = cube("plane", "[8,8,2]", ALL_FACE_UVS,
+                ",\"inflate\":-1", ",\"inflate\":0");
+        String thin = cube("plane", "[8,8,0.0001]", ALL_FACE_UVS, "", "");
+        for (boolean allCutout : new boolean[]{false, true}) {
+            assertEquals(6, faces(expanded, "plane", allCutout).size());
+            assertEquals(allCutout ? 2 : 1, faces(collapsed, "plane", allCutout).size());
+            assertEquals(allCutout ? 2 : 1, faces(inherited, "plane", allCutout).size());
+            assertEquals(6, faces(overridden, "plane", allCutout).size());
+            assertEquals(6, faces(thin, "plane", allCutout).size());
+        }
+        assertOppositeFaces(faces(collapsed, "plane", true));
+    }
+
     @Test
     void subpixelProbeCubesKeepAllFacesWithExplicitInteriorPaletteUvs() {
         for (String size : new String[]{"[3,0.7,0.5]", "[0.2,7,0.2]", "[7,0.2,0.2]"}) {
@@ -180,5 +302,42 @@ class BedrockGeometryParserTest {
                 """);
 
         assertEquals(1, geometry.bones().get("flat").faces().size());
+    }
+
+    private static String cube(String name, String size, String uv,
+                               String boneSettings, String cubeSettings) {
+        return """
+                {"minecraft:geometry":[{
+                  "description":{"texture_width":64,"texture_height":64},
+                  "bones":[{"name":"%s"%s,"cubes":[{
+                    "origin":[0,0,0],"size":%s,"uv":%s%s
+                  }]}]
+                }]}
+                """.formatted(name, boneSettings, size, uv, cubeSettings);
+    }
+
+    private static List<GeometryDocument.Face> faces(String source, String name, boolean allCutout) {
+        GeometryDocument geometry = BedrockGeometryParser.parse(source, allCutout);
+        assertNotNull(geometry);
+        return geometry.bones().get(name).faces();
+    }
+
+    private static void assertOppositeFaces(List<GeometryDocument.Face> faces) {
+        assertEquals(2, faces.size());
+        GeometryDocument.Face first = faces.get(0);
+        GeometryDocument.Face second = faces.get(1);
+        for (Vector3f position : first.positions()) {
+            // Opposite extents can represent the same coordinate as -0.0 and +0.0.
+            assertTrue(Arrays.stream(second.positions()).anyMatch(candidate ->
+                    candidate.distanceSquared(position) <= 1.0E-12F));
+        }
+        assertEquals(-1.0F, first.normal().dot(second.normal()), 0.00001F);
+        assertTrue(winding(first).dot(winding(second)) < 0.0F,
+                "Both original triangle windings must remain available to back-face culling");
+    }
+
+    private static Vector3f winding(GeometryDocument.Face face) {
+        return new Vector3f(face.positions()[1]).sub(face.positions()[0])
+                .cross(new Vector3f(face.positions()[2]).sub(face.positions()[0]));
     }
 }

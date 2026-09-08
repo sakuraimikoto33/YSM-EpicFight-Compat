@@ -90,7 +90,8 @@ public record ModelChunkMessage(Status status, UUID transferId, String modelId,
                                Supplier<NetworkEvent.Context> suppliedContext) {
         NetworkEvent.Context context = suppliedContext.get();
         if (context.getDirection().getReceptionSide().isClient()) {
-            context.enqueueWork(() -> ClientModelTransfers.accept(message));
+            context.enqueueWork(() -> ClientModelTransfers.accept(
+                    message, context.getNetworkManager()));
         }
         context.setPacketHandled(true);
     }
