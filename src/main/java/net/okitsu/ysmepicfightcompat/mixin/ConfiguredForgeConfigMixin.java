@@ -3,7 +3,7 @@ package net.okitsu.ysmepicfightcompat.mixin;
 import net.minecraftforge.common.ForgeConfigSpec;
 import net.okitsu.ysmepicfightcompat.animation.ModAnimationType;
 import net.okitsu.ysmepicfightcompat.config.ClientPreferences;
-import net.okitsu.ysmepicfightcompat.integration.configured.ConfiguredClientLayout;
+import net.okitsu.ysmepicfightcompat.integration.configured.ConfiguredOptionalSettings;
 import net.okitsu.ysmepicfightcompat.integration.configured.ConfiguredHeldItemRules;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.Pseudo;
@@ -30,7 +30,7 @@ public abstract class ConfiguredForgeConfigMixin {
     private static void ysmEpicFightCompat$preserveUnavailableSettings(
             ForgeConfigSpec spec, CallbackInfoReturnable<List<?>> info) {
         if (spec == ClientPreferences.CLIENT_SPEC) {
-            info.setReturnValue(ConfiguredClientLayout.visibleForgeValues(info.getReturnValue(),
+            info.setReturnValue(ConfiguredOptionalSettings.visibleForgeValues(info.getReturnValue(),
                     ClientPreferences.isOptionalAnimationAvailable(ModAnimationType.PARCOOL),
                     ClientPreferences.isOptionalAnimationAvailable(ModAnimationType.SWEM)));
         }

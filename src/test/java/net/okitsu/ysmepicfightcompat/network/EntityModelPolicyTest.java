@@ -73,14 +73,12 @@ class EntityModelPolicyTest {
         assertEquals(expected, EntityModelPolicy.decodeConfiguration(encoded));
 
         Config root = Config.inMemory();
-        Config client = root.createSubConfig();
-        root.set(List.of("client"), client);
-        client.set(List.of("projectileModelExclusions"), encoded);
+        root.set(List.of("common", "models", "exclusions", "projectileModelExclusions"), encoded);
         StringWriter output = new StringWriter();
         new TomlWriter().write(root, output);
         String toml = output.toString();
 
-        assertTrue(toml.contains("[client.projectileModelExclusions]"));
+        assertTrue(toml.contains("[common.models.exclusions.projectileModelExclusions]"));
         assertTrue(toml.contains("\"wine_fox/22_elf\" = ["));
     }
 }

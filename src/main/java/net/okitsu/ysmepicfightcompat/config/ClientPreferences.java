@@ -14,7 +14,7 @@ import java.util.Collection;
 import java.util.List;
 import java.util.Map;
 
-/** Client-owned memory limits and one-time notification state. */
+/** Client-owned cache, rendering and animation preferences, and notification state. */
 public final class ClientPreferences {
     public static final String CONFIG_FILE =
             "ysm_epicfight_compat/ysm_epicfight_compat-client.toml";
@@ -57,9 +57,27 @@ public final class ClientPreferences {
 
     static {
         ForgeConfigSpec.Builder config = new ForgeConfigSpec.Builder();
+        boolean parCoolAvailable = isOptionalAnimationAvailable(ModAnimationType.PARCOOL);
+        boolean swemAvailable = isOptionalAnimationAvailable(ModAnimationType.SWEM);
         config.comment("Client preferences.")
                 .translation("config.ysm_epicfight_compat.client")
                 .push("client");
+        SUPPRESS_BATTLE_MODE_OVERLAY = config
+                .comment("Suppress official YSM's extra player overlay while Epic Fight battle mode is active.",
+                        "Set this to false to let official YSM render the overlay again.",
+                        "The value is read for every overlay frame, so a live client-config reload takes effect without restarting.",
+                        "Default: true")
+                .translation("config.ysm_epicfight_compat.suppress_battle_overlay")
+                .define("suppressBattleModeOverlay", true);
+        YSM_WARNING_ACKNOWLEDGED = config
+                .comment("Whether the official YSM/Epic Fight compatibility warning was already shown.",
+                        "Default: false")
+                .translation("config.ysm_epicfight_compat.warning_acknowledged")
+                .define("epicFightCompatibilityWarningShown", false);
+
+        config.comment("Client model memory retention target and disk cache limits.")
+                .translation("config.ysm_epicfight_compat.client.cache")
+                .push("cache");
         CLIENT_MODEL_MEMORY_CACHE_TARGET_COUNT = config
                 .comment("Target number of converted YSM combat models retained in memory.",
                         "Only unused models are evicted. Models selected by loaded entities or needed",
@@ -85,19 +103,38 @@ public final class ClientPreferences {
                 .translation("config.ysm_epicfight_compat.remote_model_disk_cache_mib")
                 .define("remoteModelDiskCacheMiB", 64,
                         value -> integerInRange(value, 0, 4096));
-        SUPPRESS_BATTLE_MODE_OVERLAY = config
-                .comment("Suppress official YSM's extra player overlay while Epic Fight battle mode is active.",
-                        "Set this to false to let official YSM render the overlay again.",
-                        "The value is read for every overlay frame, so a live client-config reload takes effect without restarting.",
-                        "Default: true")
-                .translation("config.ysm_epicfight_compat.suppress_battle_overlay")
-                .define("suppressBattleModeOverlay", true);
+        config.pop();
+        config.pop();
+
+        // This table stays in the client config; it is not a separate Forge COMMON config.
+        config.comment("Model and animation preferences stored in this client config.")
+                .translation("config.ysm_epicfight_compat.common")
+                .push("common");
+        config.comment("YSM held-item, projectile, and vehicle model settings.")
+                .translation("config.ysm_epicfight_compat.common.models")
+                .push("models");
         USE_YSM_HELD_ITEM_MODELS = config
                 .comment("Use model-authored YSM held-item models when available.",
                         "Only the resolved per-hand display state is synchronized; these rules remain local.",
                         "Default: true")
                 .translation("config.ysm_epicfight_compat.use_ysm_held_item_models")
                 .define("useYsmHeldItemModels", true);
+        USE_YSM_PROJECTILE_MODELS = config
+                .comment("Use model-authored YSM projectile models when no corresponding YSM held-item model controls the projectile.",
+                        "Only the resolved projectile display state is synchronized; these rules remain local.",
+                        "Default: true")
+                .translation("config.ysm_epicfight_compat.use_ysm_projectile_models")
+                .define("useYsmProjectileModels", true);
+        USE_YSM_VEHICLE_MODELS = config
+                .comment("Use model-authored YSM vehicle models when available.",
+                        "Only the resolved vehicle display state is synchronized; these rules remain local.",
+                        "Default: true")
+                .translation("config.ysm_epicfight_compat.use_ysm_vehicle_models")
+                .define("useYsmVehicleModels", true);
+
+        config.comment("Model-specific exclusions for YSM model replacements.")
+                .translation("config.ysm_epicfight_compat.common.models.exclusions")
+                .push("exclusions");
         HELD_ITEM_MODEL_EXCLUSIONS = config
                 .comment("Model-specific item IDs or #item_tags that disable YSM held-item models.",
                         "The list never enables YSM held-item models when the main setting is disabled.",
@@ -107,12 +144,6 @@ public final class ClientPreferences {
                 .translation("config.ysm_epicfight_compat.held_item_model_exclusions")
                 .define("heldItemModelExclusions", Config::inMemory,
                         HeldItemModelPolicy::isValidConfiguration);
-        USE_YSM_PROJECTILE_MODELS = config
-                .comment("Use model-authored YSM projectile models when no corresponding YSM held-item model controls the projectile.",
-                        "Only the resolved projectile display state is synchronized; these rules remain local.",
-                        "Default: true")
-                .translation("config.ysm_epicfight_compat.use_ysm_projectile_models")
-                .define("useYsmProjectileModels", true);
         PROJECTILE_MODEL_EXCLUSIONS = config
                 .comment("Model-specific entity IDs or #entity_type_tags that disable YSM projectile models.",
                         "The list never enables YSM projectile models when the main setting is disabled.",
@@ -122,12 +153,6 @@ public final class ClientPreferences {
                 .translation("config.ysm_epicfight_compat.projectile_model_exclusions")
                 .define("projectileModelExclusions", Config::inMemory,
                         EntityModelPolicy::isValidConfiguration);
-        USE_YSM_VEHICLE_MODELS = config
-                .comment("Use model-authored YSM vehicle models when available.",
-                        "Only the resolved vehicle display state is synchronized; these rules remain local.",
-                        "Default: true")
-                .translation("config.ysm_epicfight_compat.use_ysm_vehicle_models")
-                .define("useYsmVehicleModels", true);
         VEHICLE_MODEL_EXCLUSIONS = config
                 .comment("Model-specific entity IDs or #entity_type_tags that disable YSM vehicle models.",
                         "The list never enables YSM vehicle models when the main setting is disabled.",
@@ -137,6 +162,12 @@ public final class ClientPreferences {
                 .translation("config.ysm_epicfight_compat.vehicle_model_exclusions")
                 .define("vehicleModelExclusions", Config::inMemory,
                         EntityModelPolicy::isValidConfiguration);
+        config.pop();
+        config.pop();
+
+        config.comment("YSM animation preferences.")
+                .translation("config.ysm_epicfight_compat.common.animations")
+                .push("animations");
         USE_YSM_HELD_ITEM_SWITCH_ANIMATIONS = config
                 .comment("Use official YSM held-item switch animations when the current item is not replaced by model-authored geometry.",
                         "A model-authored replacement continues to follow useYsmHeldItemModels and heldItemModelExclusions.",
@@ -144,17 +175,6 @@ public final class ClientPreferences {
                         "Default: true")
                 .translation("config.ysm_epicfight_compat.use_ysm_held_item_switch_animations")
                 .define("useYsmHeldItemSwitchAnimations", true);
-        HELD_ITEM_SWITCH_ANIMATION_EXCLUSIONS = config
-                .comment("Model-specific item IDs or #item_tags that disable YSM held-item switch animations.",
-                        "These rules apply only when Epic Fight keeps rendering the ordinary item.",
-                        "The list never enables YSM switch animations when the main setting is disabled.",
-                        "Use minecraft:air to target the animation that switches to an empty hand.",
-                        "Only the resolved per-hand animation state is synchronized; these rules remain local.",
-                        "Example: \"wine_fox/05_magical\" = [\"minecraft:diamond_pickaxe\", \"minecraft:air\", \"#forge:tools/pickaxes\"].",
-                        "Default: {}")
-                .translation("config.ysm_epicfight_compat.held_item_switch_animation_exclusions")
-                .define("heldItemSwitchAnimationExclusions", Config::inMemory,
-                        HeldItemModelPolicy::isValidConfiguration);
         USE_YSM_MOVEMENT_ANIMATIONS = config
                 .comment("Use full-body YSM movement animations.",
                         "Only the current resolved movement state is synchronized; these rules remain local.",
@@ -168,17 +188,6 @@ public final class ClientPreferences {
                         "Default: true")
                 .translation("config.ysm_epicfight_compat.use_natural_ladder_animations")
                 .define("useNaturalLadderAnimations", true);
-        MOVEMENT_ANIMATION_EXCLUSIONS = config
-                .comment("Model-specific movement states that disable YSM movement animations.",
-                        "The list never enables YSM movement animations when the main setting is disabled.",
-                        "Rule contents remain local; only the current resolved pose decision is synchronized.",
-                        "Example: \"wine_fox/21_saint\" = [\"run\", \"creative_flight\"].",
-                        "Default: {}")
-                .translation("config.ysm_epicfight_compat.movement_animation_exclusions")
-                .define("movementAnimationExclusions", Config::inMemory,
-                        MovementAnimationPolicy::isValidConfiguration);
-        boolean parCoolAvailable = isOptionalAnimationAvailable(ModAnimationType.PARCOOL);
-        boolean swemAvailable = isOptionalAnimationAvailable(ModAnimationType.SWEM);
         USE_YSM_PARCOOL_ANIMATIONS = OptionalModConfig.defineBoolean(
                 config.translation("config.ysm_epicfight_compat.use_ysm_parcool_animations"),
                 "useYsmParCoolAnimations", parCoolAvailable,
@@ -189,6 +198,39 @@ public final class ClientPreferences {
                 "Independent of useYsmMovementAnimations and movementAnimationExclusions.",
                 "Only the active animation identifier and its resolved pose decision are synchronized; these rules remain local.",
                 "Default: true");
+        USE_YSM_SWEM_ANIMATIONS = OptionalModConfig.defineBoolean(
+                config.translation("config.ysm_epicfight_compat.use_ysm_swem_animations"),
+                "useYsmSwemAnimations", swemAvailable,
+                "Prioritize YSM SWEM riding animations while Epic Fight battle mode is active.",
+                "Actual Epic Fight attacks, guarding, and hit reactions retain Epic Fight's pose.",
+                "Use swemAnimationExclusions to disable individual riding animations for each model.",
+                "Independent of useYsmMovementAnimations and movementAnimationExclusions.",
+                "Only the active animation identifier and its resolved pose decision are synchronized; these rules remain local.",
+                "Default: true");
+
+        config.comment("Model-specific exclusions for YSM animations.")
+                .translation("config.ysm_epicfight_compat.common.animations.exclusions")
+                .push("exclusions");
+        HELD_ITEM_SWITCH_ANIMATION_EXCLUSIONS = config
+                .comment("Model-specific item IDs or #item_tags that disable YSM held-item switch animations.",
+                        "These rules apply only when Epic Fight keeps rendering the ordinary item.",
+                        "The list never enables YSM switch animations when the main setting is disabled.",
+                        "Use minecraft:air to target the animation that switches to an empty hand.",
+                        "Only the resolved per-hand animation state is synchronized; these rules remain local.",
+                        "Example: \"wine_fox/05_magical\" = [\"minecraft:diamond_pickaxe\", \"minecraft:air\", \"#forge:tools/pickaxes\"].",
+                        "Default: {}")
+                .translation("config.ysm_epicfight_compat.held_item_switch_animation_exclusions")
+                .define("heldItemSwitchAnimationExclusions", Config::inMemory,
+                        HeldItemModelPolicy::isValidConfiguration);
+        MOVEMENT_ANIMATION_EXCLUSIONS = config
+                .comment("Model-specific movement states that disable YSM movement animations.",
+                        "The list never enables YSM movement animations when the main setting is disabled.",
+                        "Rule contents remain local; only the current resolved pose decision is synchronized.",
+                        "Example: \"wine_fox/21_saint\" = [\"run\", \"creative_flight\"].",
+                        "Default: {}")
+                .translation("config.ysm_epicfight_compat.movement_animation_exclusions")
+                .define("movementAnimationExclusions", Config::inMemory,
+                        MovementAnimationPolicy::isValidConfiguration);
         PARCOOL_ANIMATION_EXCLUSIONS = OptionalModConfig.defineExclusions(
                 config.translation("config.ysm_epicfight_compat.parcool_animation_exclusions"),
                 "parcoolAnimationExclusions", ModAnimationType.PARCOOL, parCoolAvailable,
@@ -199,15 +241,6 @@ public final class ClientPreferences {
                 "Rule contents remain local; only the current animation identifier and resolved pose decision are synchronized.",
                 "Example: \"wine_fox/21_saint\" = [\"fast_running\", \"hang\"].",
                 "Default: {}");
-        USE_YSM_SWEM_ANIMATIONS = OptionalModConfig.defineBoolean(
-                config.translation("config.ysm_epicfight_compat.use_ysm_swem_animations"),
-                "useYsmSwemAnimations", swemAvailable,
-                "Prioritize YSM SWEM riding animations while Epic Fight battle mode is active.",
-                "Actual Epic Fight attacks, guarding, and hit reactions retain Epic Fight's pose.",
-                "Use swemAnimationExclusions to disable individual riding animations for each model.",
-                "Independent of useYsmMovementAnimations and movementAnimationExclusions.",
-                "Only the active animation identifier and its resolved pose decision are synchronized; these rules remain local.",
-                "Default: true");
         SWEM_ANIMATION_EXCLUSIONS = OptionalModConfig.defineExclusions(
                 config.translation("config.ysm_epicfight_compat.swem_animation_exclusions"),
                 "swemAnimationExclusions", ModAnimationType.SWEM, swemAvailable,
@@ -218,11 +251,9 @@ public final class ClientPreferences {
                 "Rule contents remain local; only the current animation identifier and resolved pose decision are synchronized.",
                 "Example: \"wine_fox/21_saint\" = [\"gallop\", \"jump_lv1\"].",
                 "Default: {}");
-        YSM_WARNING_ACKNOWLEDGED = config
-                .comment("Whether the official YSM/Epic Fight compatibility warning was already shown.",
-                        "Default: false")
-                .translation("config.ysm_epicfight_compat.warning_acknowledged")
-                .define("epicFightCompatibilityWarningShown", false);
+        config.pop();
+        config.pop();
+
         config.pop();
         CLIENT_SPEC = config.build();
     }

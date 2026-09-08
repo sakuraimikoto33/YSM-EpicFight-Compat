@@ -76,7 +76,7 @@ class ClientModAnimationPreferencesTest {
     void settingsReloadIndependentlyAndRetainDisabledActiveFamily() {
         MovementAnimationDisplayState previous = ClientMovementAnimationPreferences.resolveState(
                 MODEL, null, ModAnimationType.PARCOOL, RUN);
-        config.set(List.of("client", "useYsmParCoolAnimations"), false);
+        config.set(List.of("common", "animations", "useYsmParCoolAnimations"), false);
         config.save();
         ClientPreferences.CLIENT_SPEC.afterReload();
         MovementAnimationDisplayState changed = ClientMovementAnimationPreferences.resolveState(
@@ -89,8 +89,8 @@ class ClientModAnimationPreferencesTest {
         assertTrue(ClientMovementAnimationPreferences.resolveState(
                 MODEL, null, ModAnimationType.SWEM, GALLOP).modAnimationOwned());
 
-        config.set(List.of("client", "useYsmParCoolAnimations"), true);
-        config.set(List.of("client", "useYsmSwemAnimations"), false);
+        config.set(List.of("common", "animations", "useYsmParCoolAnimations"), true);
+        config.set(List.of("common", "animations", "useYsmSwemAnimations"), false);
         config.save();
         ClientPreferences.CLIENT_SPEC.afterReload();
         assertTrue(ClientMovementAnimationPreferences.resolveState(
@@ -133,7 +133,7 @@ class ClientModAnimationPreferencesTest {
         assertFalse(local(MODEL, ModAnimationType.PARCOOL, RUN));
         assertFalse(local(MODEL, ModAnimationType.SWEM, GALLOP));
 
-        config.set(List.of("client", "parcoolAnimationExclusions"),
+        config.set(List.of("common", "animations", "exclusions", "parcoolAnimationExclusions"),
                 ModAnimationPolicy.encodeConfiguration(ModAnimationType.PARCOOL,
                         Map.of(MODEL, List.of("roll_front"))));
         config.save();
@@ -143,7 +143,7 @@ class ClientModAnimationPreferencesTest {
         assertFalse(local(MODEL, ModAnimationType.PARCOOL, ROLL));
         assertFalse(local(MODEL, ModAnimationType.SWEM, GALLOP));
 
-        config.set(List.of("client", "swemAnimationExclusions"),
+        config.set(List.of("common", "animations", "exclusions", "swemAnimationExclusions"),
                 ModAnimationPolicy.encodeConfiguration(ModAnimationType.SWEM,
                         Map.of(MODEL, List.of("walk"))));
         config.save();

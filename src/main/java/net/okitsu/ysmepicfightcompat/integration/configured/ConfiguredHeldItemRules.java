@@ -35,6 +35,9 @@ import java.util.Objects;
  * runtime.</p>
  */
 public final class ConfiguredHeldItemRules {
+    private static final List<String> MODEL_EXCLUSIONS = List.of("common", "models", "exclusions");
+    private static final List<String> ANIMATION_EXCLUSIONS = List.of("common", "animations", "exclusions");
+
     private ConfiguredHeldItemRules() {
     }
 
@@ -48,13 +51,19 @@ public final class ConfiguredHeldItemRules {
         return kind != null && kind.acceptsSelectors(selectors);
     }
 
-    /** Called through an Object-only mixin boundary to avoid hard optional linkage. */
-    public static boolean isPlaceholder(Object entry) {
+    /** The dynamic maps remain leaves inside these real Forge categories. */
+    public static boolean containsRuleEntries(List<String> parentPath) {
+        return MODEL_EXCLUSIONS.equals(parentPath) || ANIMATION_EXCLUSIONS.equals(parentPath);
+    }
+
+    /** Called through an Object-only mixin boundary; same-named entries elsewhere stay untouched. */
+    public static boolean isPlaceholder(List<String> parentPath, Object entry) {
         if (!(entry instanceof IConfigEntry configEntry) || !configEntry.isLeaf()) {
             return false;
         }
         IConfigValue<?> value = configEntry.getValue();
-        return value != null && recognizesRuleEntry(value.getName());
+        RuleKind kind = value == null ? null : RuleKind.fromEntryName(value.getName());
+        return kind != null && kind.parentPath().equals(parentPath);
     }
 
     /** Stable cache key used by the Object-only mixin boundary. */
@@ -436,6 +445,13 @@ public final class ConfiguredHeldItemRules {
 
         private String entryName() {
             return entryName;
+        }
+
+        private List<String> parentPath() {
+            return switch (this) {
+                case HELD_ITEM, PROJECTILE, VEHICLE -> MODEL_EXCLUSIONS;
+                default -> ANIMATION_EXCLUSIONS;
+            };
         }
 
         private String translationKey() {

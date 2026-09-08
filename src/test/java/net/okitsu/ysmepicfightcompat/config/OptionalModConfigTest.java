@@ -290,22 +290,35 @@ class OptionalModConfigTest {
     }
 
     private static List<String> path(String key) {
-        return List.of("client", key);
+        return switch (key) {
+            case PARCOOL_TOGGLE, SWEM_TOGGLE -> List.of("common", "animations", key);
+            case PARCOOL_RULES, SWEM_RULES -> List.of("common", "animations", "exclusions", key);
+            case "normalSetting" -> List.of("client", "cache", key);
+            default -> throw new IllegalArgumentException("Unknown fixture setting: " + key);
+        };
     }
 
     private static Fixture fixture(boolean parcool, boolean swem) {
         ForgeConfigSpec.Builder builder = new ForgeConfigSpec.Builder();
         builder.comment("Client preferences.").push("client");
+        builder.comment("Client cache preferences.").push("cache");
         ForgeConfigSpec.ConfigValue<Integer> normalSetting = builder
                 .comment("An unrelated ordinary preference.").define("normalSetting", 64);
+        builder.pop();
+        builder.pop();
+        builder.comment("Common model and animation preferences.").push("common");
+        builder.comment("Common animation preferences.").push("animations");
         ForgeConfigSpec.ConfigValue<Boolean> parcoolToggle = OptionalModConfig.defineBoolean(
                 builder, PARCOOL_TOGGLE, parcool, "ParCool animations.");
-        ForgeConfigSpec.ConfigValue<Config> parcoolRules = OptionalModConfig.defineExclusions(
-                builder, PARCOOL_RULES, PARCOOL, parcool, "ParCool animation exclusions.");
         ForgeConfigSpec.ConfigValue<Boolean> swemToggle = OptionalModConfig.defineBoolean(
                 builder, SWEM_TOGGLE, swem, "SWEM animations.");
+        builder.comment("Common animation exclusions.").push("exclusions");
+        ForgeConfigSpec.ConfigValue<Config> parcoolRules = OptionalModConfig.defineExclusions(
+                builder, PARCOOL_RULES, PARCOOL, parcool, "ParCool animation exclusions.");
         ForgeConfigSpec.ConfigValue<Config> swemRules = OptionalModConfig.defineExclusions(
                 builder, SWEM_RULES, SWEM, swem, "SWEM animation exclusions.");
+        builder.pop();
+        builder.pop();
         builder.pop();
         return new Fixture(builder.build(), normalSetting,
                 parcoolToggle, parcoolRules, swemToggle, swemRules);

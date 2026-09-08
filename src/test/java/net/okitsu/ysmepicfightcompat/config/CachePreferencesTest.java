@@ -24,7 +24,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class CachePreferencesTest {
     @Test
     void usesTheChosenMemoryTargetNameWithoutALegacyAlias() {
-        List<String> path = List.of("client", "clientModelMemoryCacheTargetCount");
+        List<String> path = List.of("client", "cache", "clientModelMemoryCacheTargetCount");
         assertEquals(path, ClientPreferences.CLIENT_MODEL_MEMORY_CACHE_TARGET_COUNT.getPath());
         assertEquals(64, ClientPreferences.CLIENT_MODEL_MEMORY_CACHE_TARGET_COUNT.getDefault().intValue());
         ForgeConfigSpec.ValueSpec value =
@@ -44,7 +44,7 @@ class CachePreferencesTest {
         ClientPreferences.CLIENT_SPEC.correct(config);
 
         assertEquals(64, ((Number) config.getRaw(
-                List.of("client", "clientModelMemoryCacheTargetCount"))).intValue());
+                List.of("client", "cache", "clientModelMemoryCacheTargetCount"))).intValue());
         assertNull(config.getRaw(List.of("client", "clientModelMemoryCacheSize")));
     }
 
@@ -72,55 +72,55 @@ class CachePreferencesTest {
         assertEquals("ysm_epicfight_compat/ysm_epicfight_compat-client.toml",
                 ClientPreferences.CONFIG_FILE);
         assertTrue(ClientPreferences.CLIENT_SPEC.getRaw(List.of(
-                "client", "clientModelMemoryCacheTargetCount")) instanceof ForgeConfigSpec.ValueSpec);
+                "client", "cache", "clientModelMemoryCacheTargetCount")) instanceof ForgeConfigSpec.ValueSpec);
         assertTrue(ClientPreferences.CLIENT_SPEC.getRaw(List.of(
-                "client", "clientModelDiskCacheMiB")) instanceof ForgeConfigSpec.ValueSpec);
+                "client", "cache", "clientModelDiskCacheMiB")) instanceof ForgeConfigSpec.ValueSpec);
         assertTrue(ClientPreferences.CLIENT_SPEC.getRaw(List.of(
-                "client", "remoteModelDiskCacheMiB")) instanceof ForgeConfigSpec.ValueSpec);
+                "client", "cache", "remoteModelDiskCacheMiB")) instanceof ForgeConfigSpec.ValueSpec);
         assertTrue(ClientPreferences.CLIENT_SPEC.getRaw(List.of(
-                "client", "useYsmHeldItemModels"))
+                "common", "models", "useYsmHeldItemModels"))
                 instanceof ForgeConfigSpec.ValueSpec);
         assertTrue(ClientPreferences.CLIENT_SPEC.getRaw(List.of(
-                "client", "heldItemModelExclusions"))
+                "common", "models", "exclusions", "heldItemModelExclusions"))
                 instanceof ForgeConfigSpec.ValueSpec);
         assertTrue(ClientPreferences.CLIENT_SPEC.getRaw(List.of(
-                "client", "useYsmProjectileModels"))
+                "common", "models", "useYsmProjectileModels"))
                 instanceof ForgeConfigSpec.ValueSpec);
         assertTrue(ClientPreferences.CLIENT_SPEC.getRaw(List.of(
-                "client", "projectileModelExclusions"))
+                "common", "models", "exclusions", "projectileModelExclusions"))
                 instanceof ForgeConfigSpec.ValueSpec);
         assertTrue(ClientPreferences.CLIENT_SPEC.getRaw(List.of(
-                "client", "useYsmVehicleModels"))
+                "common", "models", "useYsmVehicleModels"))
                 instanceof ForgeConfigSpec.ValueSpec);
         assertTrue(ClientPreferences.CLIENT_SPEC.getRaw(List.of(
-                "client", "vehicleModelExclusions"))
+                "common", "models", "exclusions", "vehicleModelExclusions"))
                 instanceof ForgeConfigSpec.ValueSpec);
         assertTrue(ClientPreferences.CLIENT_SPEC.getRaw(List.of(
-                "client", "useYsmHeldItemSwitchAnimations"))
+                "common", "animations", "useYsmHeldItemSwitchAnimations"))
                 instanceof ForgeConfigSpec.ValueSpec);
         assertTrue(ClientPreferences.CLIENT_SPEC.getRaw(List.of(
-                "client", "heldItemSwitchAnimationExclusions"))
+                "common", "animations", "exclusions", "heldItemSwitchAnimationExclusions"))
                 instanceof ForgeConfigSpec.ValueSpec);
         assertTrue(ClientPreferences.CLIENT_SPEC.getRaw(List.of(
-                "client", "useYsmMovementAnimations"))
+                "common", "animations", "useYsmMovementAnimations"))
                 instanceof ForgeConfigSpec.ValueSpec);
         assertTrue(ClientPreferences.CLIENT_SPEC.getRaw(List.of(
-                "client", "useNaturalLadderAnimations"))
+                "common", "animations", "useNaturalLadderAnimations"))
                 instanceof ForgeConfigSpec.ValueSpec);
         assertTrue(ClientPreferences.CLIENT_SPEC.getRaw(List.of(
-                "client", "movementAnimationExclusions"))
+                "common", "animations", "exclusions", "movementAnimationExclusions"))
                 instanceof ForgeConfigSpec.ValueSpec);
         assertTrue(ClientPreferences.CLIENT_SPEC.getRaw(List.of(
-                "client", "useYsmParCoolAnimations"))
+                "common", "animations", "useYsmParCoolAnimations"))
                 instanceof ForgeConfigSpec.ValueSpec);
         assertTrue(ClientPreferences.CLIENT_SPEC.getRaw(List.of(
-                "client", "useYsmSwemAnimations"))
+                "common", "animations", "useYsmSwemAnimations"))
                 instanceof ForgeConfigSpec.ValueSpec);
         assertTrue(ClientPreferences.CLIENT_SPEC.getRaw(List.of(
-                "client", "parcoolAnimationExclusions"))
+                "common", "animations", "exclusions", "parcoolAnimationExclusions"))
                 instanceof ForgeConfigSpec.ValueSpec);
         assertTrue(ClientPreferences.CLIENT_SPEC.getRaw(List.of(
-                "client", "swemAnimationExclusions"))
+                "common", "animations", "exclusions", "swemAnimationExclusions"))
                 instanceof ForgeConfigSpec.ValueSpec);
         assertTrue(ClientPreferences.USE_YSM_MOVEMENT_ANIMATIONS
                 .getDefault());
@@ -137,44 +137,44 @@ class CachePreferencesTest {
         assertEquals("ysm_epicfight_compat/ysm_epicfight_compat-common.toml",
                 ServerPreferences.CONFIG_FILE);
         assertTrue(ServerPreferences.COMMON_SPEC.getRaw(List.of(
-                "server", "serverModelDiskCacheEnabled")) instanceof ForgeConfigSpec.ValueSpec);
+                "server", "cache", "serverModelDiskCacheEnabled")) instanceof ForgeConfigSpec.ValueSpec);
         assertTrue(ServerPreferences.COMMON_SPEC.getRaw(List.of(
-                "server", "serverModelDiskCacheMiB")) instanceof ForgeConfigSpec.ValueSpec);
+                "server", "cache", "serverModelDiskCacheMiB")) instanceof ForgeConfigSpec.ValueSpec);
     }
 
     @Test
     void writesMetadataInDescriptionSampleOrRangeDefaultOrder() {
         assertCommentTail(ClientPreferences.CLIENT_SPEC,
-                List.of("client", "clientModelMemoryCacheTargetCount"),
+                List.of("client", "cache", "clientModelMemoryCacheTargetCount"),
                 "Range: 8 ~ 512", "Default: 64");
         assertCommentTail(ClientPreferences.CLIENT_SPEC,
-                List.of("client", "clientModelDiskCacheMiB"),
+                List.of("client", "cache", "clientModelDiskCacheMiB"),
                 "Range: 0 ~ 4096", "Default: 64");
         assertCommentTail(ClientPreferences.CLIENT_SPEC,
-                List.of("client", "remoteModelDiskCacheMiB"),
+                List.of("client", "cache", "remoteModelDiskCacheMiB"),
                 "Range: 0 ~ 4096", "Default: 64");
         assertCommentTail(ServerPreferences.COMMON_SPEC,
-                List.of("server", "serverModelDiskCacheMiB"),
+                List.of("server", "cache", "serverModelDiskCacheMiB"),
                 "Range: 0 ~ 4096", "Default: 256");
 
         assertCommentTail(ClientPreferences.CLIENT_SPEC,
-                List.of("client", "heldItemModelExclusions"),
+                List.of("common", "models", "exclusions", "heldItemModelExclusions"),
                 "Example: \"wine_fox/21_saint\" = [\"minecraft:diamond_sword\", \"#forge:tools/bows\"].",
                 "Default: {}");
         assertCommentTail(ClientPreferences.CLIENT_SPEC,
-                List.of("client", "projectileModelExclusions"),
+                List.of("common", "models", "exclusions", "projectileModelExclusions"),
                 "Example: \"wine_fox/22_elf\" = [\"minecraft:arrow\", \"#minecraft:arrows\"].",
                 "Default: {}");
         assertCommentTail(ClientPreferences.CLIENT_SPEC,
-                List.of("client", "vehicleModelExclusions"),
+                List.of("common", "models", "exclusions", "vehicleModelExclusions"),
                 "Example: \"wine_fox/01_taisho_maid\" = [\"minecraft:boat\", \"#minecraft:boats\"].",
                 "Default: {}");
         assertCommentTail(ClientPreferences.CLIENT_SPEC,
-                List.of("client", "heldItemSwitchAnimationExclusions"),
+                List.of("common", "animations", "exclusions", "heldItemSwitchAnimationExclusions"),
                 "Example: \"wine_fox/05_magical\" = [\"minecraft:diamond_pickaxe\", \"minecraft:air\", \"#forge:tools/pickaxes\"].",
                 "Default: {}");
         assertCommentTail(ClientPreferences.CLIENT_SPEC,
-                List.of("client", "movementAnimationExclusions"),
+                List.of("common", "animations", "exclusions", "movementAnimationExclusions"),
                 "Example: \"wine_fox/21_saint\" = [\"run\", \"creative_flight\"].",
                 "Default: {}");
         assertOptionalCommentTail(ModAnimationType.PARCOOL,
@@ -190,22 +190,22 @@ class CachePreferencesTest {
                 List.of("client", "suppressBattleModeOverlay"),
                 "Default: true");
         assertCommentTail(ClientPreferences.CLIENT_SPEC,
-                List.of("client", "useYsmHeldItemModels"),
+                List.of("common", "models", "useYsmHeldItemModels"),
                 "Default: true");
         assertCommentTail(ClientPreferences.CLIENT_SPEC,
-                List.of("client", "useYsmProjectileModels"),
+                List.of("common", "models", "useYsmProjectileModels"),
                 "Default: true");
         assertCommentTail(ClientPreferences.CLIENT_SPEC,
-                List.of("client", "useYsmVehicleModels"),
+                List.of("common", "models", "useYsmVehicleModels"),
                 "Default: true");
         assertCommentTail(ClientPreferences.CLIENT_SPEC,
-                List.of("client", "useYsmHeldItemSwitchAnimations"),
+                List.of("common", "animations", "useYsmHeldItemSwitchAnimations"),
                 "Default: true");
         assertCommentTail(ClientPreferences.CLIENT_SPEC,
-                List.of("client", "useYsmMovementAnimations"),
+                List.of("common", "animations", "useYsmMovementAnimations"),
                 "Default: true");
         assertCommentTail(ClientPreferences.CLIENT_SPEC,
-                List.of("client", "useNaturalLadderAnimations"),
+                List.of("common", "animations", "useNaturalLadderAnimations"),
                 "Default: true");
         assertOptionalCommentTail(ModAnimationType.PARCOOL,
                 "useYsmParCoolAnimations",
@@ -217,28 +217,28 @@ class CachePreferencesTest {
                 List.of("client", "epicFightCompatibilityWarningShown"),
                 "Default: false");
         assertCommentTail(ServerPreferences.COMMON_SPEC,
-                List.of("server", "serverModelDiskCacheEnabled"),
+                List.of("server", "cache", "serverModelDiskCacheEnabled"),
                 "Default: true");
     }
 
     @Test
     void keepsNumericRangeValidationWithoutForgeAppendingCommentLines() {
         assertNumericRange(ClientPreferences.CLIENT_SPEC,
-                List.of("client", "clientModelMemoryCacheTargetCount"), 8, 512);
+                List.of("client", "cache", "clientModelMemoryCacheTargetCount"), 8, 512);
         assertNumericRange(ClientPreferences.CLIENT_SPEC,
-                List.of("client", "clientModelDiskCacheMiB"), 0, 4096);
+                List.of("client", "cache", "clientModelDiskCacheMiB"), 0, 4096);
         assertNumericRange(ClientPreferences.CLIENT_SPEC,
-                List.of("client", "remoteModelDiskCacheMiB"), 0, 4096);
+                List.of("client", "cache", "remoteModelDiskCacheMiB"), 0, 4096);
         assertNumericRange(ServerPreferences.COMMON_SPEC,
-                List.of("server", "serverModelDiskCacheMiB"), 0, 4096);
+                List.of("server", "cache", "serverModelDiskCacheMiB"), 0, 4096);
     }
 
     @Test
     void modAnimationExclusionTablesValidateOnlyTheirOwnShortNames() {
         ForgeConfigSpec.ValueSpec parcool = (ForgeConfigSpec.ValueSpec)
-                ClientPreferences.CLIENT_SPEC.getRaw(List.of("client", "parcoolAnimationExclusions"));
+                ClientPreferences.CLIENT_SPEC.getRaw(List.of("common", "animations", "exclusions", "parcoolAnimationExclusions"));
         ForgeConfigSpec.ValueSpec swem = (ForgeConfigSpec.ValueSpec)
-                ClientPreferences.CLIENT_SPEC.getRaw(List.of("client", "swemAnimationExclusions"));
+                ClientPreferences.CLIENT_SPEC.getRaw(List.of("common", "animations", "exclusions", "swemAnimationExclusions"));
         Config rules = Config.inMemory();
         assertTrue(parcool.test(rules));
         assertTrue(swem.test(rules));
@@ -259,7 +259,9 @@ class CachePreferencesTest {
 
     private static void assertOptionalCommentTail(
             ModAnimationType family, String key, String... expectedTail) {
-        List<String> path = List.of("client", key);
+        List<String> path = key.endsWith("Exclusions")
+                ? List.of("common", "animations", "exclusions", key)
+                : List.of("common", "animations", key);
         if (ClientPreferences.isOptionalAnimationAvailable(family)) {
             assertCommentTail(ClientPreferences.CLIENT_SPEC, path, expectedTail);
         } else {

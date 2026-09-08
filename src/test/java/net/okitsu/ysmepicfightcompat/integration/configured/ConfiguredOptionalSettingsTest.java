@@ -18,11 +18,16 @@ import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class ConfiguredOptionalSettingsTest {
-    private static final List<String> PARCOOL_TOGGLE = List.of("client", "useYsmParCoolAnimations");
-    private static final List<String> PARCOOL_RULES = List.of("client", "parcoolAnimationExclusions");
-    private static final List<String> SWEM_TOGGLE = List.of("client", "useYsmSwemAnimations");
-    private static final List<String> SWEM_RULES = List.of("client", "swemAnimationExclusions");
-    private static final List<String> MOVEMENT_TOGGLE = List.of("client", "useYsmMovementAnimations");
+    private static final List<String> PARCOOL_TOGGLE =
+            List.of("common", "animations", "useYsmParCoolAnimations");
+    private static final List<String> PARCOOL_RULES =
+            List.of("common", "animations", "exclusions", "parcoolAnimationExclusions");
+    private static final List<String> SWEM_TOGGLE =
+            List.of("common", "animations", "useYsmSwemAnimations");
+    private static final List<String> SWEM_RULES =
+            List.of("common", "animations", "exclusions", "swemAnimationExclusions");
+    private static final List<String> MOVEMENT_TOGGLE =
+            List.of("common", "animations", "useYsmMovementAnimations");
 
     @Test
     void filtersConfiguredsRealForgeValueRecordsForEveryAvailabilityCombination() {
@@ -32,7 +37,7 @@ class ConfiguredOptionalSettingsTest {
 
         for (boolean parCoolAvailable : List.of(false, true)) {
             for (boolean swemAvailable : List.of(false, true)) {
-                List<?> filtered = ConfiguredClientLayout.visibleForgeValues(
+                List<?> filtered = ConfiguredOptionalSettings.visibleForgeValues(
                         original, parCoolAvailable, swemAvailable);
                 for (Object entry : original) {
                     List<String> path = ForgeValues.path(entry);
@@ -49,19 +54,26 @@ class ConfiguredOptionalSettingsTest {
     }
 
     @Test
-    void keepsUnknownRecordsAndSameNamedSettingsOutsideTheExactClientPath() {
+    void keepsUnknownRecordsAndSameNamedSettingsOutsideTheExactCommonPaths() {
         Fixture fixture = fixture();
         List<Object> original = new ArrayList<>(ForgeValues.entries(fixture.spec()));
         Object foreign = new Object();
         original.add(foreign);
 
-        List<?> filtered = ConfiguredClientLayout.visibleForgeValues(original, false, false);
+        List<?> filtered = ConfiguredOptionalSettings.visibleForgeValues(original, false, false);
 
         assertSame(foreign, filtered.get(filtered.size() - 1));
         assertTrue(filtered.stream().filter(entry -> entry != foreign).map(ForgeValues::path)
                 .toList().containsAll(List.of(MOVEMENT_TOGGLE,
-                        List.of("client", "futureAnimations"),
-                        List.of("client", "nested", "useYsmParCoolAnimations"),
+                        List.of("common", "animations", "futureAnimations"),
+                        List.of("common", "animations", "nested", "useYsmParCoolAnimations"),
+                        List.of("common", "useYsmParCoolAnimations"),
+                        List.of("client", "useYsmParCoolAnimations"),
+                        List.of("client", "animations", "useYsmParCoolAnimations"),
+                        List.of("client", "animations", "exclusions", "parcoolAnimationExclusions"),
+                        List.of("common", "models", "useYsmSwemAnimations"),
+                        List.of("common", "models", "exclusions", "parcoolAnimationExclusions"),
+                        List.of("server", "animations", "useYsmSwemAnimations"),
                         List.of("other", "useYsmSwemAnimations"))));
     }
 
@@ -77,7 +89,7 @@ class ConfiguredOptionalSettingsTest {
         fixture.data().set(SWEM_RULES, swemRules);
         fixture.data().setComment(PARCOOL_RULES, "Keep my saved ParCool exclusions");
         fixture.spec().afterReload();
-        List<?> filtered = ConfiguredClientLayout.visibleForgeValues(
+        List<?> filtered = ConfiguredOptionalSettings.visibleForgeValues(
                 ForgeValues.entries(fixture.spec()), false, false);
 
         ForgeValues.restoreDefaults(fixture.data(), filtered);
@@ -103,7 +115,7 @@ class ConfiguredOptionalSettingsTest {
         fixture.data().set(SWEM_RULES, swemRules);
         fixture.spec().afterReload();
 
-        ForgeValues.restoreDefaults(fixture.data(), ConfiguredClientLayout.visibleForgeValues(
+        ForgeValues.restoreDefaults(fixture.data(), ConfiguredOptionalSettings.visibleForgeValues(
                 ForgeValues.entries(fixture.spec()), true, false));
 
         assertEquals(true, fixture.data().get(PARCOOL_TOGGLE));
@@ -123,25 +135,39 @@ class ConfiguredOptionalSettingsTest {
 
         assertTrue(ForgeValues.isChanged(all));
         assertFalse(ForgeValues.isChanged(
-                ConfiguredClientLayout.visibleForgeValues(all, false, false)));
+                ConfiguredOptionalSettings.visibleForgeValues(all, false, false)));
         assertTrue(ForgeValues.isChanged(
-                ConfiguredClientLayout.visibleForgeValues(all, true, false)));
+                ConfiguredOptionalSettings.visibleForgeValues(all, true, false)));
         assertTrue(ForgeValues.isChanged(
-                ConfiguredClientLayout.visibleForgeValues(all, false, true)));
+                ConfiguredOptionalSettings.visibleForgeValues(all, false, true)));
     }
 
     private static Fixture fixture() {
         ForgeConfigSpec.Builder builder = new ForgeConfigSpec.Builder();
-        builder.push("client");
+        builder.push("common").push("animations");
         builder.define("useYsmParCoolAnimations", true);
-        builder.define("parcoolAnimationExclusions", Config::inMemory,
-                value -> value instanceof UnmodifiableConfig);
         builder.define("useYsmSwemAnimations", true);
-        builder.define("swemAnimationExclusions", Config::inMemory,
-                value -> value instanceof UnmodifiableConfig);
         builder.define("useYsmMovementAnimations", true);
         builder.define("futureAnimations", true);
+        builder.push("exclusions");
+        builder.define("parcoolAnimationExclusions", Config::inMemory,
+                value -> value instanceof UnmodifiableConfig);
+        builder.define("swemAnimationExclusions", Config::inMemory,
+                value -> value instanceof UnmodifiableConfig);
+        builder.pop();
         builder.push("nested").define("useYsmParCoolAnimations", true);
+        builder.pop(2);
+        builder.define("useYsmParCoolAnimations", true);
+        builder.push("models").define("useYsmSwemAnimations", true);
+        builder.push("exclusions").define("parcoolAnimationExclusions", Config::inMemory,
+                value -> value instanceof UnmodifiableConfig);
+        builder.pop(3);
+        builder.push("client").define("useYsmParCoolAnimations", true);
+        builder.push("animations").define("useYsmParCoolAnimations", true);
+        builder.push("exclusions").define("parcoolAnimationExclusions", Config::inMemory,
+                value -> value instanceof UnmodifiableConfig);
+        builder.pop(3);
+        builder.push("server").push("animations").define("useYsmSwemAnimations", true);
         builder.pop(2);
         builder.push("other").define("useYsmSwemAnimations", true);
         builder.pop();

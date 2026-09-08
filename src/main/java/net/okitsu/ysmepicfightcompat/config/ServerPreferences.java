@@ -18,6 +18,9 @@ public final class ServerPreferences {
         config.comment("Server model transfer cache settings.")
                 .translation("config.ysm_epicfight_compat.server")
                 .push("server");
+        config.comment("Server model transfer disk cache settings.")
+                .translation("config.ysm_epicfight_compat.server.cache")
+                .push("cache");
         SERVER_MODEL_DISK_CACHE_ENABLED = config
                 .comment("Persist generated server model transfer payloads between sessions.",
                         "The bounded in-memory transfer cache remains enabled when this is false.",
@@ -32,6 +35,7 @@ public final class ServerPreferences {
                 .translation("config.ysm_epicfight_compat.server_model_disk_cache_mib")
                 .define("serverModelDiskCacheMiB", 256,
                         value -> integerInRange(value, 0, 4096));
+        config.pop();
         config.pop();
         COMMON_SPEC = config.build();
     }

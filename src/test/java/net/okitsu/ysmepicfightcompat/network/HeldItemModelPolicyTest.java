@@ -79,14 +79,12 @@ class HeldItemModelPolicyTest {
         assertEquals(expected, HeldItemModelPolicy.decodeConfiguration(encoded));
 
         Config root = Config.inMemory();
-        Config client = root.createSubConfig();
-        root.set(List.of("client"), client);
-        client.set(List.of("heldItemModelExclusions"), encoded);
+        root.set(List.of("common", "models", "exclusions", "heldItemModelExclusions"), encoded);
         StringWriter output = new StringWriter();
         new TomlWriter().write(root, output);
         String toml = output.toString();
 
-        assertTrue(toml.contains("[client.heldItemModelExclusions]"));
+        assertTrue(toml.contains("[common.models.exclusions.heldItemModelExclusions]"));
         assertTrue(toml.contains("\"wine_fox/21_saint\" = ["));
         assertFalse(toml.contains("wine_fox/21_saint="));
     }

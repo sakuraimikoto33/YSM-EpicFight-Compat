@@ -3,7 +3,7 @@ package net.okitsu.ysmepicfightcompat.mixin;
 import net.minecraftforge.common.ForgeConfigSpec;
 import net.okitsu.ysmepicfightcompat.animation.ModAnimationType;
 import net.okitsu.ysmepicfightcompat.config.ClientPreferences;
-import net.okitsu.ysmepicfightcompat.integration.configured.ConfiguredClientLayout;
+import net.okitsu.ysmepicfightcompat.integration.configured.ConfiguredOptionalSettings;
 import net.okitsu.ysmepicfightcompat.integration.configured.ConfiguredHeldItemRules;
 import org.spongepowered.asm.mixin.Final;
 import org.spongepowered.asm.mixin.Mixin;
@@ -19,7 +19,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
-/** Organizes Configured's Client view without changing the underlying Forge config paths. */
+/** Adds dynamic rule editors and optional-setting visibility to the real Forge categories. */
 @Pseudo
 @Mixin(targets = "com.mrcrayfish.configured.impl.forge.ForgeFolderEntry",
         remap = false)
@@ -45,7 +45,8 @@ public abstract class ConfiguredForgeFolderEntryMixin {
     private void ysmEpicFightCompat$embedDynamicRules(
             CallbackInfoReturnable<List<?>> info) {
         if (spec != ClientPreferences.CLIENT_SPEC
-                || !path.equals(List.of("client"))) {
+                || !(ConfiguredOptionalSettings.containsOptionalEntries(path)
+                || ConfiguredHeldItemRules.containsRuleEntries(path))) {
             return;
         }
         List<?> original = info.getReturnValue();
@@ -53,10 +54,11 @@ public abstract class ConfiguredForgeFolderEntryMixin {
         boolean parCoolAvailable = ClientPreferences.isOptionalAnimationAvailable(ModAnimationType.PARCOOL);
         boolean swemAvailable = ClientPreferences.isOptionalAnimationAvailable(ModAnimationType.SWEM);
         for (Object entry : original) {
-            if (!ConfiguredClientLayout.isVisibleClientEntry(entry, parCoolAvailable, swemAvailable)) {
+            if (!ConfiguredOptionalSettings.isVisibleClientEntry(
+                    path, entry, parCoolAvailable, swemAvailable)) {
                 continue;
             }
-            if (ConfiguredHeldItemRules.isPlaceholder(entry)) {
+            if (ConfiguredHeldItemRules.isPlaceholder(path, entry)) {
                 String key = ConfiguredHeldItemRules.placeholderKey(entry);
                 adjusted.add(ysmEpicFightCompat$dynamicRules.computeIfAbsent(
                         key, ignored -> ConfiguredHeldItemRules.createEntry(entry)));
@@ -64,6 +66,6 @@ public abstract class ConfiguredForgeFolderEntryMixin {
                 adjusted.add(entry);
             }
         }
-        info.setReturnValue(ConfiguredClientLayout.groupClientEntries(adjusted));
+        info.setReturnValue(List.copyOf(adjusted));
     }
 }

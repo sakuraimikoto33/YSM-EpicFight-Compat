@@ -116,19 +116,17 @@ class ModAnimationPolicyTest {
         Map<String, List<String>> source = Map.of("Wine.Fox/モデル", List.of("fast_running", "hang"));
         Config encoded = ModAnimationPolicy.encodeConfiguration(PARCOOL, source);
         Config root = Config.inMemory();
-        Config client = root.createSubConfig();
-        root.set(List.of("client"), client);
-        client.set(List.of("parcoolAnimationExclusions"), encoded);
+        root.set(List.of("common", "animations", "exclusions", "parcoolAnimationExclusions"), encoded);
         StringWriter output = new StringWriter();
         new TomlWriter().write(root, output);
         String toml = output.toString();
-        assertTrue(toml.contains("[client.parcoolAnimationExclusions]"));
+        assertTrue(toml.contains("[common.animations.exclusions.parcoolAnimationExclusions]"));
         assertTrue(toml.contains("\"wine.fox/モデル\" = ["));
 
         Config decoded = new TomlParser().parse(toml);
         assertEquals(Map.of("wine.fox/モデル", List.of("fast_running", "hang")),
                 ModAnimationPolicy.decodeConfiguration(PARCOOL,
-                        decoded.get(List.of("client", "parcoolAnimationExclusions"))));
+                        decoded.get(List.of("common", "animations", "exclusions", "parcoolAnimationExclusions"))));
     }
 
     @Test
