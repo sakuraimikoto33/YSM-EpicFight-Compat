@@ -48,6 +48,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Semaphore;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.LongSupplier;
 
 /** Session cache for asynchronously converted combat meshes and temporary texture fallbacks. */
 public final class CombatMeshCache {
@@ -143,7 +144,8 @@ public final class CombatMeshCache {
         }
         Long failedAt = FAILED_STAMPS.get(modelId);
         if (failedAt != null) {
-            long current = local ? LocalModelRepository.metadataStamp(modelId) : 0L;
+            long current = local
+                    ? failureStamp(() -> LocalModelRepository.metadataStamp(modelId), null) : 0L;
             if (failedAt == current) {
                 return false;
             }
@@ -366,7 +368,8 @@ public final class CombatMeshCache {
 
     public static void retryChangedFailures() {
         for (Map.Entry<String, Long> failure : List.copyOf(FAILED_STAMPS.entrySet())) {
-            long current = LocalModelRepository.metadataStamp(failure.getKey());
+            long current = failureStamp(
+                    () -> LocalModelRepository.metadataStamp(failure.getKey()), null);
             if (current >= 0 && current != failure.getValue()) {
                 FAILED_STAMPS.remove(failure.getKey(), failure.getValue());
             }
@@ -436,13 +439,14 @@ public final class CombatMeshCache {
                     modelId, local, expectedGeneration, conversion));
         } catch (InterruptedException exception) {
             Thread.currentThread().interrupt();
-            PENDING_MODELS.remove(modelId);
+            Minecraft.getInstance().execute(() -> completeConversionInterruption(
+                    modelId, expectedGeneration));
         } catch (Throwable exception) {
-            PENDING_MODELS.remove(modelId);
-            FAILED_STAMPS.put(modelId,
-                    local ? LocalModelRepository.metadataStamp(modelId) : 0L);
-            CompatMod.LOG.warn(
-                    "YSM-EF Compat: model conversion failed for '{}'", modelId, exception);
+            // Keep source inspection on the worker; only publish the failure in its own generation.
+            long failedStamp = local
+                    ? failureStamp(() -> LocalModelRepository.metadataStamp(modelId), exception) : 0L;
+            Minecraft.getInstance().execute(() -> completeConversionFailure(
+                    modelId, expectedGeneration, failedStamp, exception));
         } finally {
             if (acquired) {
                 CONVERSION_PERMITS.release();
@@ -450,11 +454,22 @@ public final class CombatMeshCache {
         }
     }
 
+    private static long failureStamp(LongSupplier sourceStamp, Throwable conversionFailure) {
+        try {
+            return sourceStamp.getAsLong();
+        } catch (RuntimeException stampFailure) {
+            // Unreadable source metadata must not block completion or escape during failure retries.
+            if (conversionFailure != null && stampFailure != conversionFailure) {
+                conversionFailure.addSuppressed(stampFailure);
+            }
+            return -1L;
+        }
+    }
+
     /** Publishes and replaces render resources only on Minecraft's render thread. */
     private static synchronized void completeConversion(
             String modelId, boolean local, int expectedGeneration,
             Conversion conversion) {
-        PENDING_MODELS.remove(modelId);
         if (expectedGeneration != GENERATION.get()) {
             if (conversion != null) {
                 conversion.mesh().releaseAllAnimationStates();
@@ -462,12 +477,34 @@ public final class CombatMeshCache {
             }
             return;
         }
+        PENDING_MODELS.remove(modelId);
         if (conversion == null) {
             FAILED_STAMPS.put(modelId,
-                    local ? LocalModelRepository.metadataStamp(modelId) : 0L);
+                    local ? failureStamp(() -> LocalModelRepository.metadataStamp(modelId), null) : 0L);
             return;
         }
         register(conversion);
+    }
+
+    /** Worker cancellation must not clear a replacement conversion queued after a reload. */
+    private static synchronized void completeConversionInterruption(
+            String modelId, int expectedGeneration) {
+        if (expectedGeneration != GENERATION.get()) {
+            return;
+        }
+        PENDING_MODELS.remove(modelId);
+    }
+
+    /** Failure state shares the same client-thread commit boundary as successful conversion. */
+    private static synchronized void completeConversionFailure(
+            String modelId, int expectedGeneration, long failedStamp, Throwable exception) {
+        if (expectedGeneration != GENERATION.get()) {
+            return;
+        }
+        PENDING_MODELS.remove(modelId);
+        FAILED_STAMPS.put(modelId, failedStamp);
+        CompatMod.LOG.warn(
+                "YSM-EF Compat: model conversion failed for '{}'", modelId, exception);
     }
 
     private static Conversion bake(ModelBundle source) {
