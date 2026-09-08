@@ -1,24 +1,78 @@
 package net.okitsu.ysmepicfightcompat.config;
 
 import com.electronwill.nightconfig.core.Config;
+import com.electronwill.nightconfig.core.CommentedConfig;
+import com.google.gson.JsonObject;
+import com.google.gson.JsonParser;
 import net.minecraftforge.common.ForgeConfigSpec;
 import net.okitsu.ysmepicfightcompat.animation.ModAnimationType;
 import org.junit.jupiter.api.Test;
 
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.InputStreamReader;
+import java.nio.charset.StandardCharsets;
 import java.util.List;
+import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class CachePreferencesTest {
     @Test
+    void usesTheChosenMemoryTargetNameWithoutALegacyAlias() {
+        List<String> path = List.of("client", "clientModelMemoryCacheTargetCount");
+        assertEquals(path, ClientPreferences.CLIENT_MODEL_MEMORY_CACHE_TARGET_COUNT.getPath());
+        assertEquals(64, ClientPreferences.CLIENT_MODEL_MEMORY_CACHE_TARGET_COUNT.getDefault().intValue());
+        ForgeConfigSpec.ValueSpec value =
+                (ForgeConfigSpec.ValueSpec) ClientPreferences.CLIENT_SPEC.getRaw(path);
+        assertEquals("config.ysm_epicfight_compat.client_model_memory_cache_target_count",
+                value.getTranslationKey());
+        assertTrue(value.getComment().startsWith("Target number"));
+        assertTrue(value.getComment().contains("may exceed this target"));
+        assertNull(ClientPreferences.CLIENT_SPEC.getRaw(List.of("client", "clientModelMemoryCacheSize")));
+    }
+
+    @Test
+    void oldMemoryCacheValuesAreNotMigratedToTheRenamedTarget() {
+        CommentedConfig config = CommentedConfig.inMemory();
+        config.set(List.of("client", "clientModelMemoryCacheSize"), 128);
+
+        ClientPreferences.CLIENT_SPEC.correct(config);
+
+        assertEquals(64, ((Number) config.getRaw(
+                List.of("client", "clientModelMemoryCacheTargetCount"))).intValue());
+        assertNull(config.getRaw(List.of("client", "clientModelMemoryCacheSize")));
+    }
+
+    @Test
+    void memoryTargetUiNamesAndTooltipsUseTheRenamedTranslationKey() throws IOException {
+        String key = "config.ysm_epicfight_compat.client_model_memory_cache_target_count";
+        String legacy = "config.ysm_epicfight_compat.client_model_memory_cache_size";
+        for (var entry : Map.of("en_us", "Client model memory cache target count",
+                "ja_jp", "クライアントモデルのメモリ保持目標数").entrySet()) {
+            String resource = "assets/ysm_epicfight_compat/lang/" + entry.getKey() + ".json";
+            try (InputStream input = getClass().getClassLoader().getResourceAsStream(resource)) {
+                assertNotNull(input, resource);
+                JsonObject translations = JsonParser.parseReader(
+                        new InputStreamReader(input, StandardCharsets.UTF_8)).getAsJsonObject();
+                assertEquals(entry.getValue(), translations.get(key).getAsString());
+                assertFalse(translations.get(key + ".tooltip").getAsString().isBlank());
+                assertFalse(translations.has(legacy));
+                assertFalse(translations.has(legacy + ".tooltip"));
+            }
+        }
+    }
+
+    @Test
     void exposesNamedIndependentCacheLimits() {
         assertEquals("ysm_epicfight_compat/ysm_epicfight_compat-client.toml",
                 ClientPreferences.CONFIG_FILE);
         assertTrue(ClientPreferences.CLIENT_SPEC.getRaw(List.of(
-                "client", "clientModelMemoryCacheSize")) instanceof ForgeConfigSpec.ValueSpec);
+                "client", "clientModelMemoryCacheTargetCount")) instanceof ForgeConfigSpec.ValueSpec);
         assertTrue(ClientPreferences.CLIENT_SPEC.getRaw(List.of(
                 "client", "clientModelDiskCacheMiB")) instanceof ForgeConfigSpec.ValueSpec);
         assertTrue(ClientPreferences.CLIENT_SPEC.getRaw(List.of(
@@ -91,7 +145,7 @@ class CachePreferencesTest {
     @Test
     void writesMetadataInDescriptionSampleOrRangeDefaultOrder() {
         assertCommentTail(ClientPreferences.CLIENT_SPEC,
-                List.of("client", "clientModelMemoryCacheSize"),
+                List.of("client", "clientModelMemoryCacheTargetCount"),
                 "Range: 8 ~ 512", "Default: 64");
         assertCommentTail(ClientPreferences.CLIENT_SPEC,
                 List.of("client", "clientModelDiskCacheMiB"),
@@ -170,7 +224,7 @@ class CachePreferencesTest {
     @Test
     void keepsNumericRangeValidationWithoutForgeAppendingCommentLines() {
         assertNumericRange(ClientPreferences.CLIENT_SPEC,
-                List.of("client", "clientModelMemoryCacheSize"), 8, 512);
+                List.of("client", "clientModelMemoryCacheTargetCount"), 8, 512);
         assertNumericRange(ClientPreferences.CLIENT_SPEC,
                 List.of("client", "clientModelDiskCacheMiB"), 0, 4096);
         assertNumericRange(ClientPreferences.CLIENT_SPEC,

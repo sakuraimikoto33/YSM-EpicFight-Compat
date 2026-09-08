@@ -13,6 +13,17 @@ public final class ConfigurationVariableValues {
     private ConfigurationVariableValues() {
     }
 
+    /** Mandatory ACK semantics marker, outside the legacy legal variable-count range. */
+    public static void writeAcknowledgedFormat(FriendlyByteBuf output) {
+        output.writeVarInt(-1);
+    }
+
+    public static void requireAcknowledgedFormat(FriendlyByteBuf input) {
+        if (input.readVarInt() != -1) {
+            throw new IllegalArgumentException("Unsupported unacknowledged configuration format");
+        }
+    }
+
     public static Map<String, Double> validate(Map<String, Double> values) {
         if (values == null || values.size() > MAX_VARIABLES) {
             throw new IllegalArgumentException("Invalid configuration-variable count");

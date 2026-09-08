@@ -17,6 +17,7 @@ import java.util.Iterator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 
 /** Answers server-issued sub-entity queries without transmitting local config rules. */
@@ -98,6 +99,16 @@ public final class ClientSubEntityModelPreferences {
         clientTick = 0L;
         invalidRulesLogged = false;
         RemoteSubEntityModelPreferences.beginConnection();
+    }
+
+    /**
+     * Client-thread snapshot of temporary model users. The bounded pending queue owns these
+     * pins, so answering, expiration, policy changes, and disconnect release them together.
+     * A launch-snapshot query may legitimately use a model no longer selected by its owner.
+     */
+    public static Set<String> pendingModelIds() {
+        return PENDING.values().stream().map(pending -> pending.query().modelId())
+                .collect(java.util.stream.Collectors.toUnmodifiableSet());
     }
 
     /** Invalidates the opaque owner policy generation after entity tags change. */

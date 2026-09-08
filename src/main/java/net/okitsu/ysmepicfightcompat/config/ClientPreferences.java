@@ -20,7 +20,7 @@ public final class ClientPreferences {
             "ysm_epicfight_compat/ysm_epicfight_compat-client.toml";
     public static final ForgeConfigSpec CLIENT_SPEC;
     public static final ForgeConfigSpec.ConfigValue<Integer>
-            CLIENT_MODEL_MEMORY_CACHE_SIZE;
+            CLIENT_MODEL_MEMORY_CACHE_TARGET_COUNT;
     public static final ForgeConfigSpec.ConfigValue<Integer>
             CLIENT_MODEL_DISK_CACHE_MIB;
     public static final ForgeConfigSpec.ConfigValue<Integer>
@@ -60,12 +60,14 @@ public final class ClientPreferences {
         config.comment("Client preferences.")
                 .translation("config.ysm_epicfight_compat.client")
                 .push("client");
-        CLIENT_MODEL_MEMORY_CACHE_SIZE = config
-                .comment("Maximum number of converted YSM combat meshes retained in memory.",
+        CLIENT_MODEL_MEMORY_CACHE_TARGET_COUNT = config
+                .comment("Target number of converted YSM combat models retained in memory.",
+                        "Only unused models are evicted. Models selected by loaded entities or needed",
+                        "by pending queries are protected, so their count may exceed this target.",
                         "Range: 8 ~ 512",
                         "Default: 64")
-                .translation("config.ysm_epicfight_compat.client_model_memory_cache_size")
-                .define("clientModelMemoryCacheSize", 64,
+                .translation("config.ysm_epicfight_compat.client_model_memory_cache_target_count")
+                .define("clientModelMemoryCacheTargetCount", 64,
                         value -> integerInRange(value, 8, 512));
         CLIENT_MODEL_DISK_CACHE_MIB = config
                 .comment("Maximum disk space in MiB for parsed models available on this client.",

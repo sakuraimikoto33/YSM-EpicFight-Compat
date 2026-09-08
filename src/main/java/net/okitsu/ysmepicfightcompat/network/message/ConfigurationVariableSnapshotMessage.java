@@ -11,12 +11,14 @@ import java.util.function.Supplier;
 
 /** Server-authoritative session snapshot for one player's ordinary configuration values. */
 public record ConfigurationVariableSnapshotMessage(UUID playerId, String modelId,
+                                                   UUID serverScope, UUID clientContext,
+                                                   long revision, long throughSequence,
                                                    Map<String, Double> values) {
     private static final int MAX_MODEL_ID_LENGTH = 4096;
 
     public ConfigurationVariableSnapshotMessage {
-        if (playerId == null || modelId == null
-                || modelId.length() > MAX_MODEL_ID_LENGTH) {
+        if (playerId == null || modelId == null || serverScope == null || clientContext == null
+                || revision < 0L || throughSequence < 0L || modelId.length() > MAX_MODEL_ID_LENGTH) {
             throw new IllegalArgumentException("Invalid configuration-variable snapshot");
         }
         values = ConfigurationVariableValues.validate(values);
@@ -26,20 +28,30 @@ public record ConfigurationVariableSnapshotMessage(UUID playerId, String modelId
                              FriendlyByteBuf output) {
         output.writeUUID(message.playerId());
         output.writeUtf(message.modelId(), MAX_MODEL_ID_LENGTH);
+        ConfigurationVariableValues.writeAcknowledgedFormat(output);
+        output.writeUUID(message.serverScope());
+        output.writeUUID(message.clientContext());
+        output.writeVarLong(message.revision());
+        output.writeVarLong(message.throughSequence());
         ConfigurationVariableValues.write(output, message.values());
     }
 
     public static ConfigurationVariableSnapshotMessage read(FriendlyByteBuf input) {
-        return new ConfigurationVariableSnapshotMessage(input.readUUID(),
-                input.readUtf(MAX_MODEL_ID_LENGTH), ConfigurationVariableValues.read(input));
+        UUID playerId = input.readUUID();
+        String modelId = input.readUtf(MAX_MODEL_ID_LENGTH);
+        ConfigurationVariableValues.requireAcknowledgedFormat(input);
+        return new ConfigurationVariableSnapshotMessage(playerId,
+                modelId, input.readUUID(), input.readUUID(),
+                input.readVarLong(), input.readVarLong(), ConfigurationVariableValues.read(input));
     }
 
     public static void receive(ConfigurationVariableSnapshotMessage message,
                                Supplier<NetworkEvent.Context> suppliedContext) {
         NetworkEvent.Context context = suppliedContext.get();
         if (context.getDirection().getReceptionSide().isClient()) {
+            var connection = context.getNetworkManager();
             context.enqueueWork(() -> OfficialConfigurationVariables.acceptSnapshot(
-                    message.playerId(), message.modelId(), message.values()));
+                    connection, message));
         }
         context.setPacketHandled(true);
     }

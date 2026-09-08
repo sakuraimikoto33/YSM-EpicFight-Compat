@@ -1,5 +1,7 @@
 package net.okitsu.ysmepicfightcompat.animation;
 
+import net.okitsu.ysmepicfightcompat.network.ConfigurationVariableValues;
+
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
@@ -27,10 +29,13 @@ final class ConfigurationVariableOverrides {
         ExpressionEngine.compile(source).evaluate(new OverlayEnvironment(
                 workingValues, workingAssigned, written, fallback));
 
+        Map<String, Double> replacement = new LinkedHashMap<>();
+        for (int slot : assigned) {
+            replacement.put(ExpressionEngine.slotName(slot), values.get(slot));
+        }
         for (int slot : workingAssigned) {
             if (isOrdinaryVariable(slot) && workingValues.get(slot) instanceof Number value) {
-                values.put(slot, ExpressionEngine.number(value));
-                assigned.add(slot);
+                replacement.put(ExpressionEngine.slotName(slot), ExpressionEngine.number(value));
             }
         }
         Map<String, Double> changes = new LinkedHashMap<>();
@@ -40,7 +45,11 @@ final class ConfigurationVariableOverrides {
                         ExpressionEngine.number(value));
             }
         }
-        return Map.copyOf(changes);
+        Map<String, Double> checkedChanges = ConfigurationVariableValues.validate(changes);
+        // Validate the complete next snapshot before publishing any local writes.
+        // In particular, a 257th variable must not leave an unsendable local value.
+        replace(replacement);
+        return checkedChanges;
     }
 
     synchronized Lookup lookup(int slot) {
@@ -56,13 +65,12 @@ final class ConfigurationVariableOverrides {
     }
 
     synchronized void replace(Map<String, Double> replacement) {
+        Map<String, Double> checked = ConfigurationVariableValues.validate(replacement);
         clear();
-        replacement.forEach((name, value) -> {
+        checked.forEach((name, value) -> {
             int slot = ExpressionEngine.slot(name);
-            if (isOrdinaryVariable(slot)) {
-                values.put(slot, Double.isFinite(value) ? value : 0.0D);
-                assigned.add(slot);
-            }
+            values.put(slot, value);
+            assigned.add(slot);
         });
     }
 

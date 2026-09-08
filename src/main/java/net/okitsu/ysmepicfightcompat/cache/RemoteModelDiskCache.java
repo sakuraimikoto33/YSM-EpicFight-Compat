@@ -6,7 +6,9 @@ import java.util.Optional;
 
 /** Server-scoped persistent cache for received model payloads. */
 public final class RemoteModelDiskCache {
-    private static final String KEY_PREFIX = "remote\0";
+    // Do not offer a digest for payloads that flattened unbounded durations.
+    // Unlike locally generated caches, remote entries have no source digest.
+    private static final String KEY_PREFIX = "remote\0unbounded-animation-duration-v1\0";
 
     private RemoteModelDiskCache() {
     }
@@ -36,7 +38,7 @@ public final class RemoteModelDiskCache {
         ModelDiskCache.maintain(CompatCachePaths.remote(), maximumBytes());
     }
 
-    private static String key(String serverIdentity, String modelId) {
+    static String key(String serverIdentity, String modelId) {
         return KEY_PREFIX + serverIdentity + '\0' + modelId;
     }
 

@@ -32,7 +32,7 @@ import java.util.stream.Stream;
 /** Reads official YSM model sources while leaving all generated state in YSM's own folders. */
 public final class LocalModelRepository {
     private static final byte[] MODEL_BUNDLE_SCHEMA =
-            "ysm-ef-model-bundle:pbr-materials:molang-sources:multiline-timelines-v1:first-clip-wins:render-flags-v1:culled-flat-faces-v1"
+            "ysm-ef-model-bundle:pbr-materials:molang-sources:multiline-timelines-v1:first-clip-wins:render-flags-v1:culled-flat-faces-v1:unbounded-animation-duration-v1"
                     .getBytes(StandardCharsets.UTF_8);
     private static final Path DEFAULT_ROOT = Path.of("config", "yes_steve_model");
     private static final List<String> CATALOGS = List.of("builtin", "built", "custom", "auth");

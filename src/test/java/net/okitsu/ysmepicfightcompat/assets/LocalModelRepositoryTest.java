@@ -209,7 +209,8 @@ class LocalModelRepositoryTest {
     @ValueSource(strings = {"ysm-ef-model-bundle:pbr-materials:molang-sources-v1",
             "ysm-ef-model-bundle:pbr-materials:molang-sources:multiline-timelines-v1",
             "ysm-ef-model-bundle:pbr-materials:molang-sources:multiline-timelines-v1:first-clip-wins",
-            "ysm-ef-model-bundle:pbr-materials:molang-sources:multiline-timelines-v1:first-clip-wins:render-flags-v1"})
+            "ysm-ef-model-bundle:pbr-materials:molang-sources:multiline-timelines-v1:first-clip-wins:render-flags-v1",
+            "ysm-ef-model-bundle:pbr-materials:molang-sources:multiline-timelines-v1:first-clip-wins:render-flags-v1:culled-flat-faces-v1"})
     void invalidatesCachesCreatedBeforeCurrentGeometryAndAnimationSemantics(
             String previousSchema, @TempDir Path root)
             throws Exception {

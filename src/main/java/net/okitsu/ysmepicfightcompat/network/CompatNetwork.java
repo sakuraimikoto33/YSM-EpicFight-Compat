@@ -14,6 +14,8 @@ import net.okitsu.ysmepicfightcompat.network.message.ModelChunkMessage;
 import net.okitsu.ysmepicfightcompat.network.message.ModelRequestMessage;
 import net.okitsu.ysmepicfightcompat.network.message.ConfigurationVariableSnapshotMessage;
 import net.okitsu.ysmepicfightcompat.network.message.ConfigurationVariableUpdateMessage;
+import net.okitsu.ysmepicfightcompat.network.message.ConfigurationVariableScopeRequestMessage;
+import net.okitsu.ysmepicfightcompat.network.message.ConfigurationVariableScopeReplyMessage;
 import net.okitsu.ysmepicfightcompat.network.message.HeldItemPreferenceSnapshotMessage;
 import net.okitsu.ysmepicfightcompat.network.message.HeldItemPreferenceUpdateMessage;
 import net.okitsu.ysmepicfightcompat.network.message.MovementAnimationPreferenceSnapshotMessage;
@@ -144,9 +146,19 @@ public final class CompatNetwork {
                 ScriptSyncSnapshotMessage::write, ScriptSyncSnapshotMessage::read,
                 ScriptSyncSnapshotMessage::receive,
                 Optional.of(NetworkDirection.PLAY_TO_CLIENT));
-        CHANNEL.registerMessage(id, ShieldBlockMessage.class,
+        CHANNEL.registerMessage(id++, ShieldBlockMessage.class,
                 ShieldBlockMessage::write, ShieldBlockMessage::read,
                 ShieldBlockMessage::receive,
+                Optional.of(NetworkDirection.PLAY_TO_CLIENT));
+        CHANNEL.registerMessage(id++, ConfigurationVariableScopeRequestMessage.class,
+                ConfigurationVariableScopeRequestMessage::write,
+                ConfigurationVariableScopeRequestMessage::read,
+                ConfigurationVariableScopeRequestMessage::receive,
+                Optional.of(NetworkDirection.PLAY_TO_SERVER));
+        CHANNEL.registerMessage(id, ConfigurationVariableScopeReplyMessage.class,
+                ConfigurationVariableScopeReplyMessage::write,
+                ConfigurationVariableScopeReplyMessage::read,
+                ConfigurationVariableScopeReplyMessage::receive,
                 Optional.of(NetworkDirection.PLAY_TO_CLIENT));
     }
 
@@ -170,8 +182,12 @@ public final class CompatNetwork {
         CHANNEL.send(PacketDistributor.TRACKING_ENTITY.with(() -> entity), message);
     }
 
-    public static void sendConfigurationUpdate(Map<String, Double> changes) {
-        CHANNEL.sendToServer(new ConfigurationVariableUpdateMessage(changes));
+    public static void sendConfigurationUpdate(ConfigurationVariableUpdateMessage message) {
+        CHANNEL.sendToServer(message);
+    }
+
+    public static void requestConfigurationScope(ConfigurationVariableScopeRequestMessage message) {
+        CHANNEL.sendToServer(message);
     }
 
     public static void sendHeldItemPreferences(HeldItemModelDisplayState state) {

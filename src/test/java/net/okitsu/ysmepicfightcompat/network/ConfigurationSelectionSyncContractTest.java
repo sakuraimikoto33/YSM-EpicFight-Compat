@@ -127,6 +127,75 @@ class ConfigurationSelectionSyncContractTest {
         assertTrue(apply.calls(RESOLVER, "current").isEmpty());
     }
 
+    @Test
+    void queuedUpdatesRecheckTheLiveServerPlayerBeforeReadingOrMergingValues() throws IOException {
+        List<MethodCode> methods = read(CONFIGURATION);
+        for (String name : List.of("accept", "requestScope")) {
+            MethodCode handler = method(methods, name);
+            assertTrue(only(handler.calls(CONFIGURATION, "isCurrentSender"))
+                    < only(handler.calls(ROOT + "network/PlayerSelectionNbt", "read")), name);
+        }
+        MethodCode guard = method(methods, "isCurrentSender");
+        assertEquals(1, guard.calls(NETWORK, "isConnected").size());
+        assertEquals(1, guard.calls(CONFIGURATION, "isCurrentPlayer").size());
+        assertEquals(1, guard.calls(CONFIGURATION, "onlinePlayer").size());
+        assertTrue(guard.steps.stream().anyMatch(step -> step.opcode == Opcodes.IF_ACMPNE
+                || step.opcode == Opcodes.IF_ACMPEQ), "The current player must match by identity");
+        MethodCode onlinePlayer = method(methods, "onlinePlayer");
+        assertEquals(1, onlinePlayer.calls("net/minecraft/server/players/PlayerList", "getPlayer").size());
+        assertTrue(only(onlinePlayer.calls("net/minecraft/server/players/PlayerList", "getPlayer"))
+                < onlinePlayer.steps.size() - 1);
+    }
+
+    @Test
+    void scopeGrantsAndNewPlayerAcknowledgementsDoNotResetOrRestoreOrdinaryValues()
+            throws IOException {
+        List<MethodCode> methods = read(CONFIGURATION);
+        for (String name : List.of("session", "requestScope")) {
+            MethodCode handler = method(methods, name);
+            assertTrue(handler.steps.stream().noneMatch(step -> CONFIGURATION.equals(step.owner)
+                    && "STATES".equals(step.name)), name + " must only touch ACK metadata");
+            assertTrue(handler.calls(CONFIGURATION, "reset").isEmpty());
+            assertTrue(handler.calls(CONFIGURATION, "message").isEmpty());
+            assertTrue(handler.calls(NETWORK, "toTrackersAndSelf").isEmpty());
+        }
+        MethodCode grant = method(methods, "requestScope");
+        assertEquals(1, grant.calls(ROOT + "network/ConfigurationSyncSession", "grant").size());
+        assertEquals(1, grant.calls(NETWORK, "toPlayer").size());
+    }
+
+    @Test
+    void snapshotsAndGrantsVerifyTheirOriginConnectionBeforeMutatingState() throws IOException {
+        List<MethodCode> methods = read(OFFICIAL);
+        for (String name : List.of("acceptSnapshot", "acceptScope")) {
+            MethodCode handler = method(methods, name);
+            assertTrue(only(handler.calls(OFFICIAL, "isCurrentConnection"))
+                    < only(handler.calls(OFFICIAL, "bindLocal")), name);
+        }
+        for (String type : List.of("ConfigurationVariableSnapshotMessage",
+                "ConfigurationVariableScopeReplyMessage")) {
+            MethodCode receive = method(read(ROOT + "network/message/" + type), "receive");
+            assertTrue(only(receive.calls("net/minecraftforge/network/NetworkEvent$Context",
+                    "getNetworkManager")) < only(receive.calls(
+                    "net/minecraftforge/network/NetworkEvent$Context", "enqueueWork")), type);
+        }
+    }
+
+    @Test
+    void acknowledgementsRetireRejectedEditsBeforePublishingAndNeverEvaluateExpressions()
+            throws IOException {
+        MethodCode accept = method(read(CONFIGURATION), "accept");
+        assertTrue(only(accept.calls(ROOT + "network/ConfigurationSyncSession", "processed"))
+                < only(accept.calls(NETWORK, "toTrackersAndSelf")));
+        MethodCode acknowledge = method(read(OVERRIDES), "acknowledge");
+        assertTrue(acknowledge.calls(ROOT + "animation/ConfigurationVariableOverrides",
+                "evaluate").isEmpty());
+        MethodCode scopeReply = method(read(OFFICIAL), "acceptScope");
+        assertTrue(scopeReply.calls(OVERRIDES, "evaluate").isEmpty());
+        MethodCode retry = method(read(OFFICIAL), "tickSync");
+        assertTrue(retry.calls(OVERRIDES, "evaluate").isEmpty());
+    }
+
     private static MethodCode method(List<MethodCode> methods, String name) {
         return only(methods.stream().filter(method -> method.name.equals(name)).toList());
     }

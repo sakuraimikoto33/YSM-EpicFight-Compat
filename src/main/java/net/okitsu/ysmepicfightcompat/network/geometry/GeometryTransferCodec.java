@@ -31,6 +31,10 @@ import java.util.zip.GZIPOutputStream;
 public final class GeometryTransferCodec {
     private static final int MAGIC = 0x59454632;
     private static final int VERSION = 1;
+    // Required even while VERSION remains 1: older payloads irreversibly mapped
+    // unbounded animation durations to zero. This NaN bit pattern cannot match
+    // the finite widthScale that occupied this position in the previous format.
+    private static final int UNBOUNDED_DURATION_MARKER = 0x7FC05945;
     public static final int MAX_COMPRESSED_BYTES = 64 * 1024 * 1024;
     private static final int MAX_EXPANDED_BYTES = 256 * 1024 * 1024;
     private static final int MAX_BONES = 65_536;
@@ -64,6 +68,7 @@ public final class GeometryTransferCodec {
              DataOutputStream output = new DataOutputStream(gzip)) {
             output.writeInt(MAGIC);
             output.writeInt(VERSION);
+            output.writeInt(UNBOUNDED_DURATION_MARKER);
             finite(output, model.widthScale());
             finite(output, model.heightScale());
             string(output, model.defaultTexture());
@@ -93,6 +98,9 @@ public final class GeometryTransferCodec {
              DataInputStream input = new DataInputStream(limited)) {
             if (input.readInt() != MAGIC || input.readInt() != VERSION) {
                 throw new IOException("Unsupported model transfer format");
+            }
+            if (input.readInt() != UNBOUNDED_DURATION_MARKER) {
+                throw new IOException("Unsupported model animation duration semantics");
             }
             float widthScale = finite(input);
             float heightScale = finite(input);
@@ -369,10 +377,7 @@ public final class GeometryTransferCodec {
         for (AnimationClip clip : animations.values()) {
             string(output, clip.name());
             output.writeByte(clip.playback().wireValue());
-            // Official YSM packages use +Infinity for animations without a finite end.
-            // Duration is not consulted by the transferred default-form program, so keep
-            // the wire format finite without rejecting an otherwise valid package.
-            finite(output, Float.isFinite(clip.duration()) ? clip.duration() : 0.0F);
+            animationDuration(output, clip.duration());
             writeScalar(output, clip.blendWeight());
             bounded(clip.boneTracks().size(), MAX_BONES, "animated bone");
             output.writeInt(clip.boneTracks().size());
@@ -481,7 +486,7 @@ public final class GeometryTransferCodec {
             String name = string(input);
             AnimationClip clip = new AnimationClip(name);
             clip.playback(AnimationClip.Playback.fromWireValue(input.readUnsignedByte()));
-            clip.duration(finite(input));
+            clip.duration(animationDuration(input));
             readScalar(input, clip.blendWeight());
             int boneCount = bounded(input.readInt(), MAX_BONES, "animated bone");
             for (int boneIndex = 0; boneIndex < boneCount; boneIndex++) {
@@ -916,6 +921,25 @@ public final class GeometryTransferCodec {
             throw new IOException("Non-finite model value");
         }
         output.writeFloat(value);
+    }
+
+    private static void animationDuration(DataOutputStream output, float value) throws IOException {
+        validateAnimationDuration(value);
+        output.writeFloat(value);
+    }
+
+    private static float animationDuration(DataInputStream input) throws IOException {
+        float value = input.readFloat();
+        validateAnimationDuration(value);
+        return value;
+    }
+
+    private static void validateAnimationDuration(float value) throws IOException {
+        // Only duration has an official unbounded sentinel. Zero still means
+        // unspecified/key-derived length, and every other field stays finite.
+        if (!Float.isFinite(value) && value != Float.POSITIVE_INFINITY) {
+            throw new IOException("Invalid animation duration");
+        }
     }
 
     private static float finite(DataInputStream input) throws IOException {

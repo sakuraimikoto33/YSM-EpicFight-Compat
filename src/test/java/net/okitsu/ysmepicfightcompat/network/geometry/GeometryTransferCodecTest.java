@@ -22,6 +22,7 @@ import java.io.ByteArrayOutputStream;
 import java.io.DataInputStream;
 import java.io.DataOutputStream;
 import java.io.IOException;
+import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -38,6 +39,114 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class GeometryTransferCodecTest {
+    @ParameterizedTest
+    @ValueSource(floats = {0.0F, 2.5F, Float.POSITIVE_INFINITY})
+    void preservesFiniteUnspecifiedAndUnboundedDurationsAcrossEveryCacheRegion(
+            float duration, @TempDir Path root) throws IOException {
+        for (AnimationClip.Playback playback : AnimationClip.Playback.values()) {
+            ModelBundle model = durationModel(duration);
+            AnimationClip original = model.animations().get("duration");
+            original.playback(playback);
+            original.timeline().add(new AnimationClip.TimelineEvent(1.0F, List.of("v.event+=1;")));
+            original.soundEffects().add(new AnimationClip.SoundEvent(1.5F, "later"));
+            original.particleEffects().add(new AnimationClip.ParticleEvent(2.0F,
+                    new DeclarativeParticleEffect("smoke", "", "", false)));
+            byte[] payload = GeometryTransferCodec.encode(model);
+            byte[] digest = ModelDiskCache.sha256(payload);
+            for (String region : List.of("client", "server", "remote")) {
+                Path directory = root.resolve(region);
+                assertTrue(ModelDiskCache.write(directory, "duration",
+                        new ModelDiskCache.Entry(digest, digest, payload), 1024 * 1024));
+                ModelBundle restored = GeometryTransferCodec.decode("duration",
+                        ModelDiskCache.read(directory, "duration", 1024 * 1024)
+                                .orElseThrow().payload());
+                ModelBundle forwarded = GeometryTransferCodec.decode("duration",
+                        GeometryTransferCodec.encode(restored));
+                for (ModelBundle candidate : List.of(restored, forwarded)) {
+                    AnimationClip clip = candidate.animations().get("duration");
+                    assertEquals(duration, clip.duration());
+                    assertEquals(playback, clip.playback());
+                    assertEquals(original.timeline(), clip.timeline());
+                    assertEquals(original.soundEffects(), clip.soundEffects());
+                    assertEquals(original.particleEffects(), clip.particleEffects());
+                }
+            }
+        }
+    }
+
+    @Test
+    void rejectsInvalidDurationValuesInBothDirectionsWithoutRelaxingOtherFields()
+            throws IOException {
+        byte[] expanded = expanded(GeometryTransferCodec.encode(durationModel(1.0F)));
+        int durationOffset = durationOffset(expanded);
+        for (float invalid : new float[]{Float.NaN, Float.NEGATIVE_INFINITY}) {
+            assertThrows(IOException.class, () -> GeometryTransferCodec.encode(durationModel(invalid)));
+            byte[] malformed = expanded.clone();
+            ByteBuffer.wrap(malformed).putFloat(durationOffset, invalid);
+            assertThrows(IOException.class, () -> GeometryTransferCodec.decode("duration", gzip(malformed)));
+        }
+        for (float invalid : new float[]{Float.NaN, Float.NEGATIVE_INFINITY, Float.POSITIVE_INFINITY}) {
+            ModelBundle invalidScale = ModelBundle.remote("scale", new GeometryDocument(),
+                    Map.of(), invalid, 1.0F, "");
+            assertThrows(IOException.class, () -> GeometryTransferCodec.encode(invalidScale));
+            byte[] malformed = expanded.clone();
+            ByteBuffer.wrap(malformed).putFloat(3 * Integer.BYTES, invalid);
+            assertThrows(IOException.class, () -> GeometryTransferCodec.decode("scale", gzip(malformed)));
+            ModelBundle invalidEvent = durationModel(Float.POSITIVE_INFINITY);
+            invalidEvent.animations().get("duration").timeline().add(
+                    new AnimationClip.TimelineEvent(invalid, List.of("v.event=1;")));
+            assertThrows(IOException.class, () -> GeometryTransferCodec.encode(invalidEvent));
+        }
+    }
+
+    @Test
+    void rejectsLossyLegacyPayloadsAndCannotBeMisreadByTheOldFiniteScaleDecoder()
+            throws IOException {
+        // Zero is also a legitimate duration. Never guess which old zero values
+        // used to be unbounded; require the new semantic marker for every clip.
+        byte[] expanded = expanded(GeometryTransferCodec.encode(durationModel(0.0F)));
+        byte[] legacy = new byte[expanded.length - Integer.BYTES];
+        System.arraycopy(expanded, 0, legacy, 0, 2 * Integer.BYTES);
+        System.arraycopy(expanded, 3 * Integer.BYTES, legacy, 2 * Integer.BYTES,
+                expanded.length - 3 * Integer.BYTES);
+        IOException rejected = assertThrows(IOException.class,
+                () -> GeometryTransferCodec.decode("legacy", gzip(legacy)));
+        assertEquals("Unsupported model animation duration semantics", rejected.getMessage());
+        // An old decoder reads the marker as widthScale and rejects it using its
+        // existing finite-value guard, before interpreting any further fields.
+        assertTrue(Float.isFinite(ByteBuffer.wrap(legacy).getFloat(2 * Integer.BYTES)));
+        assertTrue(Float.isNaN(ByteBuffer.wrap(expanded).getFloat(2 * Integer.BYTES)));
+        byte[] wrongMarker = expanded.clone();
+        ByteBuffer.wrap(wrongMarker).putInt(2 * Integer.BYTES, 0);
+        assertThrows(IOException.class, () -> GeometryTransferCodec.decode("marker", gzip(wrongMarker)));
+    }
+
+    private static ModelBundle durationModel(float duration) {
+        AnimationClip clip = new AnimationClip("duration");
+        clip.duration(duration);
+        return ModelBundle.remote("duration", new GeometryDocument(), Map.of(clip.name(), clip),
+                1.0F, 1.0F, "");
+    }
+
+    private static byte[] expanded(byte[] payload) throws IOException {
+        try (var gzip = new GZIPInputStream(new ByteArrayInputStream(payload))) {
+            return gzip.readAllBytes();
+        }
+    }
+
+    private static int durationOffset(byte[] expanded) throws IOException {
+        try (var input = new DataInputStream(new ByteArrayInputStream(expanded))) {
+            input.skipNBytes(3 * Integer.BYTES + 2 * Float.BYTES);
+            input.skipNBytes(input.readInt()); // default texture
+            input.skipNBytes(2 * Integer.BYTES); // texture dimensions
+            assertEquals(0, input.readInt()); // geometry bones
+            assertEquals(1, input.readInt()); // animation count
+            input.skipNBytes(input.readInt()); // animation name
+            input.readUnsignedByte(); // playback
+            return expanded.length - input.available();
+        }
+    }
+
     @ParameterizedTest
     @ValueSource(booleans = {false, true})
     void retainsFlatFaceGeometryAndUvsAcrossTransferAndEveryCacheRegion(
@@ -437,7 +546,7 @@ class GeometryTransferCodecTest {
                 restored.particleEffects().get(0).particle());
         assertEquals("variable.scale", restored.boneTracks().get("head")
                 .scale().keyframes().get(0).value().expression(2));
-        assertEquals(0.0F, decoded.animations().get("parallel.endless").duration());
+        assertEquals(Float.POSITIVE_INFINITY, decoded.animations().get("parallel.endless").duration());
         AnimationController restoredController = decoded.animationControllers()
                 .get("player.parallel_4");
         assertEquals("default", restoredController.initialState());

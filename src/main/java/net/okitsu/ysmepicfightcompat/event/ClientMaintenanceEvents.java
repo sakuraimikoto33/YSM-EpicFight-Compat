@@ -101,6 +101,13 @@ public final class ClientMaintenanceEvents {
     }
 
     @SubscribeEvent
+    public static void renderFrame(TickEvent.RenderTickEvent event) {
+        if (event.phase == TickEvent.Phase.START) {
+            CombatMeshCache.uploadReadyTextures();
+        }
+    }
+
+    @SubscribeEvent
     public static void clientTick(TickEvent.ClientTickEvent event) {
         if (event.phase != TickEvent.Phase.END) {
             return;
@@ -108,10 +115,12 @@ public final class ClientMaintenanceEvents {
         TouhouMaidRenderBridge.endClientTick();
         CombatMeshCache.advanceAnimationOutputs();
         ClientAttackSoundRouter.tick();
+        OfficialConfigurationVariables.tickSync();
         ClientHeldItemModelPreferences.tickSync();
         ClientMovementAnimationPreferences.tickSync();
         ClientMaidPreferenceSync.tickSync();
         ClientSubEntityModelPreferences.tickSync();
+        CombatMeshCache.maintainModelCache();
         CombatMeshCache.releaseExpiredTextures();
         if (++failureCountdown >= FAILURE_RECHECK_INTERVAL) {
             failureCountdown = 0;

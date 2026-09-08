@@ -3,14 +3,45 @@ package net.okitsu.ysmepicfightcompat.animation;
 import org.junit.jupiter.api.Test;
 
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class ConfigurationVariableOverridesTest {
+    @Test
+    void anOversizedEvaluationCannotPublishAnyOfItsAssignments() {
+        ConfigurationVariableOverrides overrides = new ConfigurationVariableOverrides();
+        Map<String, Double> initial = new LinkedHashMap<>();
+        for (int index = 0; index < 256; index++) {
+            initial.put("v.value" + index, (double) index);
+        }
+        overrides.replace(initial);
+
+        assertThrows(IllegalArgumentException.class,
+                () -> overrides.evaluate("v.value0=99;v.extra=1;", new Fallback()));
+        assertEquals(0, overrides.lookup(ExpressionEngine.slot("v.value0")).value());
+        assertEquals(255, overrides.lookup(ExpressionEngine.slot("v.value255")).value());
+        assertFalse(overrides.lookup(ExpressionEngine.slot("v.extra")).present());
+        assertEquals(Map.of("v.value0", 1.0D), overrides.evaluate("v.value0+=1;", new Fallback()));
+    }
+
+    @Test
+    void invalidReplacementsAreRejectedBeforeClearingTheCurrentSnapshot() {
+        ConfigurationVariableOverrides overrides = new ConfigurationVariableOverrides();
+        overrides.replace(Map.of("v.keep", 0.0D));
+        for (Map<String, Double> invalid : List.of(Map.of("v.bad", Double.NaN),
+                Map.of("v.roaming.hat", 1.0D), Map.of("v.a", 1.0D, "variable.a", 2.0D))) {
+            assertThrows(IllegalArgumentException.class, () -> overrides.replace(invalid));
+            assertTrue(overrides.lookup(ExpressionEngine.slot("v.keep")).present());
+            assertEquals(0, overrides.lookup(ExpressionEngine.slot("v.keep")).value());
+        }
+    }
+
     @Test
     void mirrorsOrdinaryVariablesButLeavesRoamingPersistenceToOfficialYsm() {
         ConfigurationVariableOverrides overrides = new ConfigurationVariableOverrides();

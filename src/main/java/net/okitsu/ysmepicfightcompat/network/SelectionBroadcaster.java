@@ -59,10 +59,28 @@ public final class SelectionBroadcaster {
 
     @SubscribeEvent
     public static void playerLoggedOut(PlayerEvent.PlayerLoggedOutEvent event) {
-        LAST_SENT.remove(event.getEntity().getUUID());
         if (event.getEntity() instanceof ServerPlayer player) {
+            if (!ConfigurationVariableBroadcaster.mayRemove(player)) {
+                return;
+            }
+            LAST_SENT.remove(player.getUUID());
             ServerModelTransfers.playerDisconnected(player);
             ConfigurationVariableBroadcaster.remove(player);
+        }
+    }
+
+    @SubscribeEvent
+    public static void playerCloned(PlayerEvent.Clone event) {
+        if (event.getOriginal() instanceof ServerPlayer original
+                && event.getEntity() instanceof ServerPlayer replacement) {
+            ConfigurationVariableBroadcaster.cloned(original, replacement, event.isWasDeath());
+        }
+    }
+
+    @SubscribeEvent
+    public static void playerRespawned(PlayerEvent.PlayerRespawnEvent event) {
+        if (event.getEntity() instanceof ServerPlayer player) {
+            ConfigurationVariableBroadcaster.respawned(player, event.isEndConquered());
         }
     }
 
@@ -81,7 +99,11 @@ public final class SelectionBroadcaster {
             return;
         }
         MinecraftServer server = event.getServer();
-        if (server == null || server.getTickCount() % POLL_INTERVAL != 0) {
+        if (server == null) {
+            return;
+        }
+        ConfigurationVariableBroadcaster.flushRespawns();
+        if (server.getTickCount() % POLL_INTERVAL != 0) {
             return;
         }
         for (ServerPlayer player : server.getPlayerList().getPlayers()) {
@@ -91,6 +113,9 @@ public final class SelectionBroadcaster {
 
     /** Shared by polling and edits; returns whether a model change also sent its variables. */
     static boolean synchronize(ServerPlayer player, PlayerSelectionNbt.Selection selection) {
+        if (!ConfigurationVariableBroadcaster.isCurrentPlayer(player)) {
+            return false;
+        }
         Snapshot current = snapshot(selection);
         Snapshot previous = LAST_SENT.put(player.getUUID(), current);
         if (!current.equals(previous)) {
@@ -103,6 +128,17 @@ public final class SelectionBroadcaster {
         return false;
     }
 
+    /** A new life needs notification even when the selected model and texture are unchanged. */
+    static void resynchronize(ServerPlayer player) {
+        if (!ConfigurationVariableBroadcaster.isCurrentPlayer(player)) {
+            return;
+        }
+        Snapshot current = snapshot(player);
+        LAST_SENT.put(player.getUUID(), current);
+        broadcast(player, current);
+        ConfigurationVariableBroadcaster.synchronize(player, current.modelId());
+    }
+
     @SubscribeEvent
     public static void serverStopped(ServerStoppedEvent event) {
         LAST_SENT.clear();
@@ -111,7 +147,8 @@ public final class SelectionBroadcaster {
     }
 
     private static void send(ServerPlayer selectedPlayer, ServerPlayer recipient) {
-        if (!CompatNetwork.isConnected(recipient)) {
+        if (!ConfigurationVariableBroadcaster.isCurrentPlayer(selectedPlayer)
+                || !CompatNetwork.isConnected(recipient)) {
             return;
         }
         Snapshot state = snapshot(selectedPlayer);
