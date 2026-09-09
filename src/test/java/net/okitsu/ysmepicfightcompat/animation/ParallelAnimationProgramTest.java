@@ -24,6 +24,74 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class ParallelAnimationProgramTest {
     @Test
+    void numericTrackReuseStillReevaluatesDynamicBlendWeightAtTheSameTime() {
+        GeometryDocument geometry = headAndEar();
+        AnimationClip clip = new AnimationClip("parallel0");
+        clip.blendWeight().setExpression("v.weight");
+        AnimationClip.BoneTracks tracks = new AnimationClip.BoneTracks();
+        tracks.rotation(linearTrack(1, 0, 0, 0, 0, 0, 80));
+        clip.boneTracks().put("ear", tracks);
+        ParallelAnimationProgram program = program(geometry, clip);
+        NeutralEnvironment environment = new NeutralEnvironment();
+        environment.writeVariable(ExpressionEngine.slot("v.weight"), 1);
+        Matrix4f first = new Matrix4f().translation(0, 1, 0)
+                .rotateZ((float) Math.toRadians(20)).translate(0, -1, 0);
+        assertMatrix(first, program.sampleAt(0.25, environment).parallelDeltas()[1]);
+
+        environment.writeVariable(ExpressionEngine.slot("v.weight"), 2);
+        Matrix4f second = new Matrix4f().translation(0, 1, 0)
+                .rotateZ((float) Math.toRadians(40)).translate(0, -1, 0);
+        assertMatrix(second, program.sampleAt(0.25, environment).parallelDeltas()[1]);
+    }
+
+    @Test
+    void warmNumericTrackDoesNotSuppressScriptBoneSideEffectsOnRepeatDraws() {
+        GeometryDocument geometry = headAndEar();
+        AnimationClip script = new AnimationClip("pre_parallel0");
+        script.boneTracks().put("molang", rotationExpression("v.calls+=1", "0", "0"));
+        AnimationClip pose = new AnimationClip("parallel0");
+        AnimationClip.BoneTracks tracks = new AnimationClip.BoneTracks();
+        tracks.rotation(linearTrack(1, 0, 0, 0, 0, 0, 80));
+        pose.boneTracks().put("ear", tracks);
+        ParallelAnimationProgram program = new ParallelAnimationProgram(geometry,
+                Map.of(script.name(), script, pose.name(), pose),
+                AuxiliaryBoneLayout.create(geometry), 1, 1);
+        NeutralEnvironment environment = new NeutralEnvironment();
+
+        program.sampleAt(0.25, environment);
+        assertEquals(1, environment.value("v.calls"));
+        program.sampleAt(0.25, environment);
+        assertEquals(2, environment.value("v.calls"));
+    }
+
+    @Test
+    void numericTrackReuseDoesNotRetainThePreviousPoseOwnershipOrComposition() {
+        GeometryDocument geometry = headAndEar();
+        AnimationClip walk = new AnimationClip("walk");
+        AnimationClip.BoneTracks tracks = new AnimationClip.BoneTracks();
+        tracks.rotation(linearTrack(1, 0, 0, 0, 0, 0, 80));
+        walk.boneTracks().put("ear", tracks);
+        ParallelAnimationProgram program = program(geometry, walk);
+        NeutralEnvironment environment = new NeutralEnvironment();
+        AnimationControllerProgram.RuntimeState controller = new AnimationControllerProgram.RuntimeState();
+
+        ParallelAnimationProgram.Frame owned = program.sampleMovementAt(0.25,
+                List.of(walk.name()), walk.name(), MovementAnimationType.WALK, environment, controller);
+        assertTrue(owned.replaceEpicFightPose());
+        assertFalse(isIdentity(owned.wholeModelDeltas()[1]));
+        ParallelAnimationProgram.Frame parallel = program.sampleAutomaticAt(0.25,
+                List.of(walk.name()), environment);
+        assertFalse(parallel.replaceEpicFightPose());
+        assertIdentity(parallel.wholeModelDeltas()[1]);
+        assertFalse(isIdentity(parallel.parallelDeltas()[1]));
+        ParallelAnimationProgram.Frame restored = program.sampleMovementAt(0.25,
+                List.of(walk.name()), walk.name(), MovementAnimationType.WALK, environment, controller);
+        assertTrue(restored.replaceEpicFightPose());
+        assertFalse(isIdentity(restored.wholeModelDeltas()[1]));
+        assertIdentity(restored.parallelDeltas()[1]);
+    }
+
+    @Test
     void controllerTimelinesEmitOutputsOnlyForNonZeroWeights() {
         assertFalse(ParallelAnimationProgram.emitsControllerOutputs(0.0F));
         assertFalse(ParallelAnimationProgram.emitsControllerOutputs(Float.NaN));

@@ -19,6 +19,57 @@ import static org.junit.jupiter.api.Assertions.*;
 /** Exercises script hooks through selection and pose composition, without a Minecraft entity. */
 class ScriptAnimationIntegrationTest {
     @Test
+    void numericTrackReuseLeavesFrameUpdatesAndQueuedSyncAtEveryDistinctSampleTime() {
+        AnimationClip clip = rotationClip("parallel0", "ear", 10);
+        AnimationClip.VectorValue endpoint = new AnimationClip.VectorValue();
+        endpoint.setConstant(2, 30);
+        clip.boneTracks().get("ear").rotation().keyframes().add(new AnimationClip.Keyframe(
+                1, AnimationClip.Interpolation.LINEAR, endpoint, null));
+        Fixture fixture = fixture(List.of(clip), Map.of(), Map.of(
+                "update@player_update", "v.update_count+=1;",
+                "sync@sync", "v.sync_count+=1;"));
+
+        fixture.sample(0, emptySelection(), false);
+        fixture.sample(0, emptySelection(), false);
+        assertEquals(1, fixture.environment.value("v.update_count"));
+        fixture.scripts.enqueueSync(new double[]{7});
+        fixture.sample(1.0D / 144.0D, emptySelection(), false);
+        assertEquals(2, fixture.environment.value("v.update_count"));
+        assertEquals(1, fixture.environment.value("v.sync_count"));
+        fixture.sample(2.0D / 144.0D, emptySelection(), false);
+        assertEquals(3, fixture.environment.value("v.update_count"));
+        assertEquals(1, fixture.environment.value("v.sync_count"));
+    }
+
+    @Test
+    void numericTrackReuseDoesNotDelayControllerEdgesWithinOneSixtiethOfASecond() {
+        AnimationController.BlendTransition immediate = new AnimationController.BlendTransition(0, List.of());
+        AnimationController.State first = new AnimationController.State("first",
+                List.of(new AnimationController.AnimationReference("first_pose", "1")),
+                List.of(new AnimationController.Transition("second", "v.changed")),
+                List.of(), List.of("v.exits+=1;"), immediate, false);
+        AnimationController.State second = new AnimationController.State("second",
+                List.of(new AnimationController.AnimationReference("second_pose", "1")),
+                List.of(), List.of("v.entries+=1;"), List.of(), immediate, false);
+        AnimationController controller = new AnimationController("player.parallel_reuse", "first",
+                Map.of("first", first, "second", second));
+        AnimationClip firstClip = rotationClip("first_pose", "ear", 10);
+        AnimationClip secondClip = rotationClip("second_pose", "ear", 60);
+        for (AnimationClip clip : List.of(firstClip, secondClip)) {
+            AnimationClip.Track track = clip.boneTracks().get("ear").rotation();
+            track.keyframes().add(new AnimationClip.Keyframe(1,
+                    AnimationClip.Interpolation.LINEAR, track.keyframes().get(0).value(), null));
+        }
+        Fixture fixture = fixture(List.of(firstClip, secondClip), Map.of(controller.name(), controller), Map.of());
+        assertRotationZ(10, fixture.sample(0, emptySelection(), false).parallelDeltas()[1]);
+        assertRotationZ(10, fixture.sample(0, emptySelection(), false).parallelDeltas()[1]);
+        fixture.environment.writeVariable(ExpressionEngine.slot("v.changed"), 1);
+        assertRotationZ(60, fixture.sample(1.0D / 144.0D, emptySelection(), false).parallelDeltas()[1]);
+        assertEquals(1, fixture.environment.value("v.exits"));
+        assertEquals(1, fixture.environment.value("v.entries"));
+    }
+
+    @Test
     void bedrockInventoryTransitionsDoNotConsumeTheWorldControllerStepAtTheSameTime() {
         AnimationController.BlendTransition immediate =
                 new AnimationController.BlendTransition(0, List.of());

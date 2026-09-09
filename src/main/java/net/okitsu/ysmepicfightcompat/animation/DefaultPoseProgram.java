@@ -1,7 +1,6 @@
 package net.okitsu.ysmepicfightcompat.animation;
 
 import net.okitsu.ysmepicfightcompat.geometry.GeometryDocument;
-import net.okitsu.ysmepicfightcompat.mesh.CompatHumanoidMesh;
 import net.okitsu.ysmepicfightcompat.mesh.HumanoidRig;
 import net.okitsu.ysmepicfightcompat.mesh.SkinMeshCompiler;
 import yesman.epicfight.api.client.model.MeshPart;
@@ -32,23 +31,44 @@ public final class DefaultPoseProgram {
         hiddenByBone = calculateVisibility(geometry, animations);
     }
 
-    public void apply(CompatHumanoidMesh mesh, Map<String, Boolean> firstPersonParts,
-                      boolean showUnlistedParts, boolean firstPerson,
-                      Set<String> runtimeHiddenBones) {
-        for (Map.Entry<String, MeshPart> entry : mesh.partsView()) {
+    /** Resolve immutable part names once, separately for each converted mesh. */
+    public BoundVisibility bind(Set<Map.Entry<String, MeshPart>> parts) {
+        List<PartBinding> bindings = new ArrayList<>();
+        for (Map.Entry<String, MeshPart> entry : parts) {
             String name = entry.getKey();
             if (!name.startsWith(SkinMeshCompiler.BONE_PART_PREFIX)) {
                 continue;
             }
             String bone = name.substring(SkinMeshCompiler.BONE_PART_PREFIX.length());
-            boolean hidden = runtimeHiddenBones == null
-                    ? hiddenByBone.getOrDefault(bone, false)
-                    : runtimeHiddenBones.contains(bone);
-            if (firstPerson) {
-                int joint = jointByBone.getOrDefault(bone, HumanoidRig.ROOT);
-                hidden |= !isJointVisible(joint, firstPersonParts, showUnlistedParts);
+            bindings.add(new PartBinding(bone, entry.getValue(),
+                    hiddenByBone.getOrDefault(bone, false),
+                    jointByBone.getOrDefault(bone, HumanoidRig.ROOT)));
+        }
+        return new BoundVisibility(bindings.toArray(PartBinding[]::new));
+    }
+
+    private record PartBinding(String bone, MeshPart part, boolean defaultHidden, int joint) {
+    }
+
+    /** Names and joint bindings are fixed; visibility inputs remain live on every draw. */
+    public static final class BoundVisibility {
+        private final PartBinding[] parts;
+
+        private BoundVisibility(PartBinding[] parts) {
+            this.parts = parts;
+        }
+
+        public void apply(Map<String, Boolean> firstPersonParts,
+                          boolean showUnlistedParts, boolean firstPerson,
+                          Set<String> runtimeHiddenBones) {
+            for (PartBinding binding : parts) {
+                boolean hidden = runtimeHiddenBones == null
+                        ? binding.defaultHidden() : runtimeHiddenBones.contains(binding.bone());
+                if (firstPerson) {
+                    hidden |= !isJointVisible(binding.joint(), firstPersonParts, showUnlistedParts);
+                }
+                binding.part().setHidden(hidden);
             }
-            entry.getValue().setHidden(hidden);
         }
     }
 
@@ -164,13 +184,9 @@ public final class DefaultPoseProgram {
         return result;
     }
 
-    private static boolean visible(Map<String, Boolean> parts, boolean fallback, String... names) {
-        for (String name : names) {
-            if (parts.getOrDefault(name, fallback)) {
-                return true;
-            }
-        }
-        return false;
+    private static boolean visible(Map<String, Boolean> parts, boolean fallback,
+                                   String primary, String overlay) {
+        return parts.getOrDefault(primary, fallback) || parts.getOrDefault(overlay, fallback);
     }
 
     private static final class NeutralEnvironment implements ExpressionEngine.Environment {

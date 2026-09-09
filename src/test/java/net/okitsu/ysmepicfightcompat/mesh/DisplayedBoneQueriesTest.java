@@ -8,10 +8,16 @@ import org.joml.Vector3f;
 import org.junit.jupiter.api.Test;
 import yesman.epicfight.api.utils.math.OpenMatrix4f;
 
+import java.util.AbstractSet;
+import java.util.Iterator;
+import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.atomic.AtomicReference;
 
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
 
 class DisplayedBoneQueriesTest {
@@ -102,6 +108,153 @@ class DisplayedBoneQueriesTest {
         assertEquals(first.values("Root"), invalid.values("Root"));
     }
 
+    @Test
+    void batchedCaptureMatchesIndependentCapturesAcrossSignedAndCollapsedAxes() {
+        Vec3[] scales = {new Vec3(1, 1, 1), new Vec3(-1, 2, 3),
+                new Vec3(1, -2, 3), new Vec3(1, 2, -3), new Vec3(-1, -2, 3),
+                new Vec3(0, 2, 3), new Vec3(0, 0, 3), Vec3.ZERO};
+        GeometryDocument.Bone[] bones = new GeometryDocument.Bone[24];
+        Map<String, Matrix4f> worlds = new LinkedHashMap<>();
+        for (int index = 0; index < bones.length; index++) {
+            Vec3 pivot = new Vec3(index - 4, index + 2, 3 - index);
+            Vec3 bindRotation = new Vec3(index * 3, index - 5, 7 - index);
+            bones[index] = bone("Root" + index, "", pivot, bindRotation);
+            worlds.put(bones[index].name(), local(bones[index],
+                    new Vec3(index - 3, 5 - index, index * 2),
+                    new Vec3(20 + index * 37, -90 + index * 19, 70 - index * 43),
+                    scales[index % scales.length]));
+        }
+        AuxiliaryBoneLayout batchLayout = layout(bones);
+        BoneQuerySnapshot batch = DisplayedBoneQueries.capture(batchLayout,
+                skins(batchLayout, worlds), null, Set.of());
+
+        for (int index = 0; index < bones.length; index++) {
+            GeometryDocument.Bone single = bone(bones[index].name(), "",
+                    new Vec3(index - 4, index + 2, 3 - index),
+                    new Vec3(index * 3, index - 5, 7 - index));
+            AuxiliaryBoneLayout singleLayout = layout(single);
+            BoneQuerySnapshot independent = DisplayedBoneQueries.capture(singleLayout,
+                    skins(singleLayout, Map.of(single.name(), worlds.get(single.name()))),
+                    null, Set.of());
+            assertValues(independent.values(single.name()), batch.values(single.name()));
+        }
+    }
+
+    @Test
+    void laterCapturesAndSourceChangesCannotAlterPublishedValues() {
+        GeometryDocument.Bone body = bone("Body", "", new Vec3(1, 2, 3), new Vec3(4, 5, 6));
+        GeometryDocument.Bone head = bone("Head", "Body", new Vec3(2, 20, 3), Vec3.ZERO);
+        AuxiliaryBoneLayout layout = layout(body, head);
+        Matrix4f bodyWorld = local(body, new Vec3(3, 2, 1),
+                new Vec3(10, 20, 30), new Vec3(-1, 2, 3));
+        Matrix4f headWorld = new Matrix4f(bodyWorld).mul(local(head,
+                new Vec3(-4, 5, 6), new Vec3(15, 25, 35), new Vec3(1, 1, 1)));
+        OpenMatrix4f[] poses = skins(layout, Map.of("Body", bodyWorld, "Head", headWorld));
+        float[][] originalPoses = new float[poses.length][];
+        for (int index = 0; index < poses.length; index++) {
+            originalPoses[index] = components(poses[index]);
+        }
+        float[][] originalBind = new float[layout.entries().size()][];
+        float[][] originalInverse = new float[layout.entries().size()][];
+        for (AuxiliaryBoneLayout.Entry entry : layout.entries()) {
+            originalBind[entry.auxiliaryIndex()] = entry.bindWorld().get(new float[16]);
+            originalInverse[entry.auxiliaryIndex()] = entry.bindWorldInverse().get(new float[16]);
+        }
+        BoneQuerySnapshot first = DisplayedBoneQueries.capture(layout, poses, null, Set.of());
+        BoneQuerySnapshot.BoneValues firstBody = first.values("Body");
+        BoneQuerySnapshot.BoneValues firstHead = first.values("Head");
+        DisplayedBoneQueries.capture(layout, poses, first, Set.of("Body"));
+        for (int index = 0; index < poses.length; index++) {
+            assertArrayEquals(originalPoses[index], components(poses[index]), 0.0F);
+        }
+        for (AuxiliaryBoneLayout.Entry entry : layout.entries()) {
+            assertArrayEquals(originalBind[entry.auxiliaryIndex()],
+                    entry.bindWorld().get(new float[16]), 0.0F);
+            assertArrayEquals(originalInverse[entry.auxiliaryIndex()],
+                    entry.bindWorldInverse().get(new float[16]), 0.0F);
+        }
+
+        for (OpenMatrix4f pose : poses) {
+            pose.m30 += 50.0F;
+        }
+        DisplayedBoneQueries.capture(layout, poses, first, Set.of());
+        assertEquals(firstBody, first.values("Body"));
+        assertEquals(firstHead, first.values("Head"));
+    }
+
+    @Test
+    void nestedCaptureDoesNotOverwriteOuterScratchOrParentWorlds() {
+        GeometryDocument.Bone body = bone("Body", "", Vec3.ZERO, Vec3.ZERO);
+        GeometryDocument.Bone head = bone("Head", "Body", new Vec3(0, 20, 0), Vec3.ZERO);
+        AuxiliaryBoneLayout outerLayout = layout(body, head);
+        Matrix4f bodyWorld = local(body, new Vec3(4, 5, 6),
+                new Vec3(15, 25, 35), new Vec3(2, 3, 4));
+        Matrix4f headWorld = new Matrix4f(bodyWorld).mul(local(head,
+                new Vec3(1, 2, 3), new Vec3(40, 50, 60), new Vec3(-1, 2, 3)));
+        OpenMatrix4f[] outerPoses = skins(outerLayout,
+                Map.of("Body", bodyWorld, "Head", headWorld));
+        BoneQuerySnapshot expectedOuter = DisplayedBoneQueries.capture(
+                outerLayout, outerPoses, null, Set.of());
+        GeometryDocument.Bone inner = bone("Inner", "", new Vec3(7, 8, 9), Vec3.ZERO);
+        GeometryDocument innerGeometry = new GeometryDocument();
+        innerGeometry.add(inner);
+        innerGeometry.linkHierarchy();
+        AuxiliaryBoneLayout innerLayout = AuxiliaryBoneLayout.create(innerGeometry, 4.0F, 5.0F);
+        OpenMatrix4f[] innerPoses = skins(innerLayout, Map.of("Inner", local(inner,
+                new Vec3(-9, -8, -7), new Vec3(-60, -50, -40), new Vec3(3, -2, 1))));
+        BoneQuerySnapshot expectedInner = DisplayedBoneQueries.capture(
+                innerLayout, innerPoses, null, Set.of());
+        AtomicReference<BoneQuerySnapshot> nested = new AtomicReference<>();
+        Set<String> reentrantHidden = new AbstractSet<>() {
+            @Override
+            public boolean contains(Object value) {
+                if ("Head".equals(value)) {
+                    nested.set(DisplayedBoneQueries.capture(
+                            innerLayout, innerPoses, null, Set.of()));
+                }
+                return false;
+            }
+
+            @Override
+            public Iterator<String> iterator() {
+                return Set.<String>of().iterator();
+            }
+
+            @Override
+            public int size() {
+                return 0;
+            }
+        };
+        BoneQuerySnapshot actual = DisplayedBoneQueries.capture(
+                outerLayout, outerPoses, null, reentrantHidden);
+        assertNotNull(nested.get());
+        assertValues(expectedInner.values("Inner"), nested.get().values("Inner"));
+        assertValues(expectedOuter.values("Body"), actual.values("Body"));
+        assertValues(expectedOuter.values("Head"), actual.values("Head"));
+    }
+
+    @Test
+    void validParentWorldStillServesChildrenWhenItsOwnLocalRecoveryFails() {
+        GeometryDocument.Bone body = bone("Body", "", Vec3.ZERO, Vec3.ZERO);
+        GeometryDocument.Bone neck = bone("Neck", "Body", new Vec3(0, 16, 0), Vec3.ZERO);
+        GeometryDocument.Bone head = bone("Head", "Neck", new Vec3(0, 20, 0), Vec3.ZERO);
+        AuxiliaryBoneLayout layout = layout(body, neck, head);
+        BoneQuerySnapshot previous = DisplayedBoneQueries.capture(layout, skins(layout,
+                Map.of("Body", new Matrix4f(), "Neck", new Matrix4f(), "Head", new Matrix4f())),
+                null, Set.of());
+        Matrix4f neckWorld = local(neck, new Vec3(2, 3, 4),
+                new Vec3(15, 25, 35), new Vec3(1, 1, 1));
+        Matrix4f headWorld = new Matrix4f(neckWorld).mul(local(head,
+                new Vec3(5, 6, 7), new Vec3(20, 30, 40), new Vec3(1, 2, 3)));
+        BoneQuerySnapshot result = DisplayedBoneQueries.capture(layout, skins(layout,
+                Map.of("Body", new Matrix4f().scale(0.0F),
+                        "Neck", neckWorld, "Head", headWorld)), previous, Set.of());
+        assertEquals(previous.values("Neck"), result.values("Neck"));
+        assertVector(new Vec3(5, 6, 7), result.values("Head").position());
+        assertVector(new Vec3(20, 30, 40), result.values("Head").rotation());
+        assertVector(new Vec3(1, 2, 3), result.values("Head").scale());
+    }
+
     private static GeometryDocument.Bone bone(String name, String parent, Vec3 pivot, Vec3 rotation) {
         GeometryDocument.Bone bone = new GeometryDocument.Bone(name);
         bone.parentName(parent);
@@ -146,5 +299,20 @@ class DisplayedBoneQueriesTest {
         assertEquals(expected.x, actual.x, TOLERANCE);
         assertEquals(expected.y, actual.y, TOLERANCE);
         assertEquals(expected.z, actual.z, TOLERANCE);
+    }
+
+    private static void assertValues(BoneQuerySnapshot.BoneValues expected,
+                                     BoneQuerySnapshot.BoneValues actual) {
+        assertVector(expected.rotation(), actual.rotation());
+        assertVector(expected.position(), actual.position());
+        assertVector(expected.scale(), actual.scale());
+        assertVector(expected.absolutePivot(), actual.absolutePivot());
+    }
+
+    private static float[] components(OpenMatrix4f value) {
+        return new float[]{value.m00, value.m01, value.m02, value.m03,
+                value.m10, value.m11, value.m12, value.m13,
+                value.m20, value.m21, value.m22, value.m23,
+                value.m30, value.m31, value.m32, value.m33};
     }
 }

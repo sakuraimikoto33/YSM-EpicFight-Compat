@@ -107,7 +107,10 @@ public final class ParallelAnimationProgram {
                                boolean epicFightOwned,
                                boolean authoredPose,
                                boolean authoredInfluence,
-                               AnimationClip.BoneTracks tracks) {
+                               AnimationClip.BoneTracks tracks,
+                               CompiledAnimationTrack rotation,
+                               CompiledAnimationTrack position,
+                               CompiledAnimationTrack scale) {
     }
 
     /** Epic Fight seam that owns a selectively authored YSM pose subtree. */
@@ -4038,7 +4041,6 @@ public final class ParallelAnimationProgram {
             if (!selection.accepts(bone)) {
                 continue;
             }
-            AnimationClip.BoneTracks tracks = bone.tracks();
             int visibilityIndex = selection == BoneSelection.AUTHORED_ONLY ? -1
                     : transform == PoseTransform.MIRROR_X
                     ? bone.mirroredVisibilityIndex() : bone.visibilityIndex();
@@ -4049,8 +4051,8 @@ public final class ParallelAnimationProgram {
                     ? bone.mirroredAuxiliaryIndex() : bone.auxiliaryIndex();
             int authoredIndex = authoredPose != null && bone.authoredInfluence()
                     ? bone.auxiliaryIndex() : -1;
-            if (tracks.rotation() != null) {
-                sample(tracks.rotation(), localTime, environment, scratch.sample, scratch);
+            if (bone.rotation() != null) {
+                sample(bone.rotation(), localTime, environment, scratch.sample, scratch);
                 if (authoredIndex >= 0) {
                     recordAuthoredVector(authoredPose, authoredIndex, true,
                             scratch.sample, authoredMode, shortestPath, clipWeight,
@@ -4110,8 +4112,8 @@ public final class ParallelAnimationProgram {
                     }
                 }
             }
-            if (tracks.position() != null) {
-                sample(tracks.position(), localTime, environment, scratch.sample, scratch);
+            if (bone.position() != null) {
+                sample(bone.position(), localTime, environment, scratch.sample, scratch);
                 if (authoredIndex >= 0) {
                     recordAuthoredVector(authoredPose, authoredIndex, false,
                             scratch.sample, authoredMode, shortestPath, clipWeight,
@@ -4147,8 +4149,8 @@ public final class ParallelAnimationProgram {
                     }
                 }
             }
-            if (tracks.scale() != null) {
-                sample(tracks.scale(), localTime, environment, scratch.sample, scratch);
+            if (bone.scale() != null) {
+                sample(bone.scale(), localTime, environment, scratch.sample, scratch);
                 if (authoredIndex >= 0) {
                     recordAuthoredScale(authoredPose, authoredIndex, scratch.sample,
                             authoredMode, blendWeight, scratch);
@@ -4521,10 +4523,8 @@ public final class ParallelAnimationProgram {
         private final Set<InteractionHand> ladderItemsInHand =
                 java.util.EnumSet.noneOf(InteractionHand.class);
         private final double[] sample = new double[3];
-        private final double[] p0 = new double[3];
-        private final double[] p1 = new double[3];
-        private final double[] p2 = new double[3];
-        private final double[] p3 = new double[3];
+        private final CompiledAnimationTrack.Sampler trackSampler =
+                new CompiledAnimationTrack.Sampler();
         private boolean replaceEpicFightPose;
         @Nullable
         private OpenMatrix4f[] fullBodyBlendSource;
@@ -4767,7 +4767,10 @@ public final class ParallelAnimationProgram {
                 pose != null && epicFightPoseControls.contains(pose.bone()),
                 authoredPose,
                 pose != null && layout.rigBindings().influencesAuthoredPose(pose.bone()),
-                tracks);
+                tracks,
+                CompiledAnimationTrack.compile(tracks.rotation()),
+                CompiledAnimationTrack.compile(tracks.position()),
+                CompiledAnimationTrack.compile(tracks.scale()));
     }
 
     private static Set<GeometryDocument.Bone> epicFightPoseControls(
@@ -5149,72 +5152,16 @@ public final class ParallelAnimationProgram {
                 : (float) Math.min(elapsed, program.duration());
     }
 
-    private void sample(AnimationClip.Track track, float time,
+    private void sample(CompiledAnimationTrack track, float time,
                         ExpressionEngine.Environment environment, double[] target,
                         EvaluationScratch scratch) {
-        List<AnimationClip.Keyframe> keys = track.keyframes();
-        int right = 0;
-        while (right < keys.size() && keys.get(right).time() <= time) {
-            right++;
-        }
-        if (right == 0) {
-            evaluate(keys.get(0).value(), environment, target);
-            return;
-        }
-        if (right >= keys.size()) {
-            evaluate(keys.get(keys.size() - 1).value(), environment, target);
-            return;
-        }
-        int left = right - 1;
-        AnimationClip.Keyframe leftKey = keys.get(left);
-        AnimationClip.Keyframe rightKey = keys.get(right);
-        if (rightKey.interpolation() == AnimationClip.Interpolation.STEP
-                || rightKey.time() <= leftKey.time()) {
-            evaluate(leftKey.value(), environment, target);
-            return;
-        }
-        double alpha = Math.max(0.0D, Math.min(1.0D,
-                (time - leftKey.time()) / (rightKey.time() - leftKey.time())));
-        evaluate(leftKey.value(), environment, scratch.p1);
-        evaluate(rightKey.incomingValue() == null
-                ? rightKey.value() : rightKey.incomingValue(), environment, scratch.p2);
-        if (rightKey.interpolation() == AnimationClip.Interpolation.CATMULL_ROM) {
-            evaluate(keys.get(Math.max(0, left - 1)).value(), environment, scratch.p0);
-            evaluate(keys.get(Math.min(keys.size() - 1, right + 1)).value(),
-                    environment, scratch.p3);
-            for (int axis = 0; axis < 3; axis++) {
-                target[axis] = catmullRom(scratch.p0[axis], scratch.p1[axis],
-                        scratch.p2[axis], scratch.p3[axis], alpha);
-            }
-        } else {
-            for (int axis = 0; axis < 3; axis++) {
-                target[axis] = scratch.p1[axis]
-                        + (scratch.p2[axis] - scratch.p1[axis]) * alpha;
-            }
-        }
-    }
-
-    private static void evaluate(AnimationClip.VectorValue value,
-                                 ExpressionEngine.Environment environment, double[] target) {
-        for (int axis = 0; axis < 3; axis++) {
-            String expression = value.expression(axis);
-            target[axis] = expression == null ? value.constant(axis)
-                    : value.compiledExpression(axis).evaluate(environment);
-        }
+        scratch.trackSampler.sample(track, time, environment, target);
     }
 
     private static double evaluate(AnimationClip.ScalarValue value,
                                    ExpressionEngine.Environment environment) {
         return value.expression() == null ? value.constant()
                 : value.compiledExpression().evaluate(environment);
-    }
-
-    private static double catmullRom(double a, double b, double c, double d, double time) {
-        double squared = time * time;
-        double cubed = squared * time;
-        return 0.5D * (2.0D * b + (-a + c) * time
-                + (2.0D * a - 5.0D * b + 4.0D * c - d) * squared
-                + (-a + 3.0D * b - 3.0D * c + d) * cubed);
     }
 
     private static List<VisibilityBone> visibilityBones(

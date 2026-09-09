@@ -50,7 +50,7 @@ public final class CompatHumanoidMesh extends HumanoidMesh {
     private final String modelId;
     private final boolean allCutout;
     private final boolean renderLayersFirst;
-    private final DefaultPoseProgram poseProgram;
+    private final DefaultPoseProgram.BoundVisibility visibility;
     private final ParallelAnimationProgram parallelAnimations;
     private final AuxiliaryPoseMatrices auxiliaryPoses;
     private final boolean hasAuthoredBranches;
@@ -75,7 +75,6 @@ public final class CompatHumanoidMesh extends HumanoidMesh {
         this.modelId = modelId;
         this.allCutout = allCutout;
         this.renderLayersFirst = renderLayersFirst;
-        this.poseProgram = poseProgram;
         this.parallelAnimations = parallelAnimations;
         hasAuthoredBranches = auxiliaryBones.rigBindings().hasAuthoredBranches();
         hasBaseGeometry = hasGeometry(parts);
@@ -88,6 +87,7 @@ public final class CompatHumanoidMesh extends HumanoidMesh {
         basePartCount = hasBaseGeometry ? getPartEntry().size() : 0;
         glowPartCount = glowMesh == null ? 0 : glowMesh.getPartEntry().size();
         allParts = collectParts(this, glowMesh);
+        visibility = poseProgram.bind(allParts);
         auxiliaryPoses = auxiliaryBones.isEmpty() ? null
                 : new AuxiliaryPoseMatrices(auxiliaryBones);
         movementPoseTransition = auxiliaryPoses == null ? null
@@ -226,7 +226,7 @@ public final class CompatHumanoidMesh extends HumanoidMesh {
                 partialTick, frame.firstPerson(), frame.epicModelYaw(),
                 frame.epicFightActionActive(), frame.ysmMovement(),
                 frame.renderingInInventory());
-        poseProgram.apply(this, frame == null ? Map.of() : frame.visibleParts(),
+        visibility.apply(frame == null ? Map.of() : frame.visibleParts(),
                 frame == null || frame.showUnlistedParts(), frame != null && frame.firstPerson(),
                 animationFrame == null ? null : animationFrame.hiddenBones());
         float meshScale = TouhouMaidRenderBridge.meshDrawScale(this);

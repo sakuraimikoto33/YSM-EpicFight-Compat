@@ -1,18 +1,92 @@
 package net.okitsu.ysmepicfightcompat.animation;
 
 import com.google.gson.JsonParser;
+import com.mojang.blaze3d.vertex.PoseStack;
+import com.mojang.blaze3d.vertex.VertexConsumer;
 import net.okitsu.ysmepicfightcompat.geometry.GeometryDocument;
 import net.okitsu.ysmepicfightcompat.mesh.HumanoidRig;
+import net.okitsu.ysmepicfightcompat.mesh.SkinMeshCompiler;
 import org.junit.jupiter.api.Test;
+import yesman.epicfight.api.client.model.Mesh;
+import yesman.epicfight.api.client.model.MeshPart;
 
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class DefaultPoseProgramTest {
+    @Test
+    void boundVisibilityUpdatesBaseAndGlowButLeavesNonBonePartsUntouched() {
+        GeometryDocument geometry = new GeometryDocument();
+        geometry.add(new GeometryDocument.Bone("head"));
+        geometry.linkHierarchy();
+        AnimationClip clip = BedrockAnimationParser.parse("parallel.default",
+                JsonParser.parseString("""
+                        {"bones":{"head":{"scale":0}}}
+                        """).getAsJsonObject());
+        DefaultPoseProgram program = new DefaultPoseProgram(geometry, Map.of(clip.name(), clip));
+        MeshPart base = part(), glow = part(), vanilla = part();
+        vanilla.setHidden(true);
+        String name = SkinMeshCompiler.BONE_PART_PREFIX + "head";
+        DefaultPoseProgram.BoundVisibility visibility = program.bind(Set.of(
+                Map.entry(name, base), Map.entry(name, glow), Map.entry("vanilla", vanilla)));
+
+        visibility.apply(Map.of(), true, false, null);
+        assertTrue(base.isHidden());
+        assertTrue(glow.isHidden());
+        visibility.apply(Map.of(), true, false, Set.of());
+        assertFalse(base.isHidden());
+        assertFalse(glow.isHidden());
+        assertTrue(vanilla.isHidden());
+        visibility.apply(Map.of(), true, false, Set.of("head"));
+        assertTrue(base.isHidden());
+        assertTrue(glow.isHidden());
+    }
+
+    @Test
+    void boundFirstPersonSettingsAndPerMeshVisibilityRemainIndependent() {
+        GeometryDocument geometry = new GeometryDocument();
+        geometry.add(new GeometryDocument.Bone("head"));
+        geometry.linkHierarchy();
+        DefaultPoseProgram program = new DefaultPoseProgram(geometry, Map.of());
+        MeshPart first = part(), second = part(), unknown = part();
+        DefaultPoseProgram.BoundVisibility a = program.bind(Set.of(
+                Map.entry(SkinMeshCompiler.BONE_PART_PREFIX + "head", first),
+                Map.entry(SkinMeshCompiler.BONE_PART_PREFIX + "unknown", unknown)));
+        DefaultPoseProgram.BoundVisibility b = program.bind(Set.of(
+                Map.entry(SkinMeshCompiler.BONE_PART_PREFIX + "head", second)));
+        Map<String, Boolean> settings = new HashMap<>();
+        a.apply(settings, false, true, Set.of());
+        assertTrue(first.isHidden());
+        assertTrue(unknown.isHidden());
+        assertFalse(second.isHidden());
+        settings.put("hat", true);
+        settings.put("torso", true);
+        a.apply(settings, false, true, Set.of());
+        assertFalse(first.isHidden());
+        assertFalse(unknown.isHidden());
+        b.apply(Map.of(), false, true, Set.of());
+        assertTrue(second.isHidden());
+        assertFalse(first.isHidden());
+        a.apply(Map.of(), false, false, Set.of());
+        assertFalse(first.isHidden());
+    }
+
+    private static MeshPart part() {
+        return new MeshPart(List.of(), null, null) {
+            @Override
+            public void draw(PoseStack matrices, VertexConsumer buffer,
+                             Mesh.DrawingFunction draw, int light,
+                             float red, float green, float blue, float alpha, int overlay) {
+            }
+        };
+    }
+
     @Test
     void absentEntityReferencesKeepTheNeutralFallbackInsteadOfBakingHiddenBones() {
         GeometryDocument geometry = new GeometryDocument();
