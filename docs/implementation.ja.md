@@ -114,7 +114,7 @@ Epic Fightのアクション、ルーレット再生、独自の全身アクシ�
 
 モデル固有の投射物、釣り針、乗り物ジオメトリは引き続き公式YSMが描画し、互換Mod側でモデルを再構築しません。`YsmProjectileRendererMixin`、`YsmFishingHookRendererMixin`、`YsmVehicleRendererMixin` は、Epic Fight戦闘モード中に公式YSMへそのエンティティの描画を継続させるか、Epic Fightまたはバニラの元のレンダラーへ戻すかを決定します。`YsmVehiclePreviewMixin` は同じ決定をYSMの乗客locator変換にも適用し、非表示にしたYSM乗り物が表示中の騎乗者だけを移動させることを防ぎます。戦闘モード外ではこれらの制御は公式YSMを変更しません。4つの対象メソッドとオーバーレイメソッドはYSM Mapping APIの管理済み意味キーと安定したsource aliasだけを通じて参照し、このプロジェクトは実行時の難読化名を保持しません。
 
-投射物の担当判定では、モデル定義の手持ち品とエフェクトのみのジオメトリを区別します。変換済みモデルが弓またはトライデントの通常のHOLD状態で表示される置換モデルを定義している場合、その投射物はYSM手持ち品モデル方針に従います。定義していない場合は、`useYsmProjectileModels` と `projectileModelExclusions` が投射物専用ジオメトリを維持するかを決定します。チャージ済みstackの状態をアイテムIDだけから再構築できないため、クロスボウの投射物は常に投射物専用方針を使用します。釣り針は釣竿に対する手持ち品モデル方針に従います。乗り物は `useYsmVehicleModels` と `vehicleModelExclusions` に従い、Epic Fight側を選択した場合はYSMの乗り物とlocatorと同時に、対応する騎乗アニメーション経路も無効にします。
+投射物の担当判定では、モデル定義の手持ち品とエフェクトのみのジオメトリを区別します。変換済みモデルが弓またはトライデントの通常のHOLD状態で表示される置換モデルを定義している場合、その投射物はYSM手持ち品モデル方針に従います。定義していない場合は、`common.models.useYsmProjectileModels` と `common.models.exclusions.projectileModelExclusions` が投射物専用ジオメトリを維持するかを決定します。チャージ済みstackの状態をアイテムIDだけから再構築できないため、クロスボウの投射物は常に投射物専用方針を使用します。釣り針は釣竿に対する手持ち品モデル方針に従います。乗り物は `common.models.useYsmVehicleModels` と `common.models.exclusions.vehicleModelExclusions` に従い、Epic Fight側を選択した場合はYSMの乗り物とlocatorと同時に、対応する騎乗アニメーション経路も無効にします。
 
 専用サーバーは投射物の発射時に所有者、選択モデル、元アイテム、エンティティタイプをsnapshotとして確定するため、発射後の持ち替えや追跡中の所有者を一時的に取得できない状況で、飛行中エンティティの担当が変化しません。所有者を取得できる間はEpic Fightモードを更新し、短い追跡の空白では最後に同期した値を維持します。乗り物は現在の最初のプレイヤー乗客に追従します。`SubEntityPreferenceBroadcaster` は該当モデル使用者のクライアントだけにローカル方針の解決を要求し、不透明な所有者epochとsource revisionに対して応答を認証してから、容量制限付きの解決済みsnapshotを追跡クライアントへ配信します。不明または古い判定は、戦闘モード中は元のレンダラーへ安全側にフォールバックします。設定トグルと、エンティティタイプタグselectorを含むモデル別除外テーブルはローカルに残り、同期しません。
 
@@ -158,11 +158,11 @@ Epic Fightのアクション、ルーレット再生、独自の全身アクシ�
 
 ## キャッシュと再読み込み
 
-`CombatMeshCache` は制限付きワーカープールでモデルを遅延変換します。完成したメッシュとフォールバック用テクスチャ元はセッション中だけメモリへ登録し、`clientModelMemoryCacheSize` で制御するLRUキャッシュで保持します。変換に失敗したモデルは、モデルの入力元が変化した場合だけ再試行します。キャッシュから削除するときはGPUリソースと一時テクスチャの参照を解放します。
+`CombatMeshCache` は制限付きワーカープールでモデルを遅延変換します。完成したメッシュとフォールバック用テクスチャ元はセッション中だけメモリへ登録し、`client.cache.clientModelMemoryCacheTargetCount` で制御するLRUキャッシュで保持します。変換に失敗したモデルは、モデルの入力元が変化した場合だけ再試行します。キャッシュから削除するときはGPUリソースと一時テクスチャの参照を解放します。
 
 永続データは `config/ysm_epicfight_compat/cache` 以下へ分けます。`client` は解析済みローカル `ModelBundle`、`remote` は現在のマルチプレイサーバーで検証済みのデータ、`server` は生成済み転送データを保存します。ベーステクスチャと任意のnormal・specular補助テクスチャは同じサイズ制限付きペイロード内に保持します。clientとremoteは、ハッシュ化した名前、形式識別子、元データまたはサーバー検証用SHA-256、ペイロードSHA-256、圧縮済みモデルデータを持つ互換Mod独自のバイナリエンベロープを使用します。単独のPNG、JSON、`.ysm` ファイルは生成しません。serverも整合性用エンベロープを使用しますが、内容の秘匿は目的としません。いずれも暗号化やDRMではありません。
 
-独立した `clientModelDiskCacheMiB`、`remoteModelDiskCacheMiB`、`serverModelDiskCacheMiB` の既定値は、それぞれ64、64、256 MiBです。各ディレクトリが個別に最終使用時刻が最も古いファイルを削除します。0にすると読み書きを無効化し、整理時に既存データを削除します。単一データが自身の上限を超える場合も現在のメモリセッションでは利用できますが、ディスクには保存しません。`serverModelDiskCacheEnabled` を無効にしてもサーバーの永続層だけを迂回し、制限付きセッションメモリキャッシュとモデル単位の同時要求集約は維持します。
+独立した `client.cache.clientModelDiskCacheMiB`、`client.cache.remoteModelDiskCacheMiB`、`server.cache.serverModelDiskCacheMiB` の既定値は、それぞれ64、64、256 MiBです。各ディレクトリが個別に最終使用時刻が最も古いファイルを削除します。0にすると読み書きを無効化し、整理時に既存データを削除します。単一データが自身の上限を超える場合も現在のメモリセッションでは利用できますが、ディスクには保存しません。`server.cache.serverModelDiskCacheEnabled` を無効にしてもサーバーの永続層だけを迂回し、制限付きセッションメモリキャッシュとモデル単位の同時要求集約は維持します。
 
 ローカルとサーバーのキャッシュは、元モデル内容のdigestが一致する場合だけ使用します。モデル更新時は一度だけ解析・エンコードし、以前のデータを原子的に上書きします。書き込みは通常ファイルの一時データから、対応環境ではatomic moveで置き換えます。キャッシュ探索ではシンボリックリンクを拒否し、破損データを削除します。ファイルI/O、ハッシュ計算、デコード、LRU整理はレンダースレッドとサーバーtickの外で行います。
 
@@ -184,13 +184,13 @@ Epic Fightのアクション、ルーレット再生、独自の全身アクシ�
 
 クライアント設定は `config/ysm_epicfight_compat/ysm_epicfight_compat-client.toml`、統合・専用サーバー共通のキャッシュ設定は同じ階層の `ysm_epicfight_compat-common.toml` に保存します。`CombatOverlayMixin` はYSM Mapping APIの管理済み `ysm.client.renderer.model_preview.render_player_overlay.method` キーを通じて公式YSMのオーバーレイメソッドへ到達し、各フレームを `CombatOverlayPolicy` へ委譲します。クライアント設定は、Epic Fightの戦闘モード中だけ左上のYSMプレイヤーオーバーレイを抑止します。値は各オーバーレイフレームで読み取るため、設定のライブ再読み込みは再起動せずに反映されます。
 
-`useYsmHeldItemModels` と `useYsmHeldItemSwitchAnimations` はどちらも初期状態で有効です。`heldItemModelExclusions` と `heldItemSwitchAnimationExclusions` は独立したモデルIDテーブルで、値にはアイテムIDまたは `#item_tag` のselectorを指定します。一致したselectorは、対応するメイン設定が有効な場合にその機能を無効として扱います。メイン設定が無効な場合、除外対象がYSMの機能を有効化することはありません。`minecraft:air` を使うと空手への持ち替えを対象にできます。モデル独自の置換品とそのアニメーションは必ず手持ち品モデル方針を使用し、持ち替えアニメーション方針はEpic Fightが通常アイテムを維持する場合だけ使用します。
+`common.models.useYsmHeldItemModels` と `common.animations.useYsmHeldItemSwitchAnimations` はどちらも初期状態で有効です。`common.models.exclusions.heldItemModelExclusions` と `common.animations.exclusions.heldItemSwitchAnimationExclusions` は独立したモデルIDテーブルで、値にはアイテムIDまたは `#item_tag` のselectorを指定します。一致したselectorは、対応するメイン設定が有効な場合にその機能を無効として扱います。メイン設定が無効な場合、除外対象がYSMの機能を有効化することはありません。`minecraft:air` を使うと空手への持ち替えを対象にできます。モデル独自の置換品とそのアニメーションは必ず手持ち品モデル方針を使用し、持ち替えアニメーション方針はEpic Fightが通常アイテムを維持する場合だけ使用します。
 
-`useYsmProjectileModels` と `useYsmVehicleModels` も初期状態で有効です。`projectileModelExclusions` と `vehicleModelExclusions` は、モデルIDごとにエンティティIDまたは `#entity_type_tag` selectorを指定します。手持ち品テーブルと同様、一致したselectorは有効なメイン設定を無効化することだけができます。クライアントは認可された各投射物、釣り針、乗り物について解決済みの表示判定だけを送信し、トグルとテーブルはローカルに維持します。釣り針と、実際のモデル定義の弓・トライデントに制御される投射物は、これらの投射物ルールではなく手持ち品方針を使用します。
+`common.models.useYsmProjectileModels` と `common.models.useYsmVehicleModels` も初期状態で有効です。`common.models.exclusions.projectileModelExclusions` と `common.models.exclusions.vehicleModelExclusions` は、モデルIDごとにエンティティIDまたは `#entity_type_tag` selectorを指定します。手持ち品テーブルと同様、一致したselectorは有効なメイン設定を無効化することだけができます。クライアントは認可された各投射物、釣り針、乗り物について解決済みの表示判定だけを送信し、トグルとテーブルはローカルに維持します。釣り針と、実際のモデル定義の弓・トライデントに制御される投射物は、これらの投射物ルールではなく手持ち品方針を使用します。
 
-`useYsmMovementAnimations` も初期状態で有効です。`movementAnimationExclusions` はモデルIDごとに、アニメーション節で列挙した移動状態名を指定します。指定した状態はメイン設定が有効な場合だけYSM移動アニメーションを無効とし、メイン設定が無効な場合に姿勢担当を有効化することはありません。`useNaturalLadderAnimations` は独立して初期状態で有効で、YSMが担当するはしご状態では自然なはしご処理を要求します。実際に両手の構成を使うのは、選択した専用クリップに必要な腕動作があることを描画時に確認できた場合だけです。`ClientMovementAnimationPreferences` は、現在の正規化済みモデルID、意味上の移動状態、解決済みの姿勢担当bit、現在の自然なはしご要求bitを送信します。リモートプレイヤーの速度とクリエイティブ飛行能力だけではモデル使用者の状態を常に再構築できないため、`MovementAnimationPreferenceBroadcaster` がその結果を追跡クライアントへ中継します。`useYsmMovementAnimations`、`useNaturalLadderAnimations`、`movementAnimationExclusions` の値自体はローカルに残し、自然なはしご方針は任意のメイドアダプターには適用しません。
+`common.animations.useYsmMovementAnimations` も初期状態で有効です。`common.animations.exclusions.movementAnimationExclusions` はモデルIDごとに、アニメーション節で列挙した移動状態名を指定します。指定した状態はメイン設定が有効な場合だけYSM移動アニメーションを無効とし、メイン設定が無効な場合に姿勢担当を有効化することはありません。`common.animations.useNaturalLadderAnimations` は独立して初期状態で有効で、YSMが担当するはしご状態では自然なはしご処理を要求します。実際に両手の構成を使うのは、選択した専用クリップに必要な腕動作があることを描画時に確認できた場合だけです。`ClientMovementAnimationPreferences` は、現在の正規化済みモデルID、意味上の移動状態、解決済みの姿勢担当bit、現在の自然なはしご要求bitを送信します。リモートプレイヤーの速度とクリエイティブ飛行能力だけではモデル使用者の状態を常に再構築できないため、`MovementAnimationPreferenceBroadcaster` がその結果を追跡クライアントへ中継します。`common.animations.useYsmMovementAnimations`、`common.animations.useNaturalLadderAnimations`、`common.animations.exclusions.movementAnimationExclusions` の値自体はローカルに残し、自然なはしご方針は任意のメイドアダプターには適用しません。
 
-`useYsmParCoolAnimations` と `useYsmSwemAnimations` は独立して初期状態で有効です。既定では空の `parcoolAnimationExclusions`・`swemAnimationExclusions` テーブルへ、正規化済みモデルIDごとに `roll_front` や `jump_lv2` などの短いアクション名を指定します。`parcool:`・`swem:` 接頭辞は付けません。対応する `ModAnimationClips` の群で既知の名前だけを受け入れ、wildcard、アイテム、タグのselectorは使用できません。除外は有効な群を無効にするだけで、この2つの方針は通常の移動設定や乗り物モデル設定から独立しています。移動表示メッセージへは、現在のアニメーション群、正規の完全なクリップ名、解決済み姿勢担当bitも含めます。リモート描画では観測したnativeクリップと選択モデルの完全一致を要求し、古い判定や群だけの判定で別クリップを許可しません。トグル、除外テーブル、nativeの再生時計は、この互換通信では送信しません。これらの任意Mod方針はプレイヤーだけに適用し、メイド所有者の設定同期へは含めません。
+`common.animations.useYsmParCoolAnimations` と `common.animations.useYsmSwemAnimations` は独立して初期状態で有効です。既定では空の `common.animations.exclusions.parcoolAnimationExclusions`・`common.animations.exclusions.swemAnimationExclusions` テーブルへ、正規化済みモデルIDごとに `roll_front` や `jump_lv2` などの短いアクション名を指定します。`parcool:`・`swem:` 接頭辞は付けません。対応する `ModAnimationClips` の群で既知の名前だけを受け入れ、wildcard、アイテム、タグのselectorは使用できません。除外は有効な群を無効にするだけで、この2つの方針は通常の移動設定や乗り物モデル設定から独立しています。移動表示メッセージへは、現在のアニメーション群、正規の完全なクリップ名、解決済み姿勢担当bitも含めます。リモート描画では観測したnativeクリップと選択モデルの完全一致を要求し、古い判定や群だけの判定で別クリップを許可しません。トグル、除外テーブル、nativeの再生時計は、この互換通信では送信しません。これらの任意Mod方針はプレイヤーだけに適用し、メイド所有者の設定同期へは含めません。
 
 プレイヤー描画では、モデル別ルールをすべてモデル使用者のクライアントだけに残します。`ClientHeldItemModelPreferences` は解決済みのメインハンド・オフハンドの置換表示と持ち替えアニメーションの真偽値だけを送信し、`HeldItemPreferenceBroadcaster` が追跡クライアントへ中継します。これにより、他プレイヤーの既定値、モデル別ルール、アイテムID、アイテムタグを受信せずに、全クライアントで同じ外観上の姿勢を再現します。
 
@@ -202,14 +202,14 @@ Epic Fightのアクション、ルーレット再生、独自の全身アクシ�
 
 ### Configuredの任意設定画面
 
-Configured 2.2.3以降は任意です。文字列targetの `@Pseudo` Mixinで、Configuredが扱えない動的テーブルのleafを `ConfiguredHeldItemRules` へ置き換えた後、`ConfiguredClientLayout` がこのModのClient項目を表示専用の2フォルダへ整理します。
+Configured 2.2.3以降は任意です。文字列targetの `@Pseudo` Mixinで、Configuredが扱えない動的テーブルのleafを `ConfiguredHeldItemRules` へ置き換えます。設定画面はクライアントファイルの実際のTOML階層に従い、共通配下に次の分類を表示します。
 
 | フォルダ | 設定 | 除外サブフォルダ |
 | --- | --- | --- |
-| アニメーション | 持ち替え、移動、ParCool、SWEM、自然なはしご | 持ち替え、移動、ParCool、SWEM |
-| モデル | 手持ち品、投射物、乗り物 | 手持ち品、投射物、乗り物 |
+| アニメーション (`[common.animations]`) | 持ち替え、移動、ParCool、SWEM、自然なはしご | 持ち替え、移動、ParCool、SWEM |
+| モデル (`[common.models]`) | 手持ち品、投射物、乗り物 | 手持ち品、投射物、乗り物 |
 
-オーバーレイとクライアントキャッシュ設定は既存の階層に残し、Common設定は整理対象にしません。同じconfig-entry・valueオブジェクトと動的エディターを維持するため、TOMLのパス、既定値、検証、保存、reset、変更状態は変わりません。7種類すべての除外エディターへ現在選択中のモデルIDを空の編集行として追加し、空の行は設定ファイルへ書きません。Configured APIへのリンクは任意統合の境界内へ限定します。Configuredがない場合は対象クラスを読み込まず、TOML設定は引き続き有効で、ゲーム内設定画面だけが利用できなくなります。
+オーバーレイと警告の設定は `[client]`、クライアントキャッシュ設定は `[client.cache]`、別ファイルのサーバーキャッシュ設定は `[server.cache]` に属します。`[common.animations]` と `[common.models]` はクライアントファイル内のテーブルで、除外設定はそれぞれ `[common.animations.exclusions]` と `[common.models.exclusions]` に属します。7種類すべての除外エディターへ現在選択中のモデルIDを空の編集行として追加し、空の行は設定ファイルへ書きません。Configured APIへのリンクは任意統合の境界内へ限定します。Configuredがない場合は対象クラスを読み込まず、TOML設定は引き続き有効で、ゲーム内設定画面だけが利用できなくなります。
 
 ## ソース構成
 
