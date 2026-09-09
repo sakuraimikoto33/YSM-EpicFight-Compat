@@ -14,18 +14,23 @@ import java.io.UncheckedIOException;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
+import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Queue;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.LongSupplier;
 
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertSame;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /** Exercises production completion handlers without starting Minecraft or conversion workers. */
@@ -194,14 +199,20 @@ class CombatMeshCacheLifecycleTest {
     }
 
     @Test
-    void workerDelegatesAllThreeOutcomesToClientQueuedCompletionHandlers() throws IOException {
+    void workerFencesSuccessAndQueuesFailureAndInterruptionOnTheClient() throws IOException {
         Map<String, MethodCode> methods = readMethods();
         MethodCode worker = methods.get("convert");
         assertNotNull(worker);
         assertTrue(worker.lifecycleFields.isEmpty(),
                 "Worker success, failure and interruption must not mutate shared lifecycle state");
-        assertEquals(3, worker.calls.stream().filter(call -> call.equals(
+        assertEquals(2, worker.calls.stream().filter(call -> call.equals(
                 "net/minecraft/client/Minecraft#execute")).count());
+        assertEquals(1, worker.calls.stream().filter(call -> call.equals(
+                CACHE + "#queueConversionCompletion")).count());
+        assertTrue(worker.calls.contains(CACHE + "#bake"));
+        assertTrue(worker.calls.indexOf(CACHE + "#bake")
+                        < worker.calls.indexOf(CACHE + "#queueConversionCompletion"),
+                "Both mesh constructors must finish queuing initialization before the fence");
         assertTrue(worker.calls.contains("java/lang/Thread#interrupt"),
                 "Cancellation must retain the worker's interrupted status");
         assertTrue(worker.calls.contains(CACHE + "#failureStamp"),
@@ -224,6 +235,113 @@ class CombatMeshCacheLifecycleTest {
         assertFalse(worker.calls.stream().anyMatch(call -> handlers.stream()
                 .anyMatch(handler -> call.equals(CACHE + '#' + handler))),
                 "The worker must enqueue callbacks instead of invoking handlers directly");
+    }
+
+    @Test
+    void productionFenceOnlyForwardsCompletionToTheForcedClientQueue() throws IOException {
+        Map<String, MethodCode> methods = readMethods();
+        MethodCode worker = methods.get("convert");
+        List<MethodCode> callbacks = worker.lambdaTargets.stream().map(methods::get).toList();
+        assertTrue(callbacks.get(0).calls.contains(
+                "com/mojang/blaze3d/systems/RenderSystem#recordRenderCall"));
+        assertTrue(callbacks.get(1).calls.contains("net/minecraft/client/Minecraft#tell"),
+                "execute would run inline while RenderSystem replays its queue");
+        assertFalse(callbacks.get(1).calls.contains("net/minecraft/client/Minecraft#execute"));
+        assertTrue(callbacks.get(2).calls.contains(CACHE + "#completeConversion"));
+
+        MethodCode scheduler = methods.get("queueConversionCompletion");
+        assertEquals(List.of("java/util/function/Consumer#accept"), scheduler.calls);
+        assertEquals(1, scheduler.lambdaTargets.size());
+        MethodCode fence = methods.get(scheduler.lambdaTargets.get(0));
+        assertEquals(List.of("java/util/function/Consumer#accept"), fence.calls,
+                "Render replay must only enqueue the client callback, never run it");
+        assertTrue(fence.lifecycleFields.isEmpty());
+        assertTrue(fence.lambdaTargets.isEmpty());
+    }
+
+    @Test
+    void bothMeshInitializationsPrecedePublicationEvenWhenClientTasksDrainFirst() {
+        for (boolean glow : new boolean[]{false, true}) {
+            CompletionQueues queues = new CompletionQueues(glow);
+            queues.enqueue(() -> {
+                assertEquals(queues.initializations, queues.events);
+                queues.events.add("publish");
+            });
+
+            queues.drainClient();
+            assertTrue(queues.events.isEmpty());
+            queues.drainRender();
+            assertEquals(queues.initializations, queues.events);
+            assertEquals(1, queues.client.size(), "The fence must not publish inline");
+            queues.drainClient();
+            assertEquals(queues.withCompletion("publish"), queues.events);
+        }
+    }
+
+    @Test
+    void reloadBeforeOrAfterTheFenceKeepsNewPendingWorkAndDisposesOnlyAfterInitialization()
+            throws Exception {
+        for (boolean reloadBeforeFence : new boolean[]{false, true}) {
+            try (Fixture fixture = new Fixture()) {
+                fixture.generation.set(OLD_GENERATION);
+                fixture.pending.add(MODEL);
+                CompletionQueues queues = new CompletionQueues(true);
+                queues.enqueue(() -> {
+                    assertEquals(queues.initializations, queues.events,
+                            "Stale disposal must run after both base and glow initialization");
+                    assertDoesNotThrow(() -> completeNull(OLD_GENERATION));
+                    queues.events.add("dispose");
+                });
+
+                if (!reloadBeforeFence) {
+                    queues.drainRender();
+                }
+                fixture.generation.set(CURRENT_GENERATION);
+                fixture.pending.clear();
+                fixture.pending.addAll(Set.of(MODEL, OTHER));
+                fixture.failed.put(OTHER, 20L);
+                if (reloadBeforeFence) {
+                    queues.drainClient();
+                    assertTrue(queues.events.isEmpty());
+                    queues.drainRender();
+                }
+
+                assertEquals(Set.of(MODEL, OTHER), fixture.pending);
+                queues.drainClient();
+                assertEquals(queues.withCompletion("dispose"), queues.events);
+                assertEquals(Set.of(MODEL, OTHER), fixture.pending);
+                assertEquals(Map.of(OTHER, 20L), fixture.failed);
+            }
+        }
+    }
+
+    @Test
+    void fencedNullConversionStillSettlesCurrentPendingWork() throws Exception {
+        try (Fixture fixture = new Fixture()) {
+            fixture.pending.addAll(Set.of(MODEL, OTHER));
+            CompletionQueues queues = new CompletionQueues(List.of());
+            queues.enqueue(() -> assertDoesNotThrow(() -> completeNull(CURRENT_GENERATION)));
+
+            queues.drainRender();
+            assertEquals(Set.of(MODEL, OTHER), fixture.pending);
+            queues.drainClient();
+            assertEquals(Set.of(OTHER), fixture.pending);
+            assertEquals(Map.of(MODEL, 0L), fixture.failed);
+        }
+    }
+
+    @Test
+    void completionExceptionsAreDeferredToTheClientTaskBoundary() {
+        CompletionQueues queues = new CompletionQueues(true);
+        IllegalStateException failure = new IllegalStateException("Completion failed");
+        queues.enqueue(() -> {
+            throw failure;
+        });
+        queues.render.add(() -> queues.events.add("later-render-call"));
+
+        assertDoesNotThrow(queues::drainRender);
+        assertEquals(queues.withCompletion("later-render-call"), queues.events);
+        assertSame(failure, assertThrows(IllegalStateException.class, queues::drainClient));
     }
 
     @Test
@@ -278,6 +396,48 @@ class CombatMeshCacheLifecycleTest {
         Field field = CombatMeshCache.class.getDeclaredField(name);
         field.setAccessible(true);
         return field.get(null);
+    }
+
+    /** Simulates Epic Fight's constructor submissions, using the production fence scheduler. */
+    private static final class CompletionQueues {
+        private final Queue<Runnable> render = new ArrayDeque<>();
+        private final Queue<Runnable> client = new ArrayDeque<>();
+        private final List<String> events = new ArrayList<>();
+        private final List<String> initializations;
+
+        private CompletionQueues(boolean glow) {
+            this(glow ? List.of("base:init", "glow:init") : List.of("base:init"));
+        }
+
+        private CompletionQueues(List<String> initializations) {
+            this.initializations = List.copyOf(initializations);
+            initializations.forEach(event -> render.add(() -> events.add(event)));
+        }
+
+        private void enqueue(Runnable completion) {
+            CombatMeshCache.queueConversionCompletion(render::add, client::add, completion);
+        }
+
+        private void drainRender() {
+            drain(render);
+        }
+
+        private void drainClient() {
+            drain(client);
+        }
+
+        private static void drain(Queue<Runnable> queue) {
+            Runnable task;
+            while ((task = queue.poll()) != null) {
+                task.run();
+            }
+        }
+
+        private List<String> withCompletion(String completion) {
+            List<String> result = new ArrayList<>(initializations);
+            result.add(completion);
+            return result;
+        }
     }
 
     private static final class Fixture implements AutoCloseable {

@@ -52,6 +52,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Semaphore;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.Consumer;
 import java.util.function.LongSupplier;
 
 /** Session cache for asynchronously converted combat meshes and temporary texture fallbacks. */
@@ -487,8 +488,10 @@ public final class CombatMeshCache {
             acquired = true;
             ModelBundle source = remote != null ? remote : ClientLocalModelCache.load(modelId);
             Conversion conversion = bake(source);
-            Minecraft.getInstance().execute(() -> completeConversion(
-                    modelId, local, expectedGeneration, conversion));
+            queueConversionCompletion(
+                    fence -> RenderSystem.recordRenderCall(fence::run),
+                    completion -> Minecraft.getInstance().tell(completion),
+                    () -> completeConversion(modelId, local, expectedGeneration, conversion));
         } catch (InterruptedException exception) {
             Thread.currentThread().interrupt();
             Minecraft.getInstance().execute(() -> completeConversionInterruption(
@@ -504,6 +507,17 @@ public final class CombatMeshCache {
                 CONVERSION_PERMITS.release();
             }
         }
+    }
+
+    /**
+     * SkinnedMesh construction queues base/glow GPU initialization before this fence.
+     * The client queue must always enqueue (Minecraft.tell, not execute), preserving
+     * the client-task exception boundary without publishing or destroying inside replay.
+     */
+    static void queueConversionCompletion(Consumer<Runnable> renderQueue,
+                                          Consumer<Runnable> clientQueue,
+                                          Runnable completion) {
+        renderQueue.accept(() -> clientQueue.accept(completion));
     }
 
     private static long failureStamp(LongSupplier sourceStamp, Throwable conversionFailure) {
