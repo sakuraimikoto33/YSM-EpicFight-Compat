@@ -186,6 +186,8 @@ tasks.register('verifyDistributions') {
              'net/okitsu/ysmepicfightcompat/CompatMod.class',
              'net/okitsu/ysmepicfightcompat/integration/configured/ConfiguredHeldItemRules.class',
              'net/okitsu/ysmepicfightcompat/integration/configured/ConfiguredOptionalSettings.class',
+             'net/okitsu/ysmepicfightcompat/integration/configured/ConfiguredAnimationRateSlider.class',
+             'net/okitsu/ysmepicfightcompat/mixin/ConfiguredAnimationRateSliderMixin.class',
              'net/okitsu/ysmepicfightcompat/mixin/ConfiguredForgeConfigMixin.class',
              'net/okitsu/ysmepicfightcompat/mixin/ConfiguredForgeFolderEntryMixin.class',
              'net/okitsu/ysmepicfightcompat/integration/tlm/TouhouMaidSelectionAccess.class',
@@ -265,7 +267,8 @@ tasks.register('verifyDistributions') {
                         java.nio.charset.StandardCharsets.ISO_8859_1)
                 if (classText.contains('com/mrcrayfish/configured/') &&
                         !['net/okitsu/ysmepicfightcompat/integration/configured/ConfiguredHeldItemRules',
-                          'net/okitsu/ysmepicfightcompat/integration/configured/ConfiguredOptionalSettings'].any {
+                          'net/okitsu/ysmepicfightcompat/integration/configured/ConfiguredOptionalSettings',
+                          'net/okitsu/ysmepicfightcompat/integration/configured/ConfiguredAnimationRateSlider'].any {
                             classEntry.name == it + '.class' || classEntry.name.startsWith(it + '$')
                         }) {
                     throw new GradleException(

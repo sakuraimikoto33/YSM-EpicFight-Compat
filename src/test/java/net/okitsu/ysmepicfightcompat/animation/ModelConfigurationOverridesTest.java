@@ -10,13 +10,80 @@ import java.util.UUID;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNotSame;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class ModelConfigurationOverridesTest {
     private static final String MODEL_A = "test:model_a";
     private static final String MODEL_B = "test:model_b";
+
+    @Test
+    void renderTokenTracksLocalWritesAndAcknowledgementsWithoutRelyingOnWriteSequence() {
+        ModelConfigurationOverrides overrides = new ModelConfigurationOverrides();
+        assertNull(overrides.renderToken(MODEL_A));
+        assertNull(overrides.renderToken(null));
+        overrides.selectModel(MODEL_A);
+        Object selected = overrides.renderToken(MODEL_A);
+        assertNotNull(selected);
+        assertSame(selected, overrides.renderToken(MODEL_A));
+        assertNull(overrides.renderToken(MODEL_B));
+        overrides.selectModel(MODEL_A);
+        assertSame(selected, overrides.renderToken(MODEL_A));
+
+        overrides.evaluate(MODEL_A, "v.eye=2;", new Fallback(Map.of()));
+        Object edited = overrides.renderToken(MODEL_A);
+        assertNotSame(selected, edited);
+        UUID scope = UUID.randomUUID();
+        overrides.scope(scope);
+        assertSame(edited, overrides.renderToken(MODEL_A));
+        long sequence = overrides.sequence();
+        assertTrue(overrides.acknowledge(MODEL_A, overrides.context(), scope,
+                1, sequence, Map.of("v.eye", 3.0D)));
+        assertEquals(sequence, overrides.sequence());
+        Object acknowledged = overrides.renderToken(MODEL_A);
+        assertNotSame(edited, acknowledged);
+        assertValue(overrides, MODEL_A, "v.eye", 3.0D);
+        assertFalse(overrides.acknowledge(MODEL_A, overrides.context(), scope,
+                1, sequence, Map.of("v.eye", 9.0D)));
+        assertSame(acknowledged, overrides.renderToken(MODEL_A));
+    }
+
+    @Test
+    void renderTokenChangesForAcceptedSnapshotsAndModelChangesButNotRejectedUpdates() {
+        ModelConfigurationOverrides overrides = new ModelConfigurationOverrides();
+        overrides.accept(MODEL_A, Map.of("v.eye", 2.0D));
+        Object initial = overrides.renderToken(MODEL_A);
+        assertThrows(IllegalArgumentException.class,
+                () -> overrides.accept(MODEL_B, values(257)));
+        assertSame(initial, overrides.renderToken(MODEL_A));
+        assertNull(overrides.renderToken(MODEL_B));
+
+        overrides.accept(MODEL_A, Map.of());
+        Object cleared = overrides.renderToken(MODEL_A);
+        assertNotSame(initial, cleared);
+        overrides.selectModel(MODEL_B);
+        assertNull(overrides.renderToken(MODEL_A));
+        assertNotNull(overrides.renderToken(MODEL_B));
+        assertNotSame(cleared, overrides.renderToken(MODEL_B));
+    }
+
+    @Test
+    void renderTokenRemainsStableWhenInitialSnapshotsPreservePendingEditsOrRescope() {
+        ModelConfigurationOverrides overrides = new ModelConfigurationOverrides();
+        overrides.evaluate(MODEL_A, "v.eye=2;", new Fallback(Map.of()));
+        Object edited = overrides.renderToken(MODEL_A);
+        assertEquals(ModelConfigurationOverrides.InitialSnapshotResult.PRESERVED,
+                overrides.acceptInitialSnapshot(MODEL_A, Map.of()));
+        assertSame(edited, overrides.renderToken(MODEL_A));
+        overrides.scope(UUID.randomUUID());
+        assertEquals(ModelConfigurationOverrides.InitialSnapshotResult.RESCOPE,
+                overrides.acceptInitialSnapshot(MODEL_A, Map.of()));
+        assertSame(edited, overrides.renderToken(MODEL_A));
+    }
 
     @Test
     void aReplacementPlayerStateRejectsEveryCombinationOfOldContextAndScope() {
@@ -379,8 +446,10 @@ class ModelConfigurationOverridesTest {
         UUID scope = UUID.randomUUID();
         overrides.scope(scope);
         UUID context = overrides.context();
+        Object renderToken = overrides.renderToken(MODEL_A);
         assertThrows(IllegalArgumentException.class, () -> overrides.acknowledge(
                 MODEL_A, context, scope, 1, 0, values(256)));
+        assertSame(renderToken, overrides.renderToken(MODEL_A));
         assertValue(overrides, MODEL_A, "v.pending", 2.0D);
         assertFalse(overrides.lookup(MODEL_A, slot("v.value0")).present());
         assertEquals(Map.of("v.pending", 2.0D), overrides.pendingChanges());
@@ -397,6 +466,7 @@ class ModelConfigurationOverridesTest {
         ModelConfigurationOverrides overrides = new ModelConfigurationOverrides();
         overrides.evaluate(MODEL_A, "v.a=1;", new Fallback(Map.of()));
         UUID context = overrides.context();
+        Object renderToken = overrides.renderToken(MODEL_A);
         assertThrows(IllegalArgumentException.class, () -> overrides.accept(MODEL_B, values(257)));
         StringBuilder source = new StringBuilder();
         for (int index = 0; index < 257; index++) {
@@ -404,6 +474,8 @@ class ModelConfigurationOverridesTest {
         }
         assertThrows(IllegalArgumentException.class, () -> overrides.evaluate(
                 MODEL_B, source.toString(), new Fallback(Map.of())));
+        assertSame(renderToken, overrides.renderToken(MODEL_A));
+        assertNull(overrides.renderToken(MODEL_B));
         assertEquals(MODEL_A, overrides.modelId());
         assertEquals(context, overrides.context());
         assertEquals(1, overrides.sequence());

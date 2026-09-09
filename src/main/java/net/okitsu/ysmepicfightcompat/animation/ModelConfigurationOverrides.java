@@ -31,6 +31,12 @@ final class ModelConfigurationOverrides {
                 : ConfigurationVariableOverrides.Lookup.missing();
     }
 
+    /** Identity changes only after a validated render-visible overlay is replaced. */
+    synchronized Object renderToken(String requestedModelId) {
+        return requestedModelId != null && Objects.equals(modelId, requestedModelId)
+                ? overrides : null;
+    }
+
     synchronized Map<String, Double> evaluate(String selectedModelId, String expression,
                                               ExpressionEngine.Environment fallback) {
         boolean sameModel = Objects.equals(modelId, selectedModelId);

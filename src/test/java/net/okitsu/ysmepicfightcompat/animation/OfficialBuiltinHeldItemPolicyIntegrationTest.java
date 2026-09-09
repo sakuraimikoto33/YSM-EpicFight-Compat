@@ -28,6 +28,7 @@ import java.util.Set;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
@@ -437,6 +438,210 @@ class OfficialBuiltinHeldItemPolicyIntegrationTest {
                                 frame.wholeModelDeltas()[rightArm]),
                         () -> "saint hold arm was not composed after "
                                 + movement.clip() + " with " + hold);
+            }
+        }
+    }
+
+    /** Official asset plus production cadence/context integration, not a live Minecraft render. */
+    @Test
+    void saintBowRenderBasisCannotReuseTheImmediatelyPrecedingTickBasisAtSixtyHertz()
+            throws IOException {
+        Fixture fixture = load("wine_fox/21_saint");
+        AuxiliaryBoneLayout layout = AuxiliaryBoneLayout.create(fixture.geometry());
+        ParallelAnimationProgram program = program(fixture, layout);
+        List<String> clips = List.of("idle", "hold_mainhand:bow", "use_mainhand:bow");
+        int upperBody = layout.entryForBoneName("UpBody").auxiliaryIndex();
+        int weapon = layout.entryForBoneName("MagicStick").auxiliaryIndex();
+        AnimationEvaluationRateLimiter<ParallelAnimationProgram.EvaluationContext> limiter =
+                new AnimationEvaluationRateLimiter<>();
+        ParallelAnimationProgram.EvaluationContext tickContext =
+                saintBowEvaluationContext(null, clips);
+        ParallelAnimationProgram.EvaluationContext renderContext =
+                saintBowEvaluationContext(50.0F, clips);
+
+        double tickTime = 2.0D;
+        double renderTime = tickTime + 0.001D;
+        assertTrue(limiter.shouldEvaluate(tickTime, 60, tickContext, false));
+        // The neutral query snapshot represents the update pass before a render-relative
+        // model-yaw reference is available. No proprietary model expressions are copied.
+        ParallelAnimationProgram.Frame published = program.sampleAutomaticAt(
+                tickTime, clips, new NeutralEnvironment().headYaw(0));
+        limiter.evaluated(tickTime, 60, tickContext);
+        assertFiniteWholeModel(published);
+        OpenMatrix4f tickUpperBody = new OpenMatrix4f().load(published.wholeModelDeltas()[upperBody]);
+        OpenMatrix4f tickWeapon = new OpenMatrix4f().load(published.wholeModelDeltas()[weapon]);
+
+        ParallelAnimationProgram.Frame expectedRender = program(fixture, layout).sampleAutomaticAt(
+                renderTime, clips, new NeutralEnvironment().headYaw(-50));
+        assertFiniteWholeModel(expectedRender);
+        OpenMatrix4f expectedUpperBody =
+                new OpenMatrix4f().load(expectedRender.wholeModelDeltas()[upperBody]);
+        OpenMatrix4f expectedWeapon =
+                new OpenMatrix4f().load(expectedRender.wholeModelDeltas()[weapon]);
+        assertTrue(matrixDiffers(tickUpperBody, expectedUpperBody));
+        assertTrue(matrixDiffers(tickWeapon, expectedWeapon),
+                "the official saint bow must demonstrate why the two query bases are not reusable");
+
+        boolean renderAdmitted = limiter.shouldEvaluate(renderTime, 60, renderContext, false);
+        assertTrue(renderAdmitted,
+                "the real EvaluationContext must distinguish tick and render yaw availability");
+        if (renderAdmitted) {
+            published = program.sampleAutomaticAt(
+                    renderTime, clips, new NeutralEnvironment().headYaw(-50));
+            limiter.evaluated(renderTime, 60, renderContext);
+        }
+        assertFiniteWholeModel(published);
+        assertTrue(published.replaceEpicFightPose());
+        assertFalse(matrixDiffers(expectedUpperBody, published.wholeModelDeltas()[upperBody]));
+        assertFalse(matrixDiffers(expectedWeapon, published.wholeModelDeltas()[weapon]));
+
+        ParallelAnimationProgram.Frame renderFrame = published;
+        ParallelAnimationProgram.EvaluationContext nextRenderContext =
+                saintBowEvaluationContext(51.0F, clips);
+        boolean nextRenderAdmitted = limiter.shouldEvaluate(
+                renderTime + 0.001D, 60, nextRenderContext, false);
+        assertFalse(nextRenderAdmitted,
+                "continuous yaw values must not disable the cap after the render basis is available");
+        if (nextRenderAdmitted) {
+            published = program.sampleAutomaticAt(
+                    renderTime + 0.001D, clips, new NeutralEnvironment().headYaw(-51));
+            limiter.evaluated(renderTime + 0.001D, 60, nextRenderContext);
+        }
+        assertSame(renderFrame, published);
+        assertTrue(limiter.shouldEvaluate(renderTime + 0.001D, 0, renderContext, false));
+        limiter.evaluated(renderTime + 0.001D, 0, renderContext);
+        assertTrue(limiter.shouldEvaluate(renderTime + 0.001D, 0, renderContext, false),
+                "zero retains unconditional per-draw evaluation even at an unchanged timestamp");
+        assertTrue(limiter.shouldEvaluate(renderTime + 0.001D, 0, tickContext, false));
+    }
+
+    private static ParallelAnimationProgram.EvaluationContext saintBowEvaluationContext(
+            Float modelYaw, List<String> clips) {
+        Set<InteractionHand> main = Set.of(InteractionHand.MAIN_HAND);
+        return new ParallelAnimationProgram.EvaluationContext(
+                false, ParallelAnimationProgram.hasModelYawReference(modelYaw), false,
+                null, clips, "idle", null, null, OfficialRoamingVariables.RouletteState.NONE,
+                main, main, main, false, false, true, false, null, true, null);
+    }
+
+    /** Synthetic draw/tick scheduling over the real fixture and physics, not an in-game FPS test. */
+    @Test
+    void saintBowHairSettlesWhenRecentRendersKeepMaintenanceOutOfThePhysicsQueryBasis()
+            throws IOException {
+        Fixture fixture = load("wine_fox/21_saint");
+        for (int rateHz : List.of(30, 60)) {
+            HairCadenceResult oldPolicy = saintHairCadence(fixture, rateHz, false);
+            HairCadenceResult fixedPolicy = saintHairCadence(fixture, rateHz, true);
+            String context = "saint bow " + rateHz + " Hz: old variation="
+                    + oldPolicy.matrixVariation() + ", fixed=" + fixedPolicy.matrixVariation();
+            assertTrue(oldPolicy.secondOrderCalls() > 0 && fixedPolicy.secondOrderCalls() > 0,
+                    "the authored fixture must invoke real second-order physics");
+            assertTrue(oldPolicy.filterOutputChanged() && fixedPolicy.filterOutputChanged(),
+                    "a zero-returning fixture physics stub must not satisfy this regression");
+            assertTrue(oldPolicy.maintenanceSamples() > fixedPolicy.maintenanceSamples(), context);
+            assertEquals(1, fixedPolicy.maintenanceSamples(),
+                    "only the initial unseen tick needs maintenance during continuous visible rendering");
+            assertTrue(oldPolicy.matrixVariation() > 0.02D,
+                    "the old maintenance policy must reproduce stationary hair jitter: " + context);
+            assertTrue(fixedPolicy.matrixVariation() < 0.01D, context);
+            assertTrue(fixedPolicy.matrixVariation() < oldPolicy.matrixVariation() * 0.25D, context);
+        }
+    }
+
+    private static HairCadenceResult saintHairCadence(Fixture fixture, int rateHz,
+                                                      boolean respectRecentRender) {
+        AuxiliaryBoneLayout layout = AuxiliaryBoneLayout.create(fixture.geometry());
+        ParallelAnimationProgram program = program(fixture, layout);
+        PhysicsEnvironment environment = new PhysicsEnvironment();
+        AnimationEvaluationRateLimiter<ParallelAnimationProgram.EvaluationContext> limiter =
+                new AnimationEvaluationRateLimiter<>();
+        List<String> clips = List.of("idle", "hold_mainhand:bow", "use_mainhand:bow");
+        ParallelAnimationProgram.EvaluationContext tickContext = saintBowEvaluationContext(null, clips);
+        ParallelAnimationProgram.EvaluationContext renderContext = saintBowEvaluationContext(50.0F, clips);
+        String hair = "FLongHair";
+        String parent = fixture.geometry().bones().get(hair).parentName();
+        double[] minimum = new double[16];
+        double[] maximum = new double[16];
+        java.util.Arrays.fill(minimum, Double.POSITIVE_INFINITY);
+        java.util.Arrays.fill(maximum, Double.NEGATIVE_INFINITY);
+        int nextTick = 0;
+        int lastEvaluationTick = -1;
+        int lastRenderTick = -1;
+        int maintenanceSamples = 0;
+        int measuredDraws = 0;
+        double lastEvaluationTime = Double.NaN;
+        ParallelAnimationProgram.Frame published = null;
+
+        // Begin with the bow already drawn. Observe the final second after four seconds
+        // of stationary input, so startup response and authored equip motion are excluded.
+        for (int draw = 0; draw <= 5 * 144; draw++) {
+            double now = 2.0D + draw / 144.0D;
+            while (2.0D + nextTick / 20.0D <= now + 1.0E-9D) {
+                int tickCount = 40 + nextTick;
+                double tickTime = 2.0D + nextTick / 20.0D;
+                boolean advance = respectRecentRender
+                        ? ParallelAnimationProgram.shouldAdvanceOutputs(
+                        rateHz, tickCount, lastEvaluationTick, lastRenderTick)
+                        : lastEvaluationTick < tickCount;
+                if (advance && limiter.shouldEvaluate(tickTime, rateHz, tickContext, false)) {
+                    environment.advance(tickTime, lastEvaluationTime, 0);
+                    published = program.sampleAutomaticAt(tickTime, clips, environment);
+                    assertFiniteWholeModel(published);
+                    limiter.evaluated(tickTime, rateHz, tickContext);
+                    lastEvaluationTime = tickTime;
+                    lastEvaluationTick = tickCount;
+                    maintenanceSamples++;
+                }
+                nextTick++;
+            }
+
+            int tickCount = 40 + (int) Math.floor(draw * 20.0D / 144.0D + 1.0E-9D);
+            // Actual render observation precedes admission, including draws that reuse a pose.
+            lastRenderTick = tickCount;
+            if (limiter.shouldEvaluate(now, rateHz, renderContext, false)) {
+                environment.advance(now, lastEvaluationTime, -50);
+                published = program.sampleAutomaticAt(now, clips, environment);
+                assertFiniteWholeModel(published);
+                limiter.evaluated(now, rateHz, renderContext);
+                lastEvaluationTime = now;
+                lastEvaluationTick = tickCount;
+            }
+            assertNotNull(published);
+            if (now >= 6.0D) {
+                OpenMatrix4f localHair = relativeAnimatedTransform(published, layout, parent, hair);
+                float[] values = new float[]{localHair.m00, localHair.m01, localHair.m02, localHair.m03,
+                        localHair.m10, localHair.m11, localHair.m12, localHair.m13,
+                        localHair.m20, localHair.m21, localHair.m22, localHair.m23,
+                        localHair.m30, localHair.m31, localHair.m32, localHair.m33};
+                for (int component = 0; component < values.length; component++) {
+                    assertTrue(Float.isFinite(values[component]));
+                    minimum[component] = Math.min(minimum[component], values[component]);
+                    maximum[component] = Math.max(maximum[component], values[component]);
+                }
+                measuredDraws++;
+            }
+        }
+        assertTrue(measuredDraws >= 144);
+        double variation = 0;
+        for (int component = 0; component < minimum.length; component++) {
+            variation = Math.max(variation, maximum[component] - minimum[component]);
+        }
+        return new HairCadenceResult(variation, environment.secondOrderCalls,
+                environment.filterOutputChanged, maintenanceSamples);
+    }
+
+    private record HairCadenceResult(double matrixVariation, int secondOrderCalls,
+                                     boolean filterOutputChanged, int maintenanceSamples) { }
+
+    private static void assertFiniteWholeModel(ParallelAnimationProgram.Frame frame) {
+        assertNotNull(frame.wholeModelDeltas());
+        for (OpenMatrix4f matrix : frame.wholeModelDeltas()) {
+            assertNotNull(matrix);
+            for (float value : new float[]{matrix.m00, matrix.m01, matrix.m02, matrix.m03,
+                    matrix.m10, matrix.m11, matrix.m12, matrix.m13,
+                    matrix.m20, matrix.m21, matrix.m22, matrix.m23,
+                    matrix.m30, matrix.m31, matrix.m32, matrix.m33}) {
+                assertTrue(Float.isFinite(value), "official saint bow pose must stay finite");
             }
         }
     }
@@ -1072,6 +1277,57 @@ class OfficialBuiltinHeldItemPolicyIntegrationTest {
     }
 
     private record MovementCase(String clip, MovementAnimationType type) {
+    }
+
+    private static final class PhysicsEnvironment implements ExpressionEngine.Environment {
+        private final NeutralEnvironment delegate = new NeutralEnvironment().mathFunctions();
+        private final AuxiliaryPhysicsRuntime physics = new AuxiliaryPhysicsRuntime();
+        private final Map<String, Double> previousFilterValues = new LinkedHashMap<>();
+        private int secondOrderCalls;
+        private boolean filterOutputChanged;
+
+        private void advance(double now, double previousTime, double headYaw) {
+            physics.update(Double.isFinite(previousTime) ? Math.max(0, now - previousTime) : 0);
+            delegate.headYaw(headYaw);
+        }
+
+        @Override
+        public double readVariable(int slot) { return delegate.readVariable(slot); }
+
+        @Override
+        public boolean hasVariable(int slot) { return delegate.hasVariable(slot); }
+
+        @Override
+        public void writeVariable(int slot, double value) { delegate.writeVariable(slot, value); }
+
+        @Override
+        public double readQuery(int slot) { return delegate.readQuery(slot); }
+
+        @Override
+        public double invoke(String name, double[] arguments) { return delegate.invoke(name, arguments); }
+
+        @Override
+        public double invokeWithText(String name, String[] arguments) {
+            return delegate.invokeWithText(name, arguments);
+        }
+
+        @Override
+        public double invokeWithMixedArguments(String name, String[] text, double[] numeric) {
+            if (!"ysm.second_order".equals(name) || text.length < 1 || text[0] == null
+                    || numeric.length < 2) {
+                return delegate.invokeWithMixedArguments(name, text, numeric);
+            }
+            double value = physics.secondOrder(text[0], numeric[1],
+                    numeric.length > 2 ? numeric[2] : 1,
+                    numeric.length > 3 ? numeric[3] : 1,
+                    numeric.length > 4 ? numeric[4] : 1);
+            secondOrderCalls++;
+            Double previous = previousFilterValues.put(text[0], value);
+            if (previous != null && Math.abs(previous - value) > 1.0E-6D) {
+                filterOutputChanged = true;
+            }
+            return value;
+        }
     }
 
     private static final class NeutralEnvironment implements ExpressionEngine.Environment {

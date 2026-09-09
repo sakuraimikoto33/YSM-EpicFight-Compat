@@ -130,6 +130,11 @@ public final class MolangScriptRuntime {
         pendingSyncs.addLast(arguments.clone());
     }
 
+    /** Accepted external events must not wait for the next rate-limited animation sample. */
+    boolean hasPendingSyncs() {
+        return !pendingSyncs.isEmpty();
+    }
+
     public static boolean validSync(double[] arguments) {
         if (arguments == null || arguments.length > MAX_SYNC_ARGUMENTS) return false;
         for (double value : arguments) if (!Double.isFinite(value)) return false;

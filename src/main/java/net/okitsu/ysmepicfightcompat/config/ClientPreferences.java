@@ -16,6 +16,8 @@ import java.util.Map;
 
 /** Client-owned cache, rendering and animation preferences, and notification state. */
 public final class ClientPreferences {
+    public static final int MIN_ANIMATION_EVALUATION_RATE_HZ = 30;
+    public static final int MAX_ANIMATION_EVALUATION_RATE_HZ = 240;
     public static final String CONFIG_FILE =
             "ysm_epicfight_compat/ysm_epicfight_compat-client.toml";
     public static final ForgeConfigSpec CLIENT_SPEC;
@@ -26,6 +28,8 @@ public final class ClientPreferences {
     public static final ForgeConfigSpec.ConfigValue<Integer>
             REMOTE_MODEL_DISK_CACHE_MIB;
     public static final ForgeConfigSpec.BooleanValue SUPPRESS_BATTLE_MODE_OVERLAY;
+    public static final ForgeConfigSpec.ConfigValue<Integer>
+            ANIMATION_EVALUATION_RATE_LIMIT_HZ;
     public static final ForgeConfigSpec.BooleanValue USE_YSM_HELD_ITEM_MODELS;
     public static final ForgeConfigSpec.ConfigValue<Config>
             HELD_ITEM_MODEL_EXCLUSIONS;
@@ -69,6 +73,19 @@ public final class ClientPreferences {
                         "Default: true")
                 .translation("config.ysm_epicfight_compat.suppress_battle_overlay")
                 .define("suppressBattleModeOverlay", true);
+        ANIMATION_EVALUATION_RATE_LIMIT_HZ = config
+                .comment("Target maximum YSM model animation, script, and controller evaluations per second while inputs remain reusable.",
+                        "60 targets 60 updates per second. State-changing inputs may require an earlier evaluation.",
+                        "Lower values make model updates less smooth; this is not a game-tick or rendering-FPS cap.",
+                        "Set to zero to disable this added rate limit and restore the original evaluation cadence, including existing remote-player LOD.",
+                        "Animation time and playback speed remain unchanged. Live client-config changes take effect without restarting.",
+                        "Range: 0 (unlimited), 30 ~ 240",
+                        "Default: 60")
+                .translation("config.ysm_epicfight_compat.animation_evaluation_rate_limit_hz")
+                .define("animationEvaluationRateLimitHz", 60,
+                        value -> Integer.valueOf(0).equals(value)
+                                || integerInRange(value, MIN_ANIMATION_EVALUATION_RATE_HZ,
+                                MAX_ANIMATION_EVALUATION_RATE_HZ));
         YSM_WARNING_ACKNOWLEDGED = config
                 .comment("Whether the official YSM/Epic Fight compatibility warning was already shown.",
                         "Default: false")
@@ -277,6 +294,10 @@ public final class ClientPreferences {
 
     public static boolean suppressBattleModeOverlay() {
         return SUPPRESS_BATTLE_MODE_OVERLAY.get();
+    }
+
+    public static int animationEvaluationRateLimitHz() {
+        return ANIMATION_EVALUATION_RATE_LIMIT_HZ.get();
     }
 
     public static Map<String, List<String>> heldItemModelExclusions() {

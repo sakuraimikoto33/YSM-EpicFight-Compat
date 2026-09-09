@@ -16,6 +16,7 @@
     "CombatFirstPersonMixin",
     "CompositeRenderStateAccessor$State",
     "CompositeRenderTypeAccessor",
+    "ConfiguredAnimationRateSliderMixin",
     "ConfiguredForgeConfigMixin",
     "ConfiguredForgeFolderEntryMixin",
     "FirstPersonRenderScopeMixin",

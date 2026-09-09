@@ -82,6 +82,18 @@ public final class OfficialConfigurationVariables {
                 : state.lookup(modelId, slot);
     }
 
+    /** Allocation-free change detection for the same overlay exposed by lookup. */
+    static Object renderToken(LivingEntity entity, String modelId) {
+        if (!(entity instanceof Player)) {
+            return null;
+        }
+        if (entity == Minecraft.getInstance().player && entity != localPlayer) {
+            return null;
+        }
+        ModelConfigurationOverrides state = STATES.get(entity.getUUID());
+        return state == null ? null : state.renderToken(modelId);
+    }
+
     public static void reset(Player player) {
         if (player != null) {
             Minecraft minecraft = Minecraft.getInstance();

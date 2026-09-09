@@ -53,7 +53,7 @@ class ConfigTomlLayoutTest {
         List<Setting> settings = clientSettings();
         Written written = defaults(ClientPreferences.CLIENT_SPEC);
 
-        assertEquals(20, settings.size());
+        assertEquals(21, settings.size());
         assertInventory(ClientPreferences.CLIENT_SPEC, settings);
         assertDefaults(written.parsed(), settings);
         assertNoFlatKeys(written.parsed(), settings);
@@ -62,7 +62,8 @@ class ConfigTomlLayoutTest {
         assertEquals(Set.of("client", "common"), written.parsed().valueMap().keySet());
         UnmodifiableConfig client = assertInstanceOf(UnmodifiableConfig.class,
                 written.parsed().getRaw(path("client")));
-        assertEquals(Set.of("cache", "suppressBattleModeOverlay", "epicFightCompatibilityWarningShown"),
+        assertEquals(Set.of("cache", "suppressBattleModeOverlay", "animationEvaluationRateLimitHz",
+                        "epicFightCompatibilityWarningShown"),
                 client.valueMap().keySet());
         UnmodifiableConfig common = assertInstanceOf(UnmodifiableConfig.class,
                 written.parsed().getRaw(path("common")));
@@ -229,7 +230,8 @@ class ConfigTomlLayoutTest {
     @Test
     void previousRenderingAndNotificationsCategoriesAreNotMigratedToClientRootKeys() {
         List<Setting> settings = clientSettings().stream()
-                .filter(setting -> setting.path().size() == 2).toList();
+                .filter(setting -> setting.path().size() == 2
+                        && !setting.previousCategoryPath().equals(setting.path())).toList();
         assertEquals(2, settings.size());
 
         assertNoCategoryMigration(settings);
@@ -454,6 +456,8 @@ class ConfigTomlLayoutTest {
                         path("client", "cache", "remoteModelDiskCacheMiB"), 64, 192),
                 setting(ClientPreferences.SUPPRESS_BATTLE_MODE_OVERLAY,
                         path("client", "suppressBattleModeOverlay"), true, false),
+                setting(ClientPreferences.ANIMATION_EVALUATION_RATE_LIMIT_HZ,
+                        path("client", "animationEvaluationRateLimitHz"), 60, 0),
                 setting(ClientPreferences.USE_YSM_HELD_ITEM_MODELS,
                         path("common", "models", "useYsmHeldItemModels"), true, false),
                 setting(ClientPreferences.USE_YSM_PROJECTILE_MODELS,

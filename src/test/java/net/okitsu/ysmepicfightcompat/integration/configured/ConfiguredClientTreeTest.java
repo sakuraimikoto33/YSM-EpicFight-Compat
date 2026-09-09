@@ -47,10 +47,17 @@ class ConfiguredClientTreeTest {
                 Set.copyOf(root.getChildren().stream().map(IConfigEntry::getEntryName).toList()));
         assertInstanceOf(ForgeFolderEntry.class, child(root, "client"));
         UnmodifiableConfig clientValues = spec.getValues().getRaw(List.of("client"));
-        assertEquals(Set.of("cache", "suppressBattleModeOverlay", "epicFightCompatibilityWarningShown"),
+        assertEquals(Set.of("cache", "suppressBattleModeOverlay", "animationEvaluationRateLimitHz",
+                        "epicFightCompatibilityWarningShown"),
                 clientValues.valueMap().keySet());
         assertInstanceOf(ForgeConfigSpec.ConfigValue.class, clientValues.getRaw("suppressBattleModeOverlay"));
+        assertSame(ClientPreferences.ANIMATION_EVALUATION_RATE_LIMIT_HZ,
+                clientValues.getRaw("animationEvaluationRateLimitHz"));
         assertInstanceOf(ForgeConfigSpec.ConfigValue.class, clientValues.getRaw("epicFightCompatibilityWarningShown"));
+        ForgeConfigSpec.ValueSpec animationRate = assertInstanceOf(ForgeConfigSpec.ValueSpec.class,
+                spec.getRaw(List.of("client", "animationEvaluationRateLimitHz")));
+        assertEquals("config.ysm_epicfight_compat.animation_evaluation_rate_limit_hz",
+                animationRate.getTranslationKey());
         List<IConfigEntry> categories = child(root, "common").getChildren();
         assertEquals(Set.of("models", "animations"),
                 Set.copyOf(categories.stream().map(IConfigEntry::getEntryName).toList()));
@@ -76,6 +83,7 @@ class ConfiguredClientTreeTest {
                 keys.add(spec.getLevelTranslationKey(ANIMATION_RULES));
                 keys.add(spec.getLevelTranslationKey(MODEL_RULES));
                 keys.add(spec.getLevelTranslationKey(cachePath));
+                keys.add(animationRate.getTranslationKey());
                 for (String key : keys) {
                     assertTrue(translations.has(key), language + ": " + key);
                     assertFalse(translations.get(key).getAsString().isBlank(), key);

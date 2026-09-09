@@ -911,6 +911,35 @@ class MolangScriptRuntimeTest {
         assertEquals(32.0D, environment.number("v.count"), EPSILON);
     }
 
+    @Test
+    void pendingSyncSignalTracksAcceptedEventsUntilTheyAreProcessedOrReset() {
+        FakeEnvironment environment = environment(Map.of("receive@sync", "v.count+=1;"));
+        assertFalse(environment.runtime.hasPendingSyncs());
+        environment.runtime.enqueueSync(null);
+        environment.runtime.enqueueSync(new double[]{Double.NaN});
+        environment.runtime.enqueueSync(new double[MolangScriptRuntime.MAX_SYNC_ARGUMENTS + 1]);
+        assertFalse(environment.runtime.hasPendingSyncs());
+
+        environment.runtime.enqueueSync(new double[0]);
+        assertTrue(environment.runtime.hasPendingSyncs());
+        assertTrue(environment.runtime.hasPendingSyncs());
+        environment.runtime.frame(0, environment);
+        assertFalse(environment.runtime.hasPendingSyncs());
+        assertEquals(1.0D, environment.number("v.count"), EPSILON);
+
+        environment.runtime.enqueueSync(new double[]{2});
+        environment.runtime.frame(0, environment);
+        assertTrue(environment.runtime.hasPendingSyncs());
+        environment.runtime.frame(0.01D, environment);
+        assertFalse(environment.runtime.hasPendingSyncs());
+        assertEquals(2.0D, environment.number("v.count"), EPSILON);
+
+        environment.runtime.enqueueSync(new double[]{3});
+        assertTrue(environment.runtime.hasPendingSyncs());
+        environment.runtime.reset();
+        assertFalse(environment.runtime.hasPendingSyncs());
+    }
+
     private static FakeEnvironment environment(Map<String, String> sources) {
         return new FakeEnvironment(new MolangScriptRuntime(sources, CLIPS));
     }

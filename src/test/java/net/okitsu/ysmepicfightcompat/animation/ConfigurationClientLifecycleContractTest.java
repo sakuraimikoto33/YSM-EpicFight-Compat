@@ -36,6 +36,22 @@ class ConfigurationClientLifecycleContractTest {
     }
 
     @Test
+    void animationInvalidationUsesTheSameReplacementPlayerBoundaryWithoutMutatingState()
+            throws IOException {
+        Code token = read("renderToken");
+        int state = token.index(Opcodes.GETSTATIC, OWNER, "STATES");
+        assertTrue(token.index(Opcodes.GETFIELD, MINECRAFT, "player") < state);
+        assertTrue(token.index(Opcodes.GETSTATIC, OWNER, "localPlayer") < state);
+        assertTrue(token.steps.subList(0, state).stream().filter(Step::identityJump).count() >= 2);
+        assertTrue(token.steps.subList(0, state).stream()
+                .anyMatch(step -> step.opcode == Opcodes.ARETURN));
+        assertTrue(token.hasCall(ROOT + "animation/ModelConfigurationOverrides", "renderToken"));
+        assertFalse(token.hasCall("java/util/Map", "remove"));
+        assertFalse(token.hasCall("java/util/Map", "computeIfAbsent"));
+        assertFalse(token.hasCall(OWNER, "bindLocal"));
+    }
+
+    @Test
     void aLateLeaveOrRegistrationOfAnOldEntityCannotResetTheCurrentPlayersValues() throws IOException {
         Code reset = read("reset");
         int remove = reset.index(Opcodes.INVOKEINTERFACE, "java/util/Map", "remove");

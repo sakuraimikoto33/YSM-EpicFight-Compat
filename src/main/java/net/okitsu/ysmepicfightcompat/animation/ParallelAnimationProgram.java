@@ -7,6 +7,7 @@ import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.item.ItemStack;
 import net.okitsu.ysmepicfightcompat.CompatMod;
+import net.okitsu.ysmepicfightcompat.config.ClientPreferences;
 import net.okitsu.ysmepicfightcompat.geometry.GeometryDocument;
 import net.okitsu.ysmepicfightcompat.integration.parcool.EpicParCoolAnimationAccess;
 import net.okitsu.ysmepicfightcompat.mesh.AuxiliaryBoneLayout;
@@ -35,6 +36,7 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
+import java.util.UUID;
 import java.util.WeakHashMap;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
@@ -90,6 +92,27 @@ public final class ParallelAnimationProgram {
                         Set<InteractionHand> ladderItemsInHand,
                         Set<String> hiddenBones,
                         @Nullable OpenMatrix4f[] authoredDeltas) {
+    }
+
+    /** Discrete inputs only: continuously advancing clip times must not defeat the cap. */
+    record EvaluationContext(boolean firstPerson, boolean modelYawAvailable,
+                             boolean epicFightActionActive,
+                             MovementAnimationType renderedMovement,
+                             List<String> clips, String mainClip,
+                             MovementAnimationType movement, ModAnimationType modAnimation,
+                             OfficialRoamingVariables.RouletteState roulette,
+                             Set<InteractionHand> replacementHands,
+                             Set<InteractionHand> activeReplacementHands,
+                             Set<InteractionHand> itemAnimationHands,
+                             boolean movementEnabled, boolean naturalLadder,
+                             boolean mainHandEnabled, boolean offHandEnabled,
+                             UUID vehicle, boolean ysmVehicle, Object configurationToken) {
+        EvaluationContext {
+            clips = List.copyOf(clips);
+            replacementHands = Set.copyOf(replacementHands);
+            activeReplacementHands = Set.copyOf(activeReplacementHands);
+            itemAnimationHands = Set.copyOf(itemAnimationHands);
+        }
     }
 
     private record VisibilityBone(GeometryDocument.Bone bone, int parentIndex,
@@ -262,6 +285,23 @@ public final class ParallelAnimationProgram {
             }
             return false;
         }
+
+        boolean needsEvaluation(double now) {
+            if (!pending.isEmpty()) {
+                return true;
+            }
+            for (ItemSwitchPlayback playback : playbacks.values()) {
+                if (now > playback.endsAt() + EPSILON) {
+                    return true;
+                }
+            }
+            for (double until : exitOwnershipUntil.values()) {
+                if (now > until + EPSILON) {
+                    return true;
+                }
+            }
+            return false;
+        }
     }
 
     static final class FullBodySwingState {
@@ -273,6 +313,15 @@ public final class ParallelAnimationProgram {
             playback = null;
             rawSwingConsumed = false;
             endpointPublished = false;
+        }
+
+        boolean needsEvaluation(double now) {
+            if (playback == null) {
+                return false;
+            }
+            double elapsed = Math.max(0.0D, now - playback.startedAt());
+            return !endpointPublished && elapsed + EPSILON >= playback.duration()
+                    || elapsed > playback.duration() + EPSILON;
         }
     }
 
@@ -798,10 +847,28 @@ public final class ParallelAnimationProgram {
     public void advanceOutputs(LivingEntity entity, boolean firstPerson,
                                boolean epicFightActionActive) {
         RuntimeState state = stateFor(entity, false);
-        if (state != null && state.lastTickCount >= entity.tickCount) {
+        if (state != null && !shouldAdvanceOutputs(
+                ClientPreferences.animationEvaluationRateLimitHz(), entity.tickCount,
+                state.lastTickCount, state.lastRenderTick)) {
             return;
         }
-        sample(entity, 0.0F, firstPerson, null, epicFightActionActive);
+        sample(entity, 0.0F, firstPerson, null, epicFightActionActive,
+                null, false, true);
+    }
+
+    static boolean shouldAdvanceOutputs(int rateHz, int tickCount,
+                                        int lastEvaluationTick, int lastRenderTick) {
+        if (lastEvaluationTick >= tickCount) {
+            return false;
+        }
+        // END client ticks run before the next draw. While capped and recently
+        // visible, let that draw supply the authoritative model-yaw/input basis.
+        // Otherwise the fallback's vanilla basis repeatedly excites the same
+        // secondary-motion filters, even though its pose is never displayed.
+        // Resume offscreen outputs after one missed render tick; keep the same
+        // elapsed timeline and physics state, and preserve the unlimited path.
+        long renderAge = (long) tickCount - lastRenderTick;
+        return rateHz <= 0 || renderAge < 0 || renderAge > 1;
     }
 
     /** Releases per-entity controller state and bound outputs when an entity unloads. */
@@ -937,6 +1004,15 @@ public final class ParallelAnimationProgram {
                         boolean epicFightActionActive,
                         @Nullable MovementAnimationType renderedYsmMovement,
                         boolean renderingInInventory) {
+        return sample(entity, partialTick, firstPerson, epicModelYaw,
+                epicFightActionActive, renderedYsmMovement, renderingInInventory, false);
+    }
+
+    private Frame sample(LivingEntity entity, float partialTick, boolean firstPerson,
+                         @Nullable Float epicModelYaw,
+                         boolean epicFightActionActive,
+                         @Nullable MovementAnimationType renderedYsmMovement,
+                         boolean renderingInInventory, boolean outputOnly) {
         // These addon-owned movements also block ordinary locomotion/item-switch
         // fallback, including callers that did not supply an Epic Fight action bit.
         epicFightActionActive |= EpicParCoolAnimationAccess.ownsMovementPose(entity);
@@ -951,46 +1027,91 @@ public final class ParallelAnimationProgram {
         if (entity.tickCount < state.lastTickCount) {
             state.reset(sampledNow);
         }
+        // Observe every real world draw, including a reused capped frame. A
+        // fallback update or an inventory preview must not keep this marker alive.
+        if (!outputOnly && !preview) {
+            state.lastRenderTick = entity.tickCount;
+        }
         // Minecraft may restore a smaller partial tick after closing a single-player
         // pause screen. Keep the sampled clock monotonic unless the entity tick itself
         // rewound, which indicates a real lifecycle reset.
         double now = stableSampleTime(entity.tickCount, sampledNow,
                 state.lastTickCount, state.lastNow);
-        if (now > state.boneQuerySampledAt) {
-            state.environment.boneQueries(state.displayedBoneQueries);
-        }
         float stablePartialTick = (float) Math.max(0.0D,
                 Math.min(1.0D, now * 20.0D - entity.tickCount));
-        double elapsed = Math.max(0.0D, now - state.startedAt);
-        double deltaTime = state.lastNow < 0.0D ? 0.0D
-                : Math.min(0.25D, Math.max(0.0D, now - state.lastNow));
-        state.lastTickCount = entity.tickCount;
-        state.lastNow = now;
         OfficialRoamingVariables.RouletteState roulette =
                 OfficialRoamingVariables.rouletteState(entity);
-        // Player roulette audio is already started by official YSM. EFTLM bypasses
-        // that renderer for maids, so the converted maid path must own its copy.
-        state.rouletteSoundOutputEnabled = !preview && compatOwnsRouletteSound(
-                entity instanceof Player);
-        double rouletteElapsed = state.rouletteElapsed(roulette, now);
         ClipProgram rouletteClip = roulette.playing()
                 ? rouletteClip(roulette.animationName()) : null;
-        state.selectRouletteClip(rouletteClip);
-        state.reportRoulette(entity, roulette, rouletteClip != null);
         Set<InteractionHand> enabledReplacementHands = ysmReplacementHands(entity);
         Set<InteractionHand> activeReplacementHands =
                 ysmActiveReplacementHands(entity);
         Set<InteractionHand> enabledItemAnimationHands =
                 ysmHeldItemAnimationHands(entity);
-        state.restrictFullBodyHands(enabledReplacementHands);
         MovementAnimationType synchronizedMovement = renderedYsmMovement == null
                 ? ClientMovementAnimationPreferences.remoteMovementOverride(
                 entity, modelId) : renderedYsmMovement;
+        boolean ysmVehicle = !entity.isPassenger()
+                || SubEntityRenderPolicy.usesYsmVehicleForRider(entity);
         AutomaticAnimationSelector.Selection selected =
                 automaticSelector.select(entity, now, state.automaticState,
-                        synchronizedMovement,
-                        !entity.isPassenger() || SubEntityRenderPolicy.usesYsmVehicleForRider(entity),
+                        synchronizedMovement, ysmVehicle,
                         configuredModAnimation(entity, stablePartialTick));
+        int evaluationRateHz = ClientPreferences.animationEvaluationRateLimitHz();
+        EvaluationContext evaluationContext = evaluationRateHz <= 0 ? null
+                : new EvaluationContext(firstPerson, hasModelYawReference(epicModelYaw),
+                epicFightActionActive,
+                renderedYsmMovement,
+                selected.clips().stream().map(AutomaticAnimationSelector.ActiveClip::name)
+                        .collect(java.util.stream.Collectors.toUnmodifiableList()),
+                selected.main() == null ? null : selected.main().name(),
+                selected.movement(), selected.modAnimation(), roulette,
+                enabledReplacementHands, activeReplacementHands, enabledItemAnimationHands,
+                ClientMovementAnimationPreferences.usesYsm(entity, modelId, selected.movement()),
+                ClientMovementAnimationPreferences.usesNaturalLadderPose(
+                        entity, modelId, selected.movement()),
+                ClientHeldItemModelPreferences.usesYsm(entity, modelId, InteractionHand.MAIN_HAND),
+                ClientHeldItemModelPreferences.usesYsm(entity, modelId, InteractionHand.OFF_HAND),
+                entity.getVehicle() == null ? null : entity.getVehicle().getUUID(), ysmVehicle,
+                OfficialConfigurationVariables.renderToken(entity, modelId));
+        // select() observes transient item/restart edges even on skipped draws. Never
+        // consume one without evaluating it; continuous partial-tick queries may wait.
+        boolean forceEvaluation = evaluationRateHz > 0 && (state.scripts.hasPendingSyncs()
+                || !selected.heldItemChanges().isEmpty()
+                || selected.clips().stream().anyMatch(AutomaticAnimationSelector.ActiveClip::restarted)
+                || state.itemSwitchState.needsEvaluation(now)
+                || state.fullBodySwingState.needsEvaluation(now)
+                || state.fullBodyEnding != null
+                && fullBodyEndingWeight(now - state.fullBodyEnding.startedAt()) <= 0.0F
+                || !preview && rouletteClip != null && !state.rouletteStopSent
+                && rouletteClip.clip().playback() == AnimationClip.Playback.ONCE
+                && now - state.rouletteStartedAt > rouletteClip.duration());
+        if (!state.evaluationLimiter.shouldEvaluate(
+                now, evaluationRateHz, evaluationContext, forceEvaluation)) {
+            return reusableFrame(state);
+        }
+        boolean freshContext = evaluationRateHz > 0 && (forceEvaluation
+                || !state.evaluationLimiter.currentContextMatches(evaluationContext));
+        if (freshContext) {
+            // Do not collect a worker result belonging to a previous owner/view/input.
+            discardPendingEvaluation(state);
+        }
+        if (now > state.boneQuerySampledAt) {
+            state.environment.boneQueries(state.displayedBoneQueries);
+        }
+        double elapsed = Math.max(0.0D, now - state.startedAt);
+        double deltaTime = evaluationDeltaTime(now, state.lastNow, evaluationRateHz);
+        // A skipped draw must not consume elapsed time or mark tick outputs as run.
+        state.lastTickCount = entity.tickCount;
+        state.lastNow = now;
+        // Player roulette audio is already started by official YSM. EFTLM bypasses
+        // that renderer for maids, so the converted maid path must own its copy.
+        state.rouletteSoundOutputEnabled = !preview && compatOwnsRouletteSound(
+                entity instanceof Player);
+        double rouletteElapsed = state.rouletteElapsed(roulette, now);
+        state.selectRouletteClip(rouletteClip);
+        state.reportRoulette(entity, roulette, rouletteClip != null);
+        state.restrictFullBodyHands(enabledReplacementHands);
         state.environment.renderingContext(preview, false, false);
         state.environment.update(stablePartialTick, firstPerson, deltaTime);
         // Publish the same official snapshot used above, before init/update/sync and
@@ -1142,6 +1263,7 @@ public final class ParallelAnimationProgram {
                 && state.publishedFrame.replaceEpicFightPose()
                 && !currentFullBodyOwner;
         boolean workerEligible = !preview && entity != Minecraft.getInstance().player
+                && !freshContext
                 && scriptSources.isEmpty()
                 && !controllerProgram.hasBuiltinControllers()
                 && !state.environment.hasTypedVariables()
@@ -1182,7 +1304,38 @@ public final class ParallelAnimationProgram {
                 && state.shouldStopRoulette(rouletteClip, rouletteElapsed)) {
             OfficialRoamingVariables.stopLocalRouletteAnimation(entity);
         }
+        state.evaluationLimiter.evaluated(now, evaluationRateHz, evaluationContext);
         return state.publishedFrame;
+    }
+
+    private static Frame reusableFrame(RuntimeState state) {
+        Frame previous = state.publishedFrame;
+        // A same-context worker may finish between admissions. Publishing its result
+        // runs no animation/scripts and avoids adding an entire interval of latency.
+        collectCompletedEvaluation(state);
+        if (state.publishedFrame != previous) {
+            // The displayed pose changed even though the evaluation clock did not.
+            state.boneQuerySampledAt = Double.NEGATIVE_INFINITY;
+        }
+        return state.publishedFrame;
+    }
+
+    static boolean hasModelYawReference(@Nullable Float modelYaw) {
+        // Tick-only output updates have no renderer yaw. Their pose uses vanilla's
+        // body-relative queries and cannot be reused by a draw using Epic Fight's
+        // model-relative bow/movement correction, even at the same animation time.
+        // Track availability, not the continuously interpolated angle, so ordinary
+        // aimed render samples can still share the configured evaluation cadence.
+        return modelYaw != null && Float.isFinite(modelYaw);
+    }
+
+    static double evaluationDeltaTime(double now, double lastNow, int rateHz) {
+        // Preserve the original stall clamp in unlimited mode. A capped evaluation
+        // also includes its deliberate wait, otherwise a 1 Hz model integrating
+        // query.delta_time would advance by only 0.25 seconds on each update.
+        double maximumDelta = 0.25D + (rateHz > 0 ? 1.0D / rateHz : 0.0D);
+        return lastNow < 0.0D ? 0.0D
+                : Math.min(maximumDelta, Math.max(0.0D, now - lastNow));
     }
 
     /** Whether this frame needs a canonical model-space snapshot for next-frame queries. */
@@ -5293,9 +5446,12 @@ public final class ParallelAnimationProgram {
                 new AutomaticAnimationSelector.State();
         private final AnimationControllerProgram.RuntimeState controllerState =
                 new AnimationControllerProgram.RuntimeState();
+        private final AnimationEvaluationRateLimiter<EvaluationContext> evaluationLimiter =
+                new AnimationEvaluationRateLimiter<>();
         private double startedAt;
         private double lastNow = -1.0D;
         private int lastTickCount = Integer.MIN_VALUE;
+        private int lastRenderTick = Integer.MIN_VALUE;
         private String rouletteAnimation = "";
         private long rouletteGeneration = Long.MIN_VALUE;
         private String rouletteClip = "";
@@ -5354,10 +5510,12 @@ public final class ParallelAnimationProgram {
             boneQuerySampledAt = Double.NEGATIVE_INFINITY;
             automaticState.reset();
             controllerState.reset();
+            evaluationLimiter.reset();
             lastLocalTime.clear();
             startedAt = now;
             lastNow = -1.0D;
             lastTickCount = Integer.MIN_VALUE;
+            lastRenderTick = Integer.MIN_VALUE;
             rouletteAnimation = "";
             rouletteGeneration = Long.MIN_VALUE;
             rouletteClip = "";
