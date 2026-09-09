@@ -2,7 +2,7 @@
 
 [English](README.md)
 
-YSM Epic Fight Compat は、公式 Yes Steve Model で選択したプレイヤーモデルを Epic Fight の戦闘アニメーションで描画する Forge Mod です。Epic Fight が戦闘用レンダラーを使用していない場面では、引き続き公式 YSM が通常のプレイヤー描画を担当します。任意アダプターにより、EpicFight_TouhouLittleMaid が戦闘描画を担当している対応メイドにも同じ変換モデルを適用できます。
+公式 Yes Steve Model で選択したプレイヤーモデルを、Epic Fight の戦闘アニメーションで表示する Mod です。Epic Fight の戦闘用レンダラーを使用しない場面では、公式 YSM が通常のプレイヤー描画を担当します。
 
 ## 必要環境
 
@@ -19,69 +19,191 @@ YSM Epic Fight Compat は、公式 Yes Steve Model で選択したプレイヤ�
 
 ## 機能
 
-- YSMのフォルダモデルと、暗号化されたものを含む `.ysm` パッケージをEpic Fightの戦闘用メッシュへ変換します。
-- 骨格構造から識別できる非人型の身体や別形態は、該当する枝を二足歩行骨格へ強制的に当てはめず、モデル定義の動作を維持します。三人称の通常手持ち品は、口や足先を含む現在の形態の表示中Tool locatorへ追従できます。非人型用の新しい戦闘アニメーションを生成する機能ではありません。
-- 大文字と小文字を区別した名前が `ysmGlow` で始まるボーン自身に定義されたジオメトリをフルブライトのメッシュパーツとして描画し、フォールバックテクスチャが必要な場合はモデル定義のnormal・specularテクスチャを任意のOculus/Iris LabPBR経路へ渡します。
-- モデルの `all_cutout` による背面カリングと `render_layers_first` によるレイヤー描画順を反映し、選択されたマテリアルの透過処理は維持します。
-- シングルプレイとマルチプレイで、各プレイヤーが選択したモデルとテクスチャを使用します。
-- 解析済みローカルモデル、検証済みリモートモデル、生成済みサーバー転送データを個別の容量制限付きディスクキャッシュへ保存し、モデルJSONや単独のテクスチャ画像は生成しません。
-- プレイヤーのEpic Fight三人称・一人称戦闘描画に対応します。
-- 公式YSMモデルを選択したメイドについて、EpicFight_TouhouLittleMaidの三人称戦闘メッシュを任意で置き換えます。変換モデルを準備できない間や使用可能なYSM選択がない場合は、元のメイドメッシュを維持します。
-- 歩行、走行、スニーク、ジャンプ、クリエイティブ飛行、エリトラ飛行、水泳、匍匐、はしご移動では、モデル定義のYSM全身移動アニメーションを使用します。この設定は初期状態で有効で、モデル別に移動状態を除外できます。Epic Fightのアクションが始まると、設定された移動姿勢の担当を即座にEpic Fightへ戻します。自然なはしご設定も初期状態で有効で、モデルが専用のはしご腕動作を持つ場合に両手の昇降姿勢を維持し、通常のEpic Fight手持ち品を収納して有効なYSM置換品を非表示にします。
-- YSMの補助ボーン、自動・条件・ルーレット・持ち替え・Animation Controllerアニメーションを、それぞれに適した姿勢合成経路で適用します。YSMが対応する乗り物モデルを担当している間は、モデル定義の騎乗アニメーションを全身姿勢経路で適用します。
-- プレイヤーの戦闘モード描画で、対応するYSMのParCool動作・SWEM騎乗者クリップを任意で使用できます。両アニメーション設定は初期状態で有効で、通常移動の設定とは独立したモデル別・動作別の除外設定があります。実際の攻撃・防御・被弾はEpic Fightの姿勢を維持し、Epic ParCool導入時のChain movementとWall movementは常に同アドオンの姿勢を維持します。
-- 選択モデルが手持ち品に対応する独自のYSM武器・ツールを実際に定義している場合はそのモデルを使用し、定義がない場合はEpic Fightの手持ち品描画を維持します。
-- モデル使用者のローカル設定を解決した結果に従い、戦闘モードでもモデル定義のYSM投射物、釣り針、乗り物を維持します。YSM表示を使用しない場合はEpic Fightまたはバニラの元の描画を使用し、YSM乗り物を無効にした場合は対応する騎乗姿勢もEpic Fightに委ねます。
-- モデルに対応するアニメーションがある場合、アイテム変更後にYSM定義の全身hold遷移を再生します。モデル独自の置換品は手持ち品モデル設定に従い、Epic Fightが描画する通常アイテムの持ち替えアニメーションは独立した設定に従います。
-- 独自弓を検出した場合はYSM定義の引き絞り・リリース全身ポーズを適用し、独自武器が音声を担当する攻撃ではEpic FightとYSMの振り音が二重に再生されることを防ぎます。
-- 公式YSMで使用されるMolang数学関数、読み取り専用Query、補助物理関数、モデル変数の対応部分を評価します。`v.*`・`variable.*`、`v.roaming.*`・`variable.roaming.*` の各別名を同一として扱います。
-- Animation Controllerの状態変数と `remap_curve`、モデル内サウンド出力、Molangパーティクル補助関数、Bedrockの宣言型 `particle_effects` に対応します。
-- モデル内の対応Molang関数、初期化・更新・同期イベント、プレイヤー用アニメーションController hookを、処理量を制限したインタープリターで実行します。プレイヤーのスクリプト同期イベントは検証済み数値引数をサーバー経由で中継し、任意のネイティブコードは実行しません。
-- プレイヤーのモデル選択、モデル変数、意味上の移動状態、解決済みの移動姿勢担当と現在の自然なはしご要求、実行中のParCool・SWEMアニメーションの種別・動作名・解決済み姿勢判定、モデル使用者が解決した手ごとの置換表示・持ち替えアニメーション状態、および投射物・釣り針・乗り物の表示状態を同期し、ローカル設定ルール自体を送信せずにリモートプレイヤーの表示結果を一致させます。
-- 対応メイドでは互換性のあるYSM移動・補助・ルーレット・手持ち品・持ち替え・音声・パーティクル処理を適用します。閲覧者にはメイド所有者が解決した手持ち品・持ち替え・移動判定と上限付きの入力元状態fingerprintを送りますが、ローカル設定、除外、タグ規則は同期しません。
-- Epic Fightの戦闘モード中に公式YSMの左上オーバーレイを非表示にできます。
-- Epic Fightがプレイヤー描画を上書きしなくなると、公式YSMの描画へ戻します。メイドは任意アダプターの正確なpatched rendererスコープ外では、Touhou Little MaidとEpicFight_TouhouLittleMaidの既存描画へ戻ります。
-- リソース再読み込みとYSMのモデル再読み込みコマンド後に変換モデルを更新します。
-- 選択モデルを準備できない場合、プレイヤーはEpic Fightのデフォルトプレイヤーメッシュ、対応メイドはEpicFight_TouhouLittleMaidの元のメイドメッシュへフォールバックします。
-- YSMが表示するEpic Fight互換性警告を、そのクライアント環境での初回表示だけに制限します。
+- Epic Fightの一人称・三人称戦闘描画でYes Steve Model（YSM）のプレイヤーモデルを使用。
+- フォルダモデルと、暗号化されたものを含む対応形式の `.ysm` パッケージを読み込み。
+- モデル定義の移動・揺れ・持ち替え・Controllerアニメーション、音声、パーティクルに対応。
+- 独自の武器、弓動作、投射物、釣り針、乗り物を表示。
+- マルチプレイでモデル・テクスチャ・外観上のアニメーション状態を同期。
+- Touhou Little Maid + EpicFight：TouhouLittleMaid、ParCool!、Epic ParCool、SWEM、Oculusとの任意連携。
 
-変換済みプレイヤーモデルの使用中は、任意形状のYSMモデルと二足歩行モデル用の装着位置が一致しないため、防具と頭装備を非表示にします。エリトラは使用可能な `ElytraLocator` が一つだけ存在する場合にモデルの最終アニメーション姿勢へ取り付けて描画し、それ以外では非表示にします。マント、刺さった矢、ハチの針、通常の手持ち品、`ElytraLocator` 対応のエリトラは、Epic Fightのpatched layerを維持しながら最終的に表示されるYSM姿勢へ追従します。モデル定義で非表示・縮退した手持ち品locatorは通常アイテムも抑止でき、曖昧または不正な形態locatorから任意の装着先を選ぶことはありません。Epic Fightのデフォルトプレイヤーメッシュへフォールバックした場合、装備描画は変更されません。任意のメイドアダプターはEpicFight_TouhouLittleMaidの既存レイヤーを維持しつつ、変換モデルの手ごとの置換・locator表示規則を適用します。
+## 任意の連携Mod
 
-## 導入
+以下のModはプレイヤーモデルの基本連携には不要です。利用する連携Mod自体の依存関係も満たしてください。
 
-このModと必要な依存Modを `mods` ディレクトリへ導入してください。マルチプレイでは、プレイヤーの選択状態とサーバー提供モデルを正しく解決するため、専用サーバーと参加する全クライアントの両方へYSM Epic Fight Compatを導入してください。
+| Mod | 連携内容 |
+| --- | --- |
+| [Configured](https://www.curseforge.com/minecraft/mc-mods/configured) | ゲーム内設定画面を提供します。 |
+| [Touhou Little Maid](https://www.curseforge.com/minecraft/mc-mods/touhou-little-maid) + [EpicFight：TouhouLittleMaid](https://modrinth.com/mod/epicfight_touhoulittlemaid) | Epic Fightタスク中も、YSMモデルをメイドのモデルとして使用できます。 |
+| [ParCool! ~ Minecraft Parkour ~](https://www.curseforge.com/minecraft/mc-mods/parcool) | パルクール中に、YSMモデルに用意された対応アニメーションを使用します。 |
+| [\[Official\] Epic ParCool](https://www.curseforge.com/minecraft/mc-mods/official-epic-fight-x-parcool) | Chain movement・Wall movementはEpic ParCoolのアニメーションを維持し、その他の対応動作ではYSMアニメーションを使用できます。 |
+| [Star Worm Equestrian (Upgrading Horses)](https://www.curseforge.com/minecraft/mc-mods/swem) (SWEM) | SWEMの馬に乗ったときに、YSMの騎乗アニメーションを使用します。馬の見た目や動きは変更しません。 |
+| [Oculus](https://www.curseforge.com/minecraft/mc-mods/oculus) | 対応するシェーダーで、YSMモデルに用意された凹凸・光沢の表現を利用できるようにします。 |
 
-[Configured](https://www.curseforge.com/minecraft/mc-mods/configured) は任意です。導入すると、クライアント設定内の **共通** に **アニメーション** (`[common.animations]`) と **モデル** (`[common.models]`) を表示します。各分類には、それぞれの `.exclusions` テーブルに対応する **除外設定** があります。アニメーション側にはモデル別の持ち替え・移動・ParCool・SWEM除外と、各アニメーションおよび自然なはしごの使用設定を表示します。モデル側には手持ち品・投射物・乗り物の除外と、各モデルの使用設定を表示します。オーバーレイ設定は `[client]`、キャッシュ設定は `[client.cache]` に属します。設定画面は実際のTOML階層に従います。
+ParCool・SWEM連携はプレイヤーの見た目だけを変更し、YSMモデルに対応アニメーションが必要です。移動や戦闘の仕組みは変わらず、攻撃・防御・被弾ではEpic Fightのアニメーションを使用します。
 
-除外対象は対応するYSMのメイン設定が有効な場合にその機能を無効として扱い、メイン設定が無効な場合に機能を有効化することはありません。ParCoolとSWEMには `fast_running` や `gallop` のような短い動作名を指定し、`parcool:`・`swem:` 接頭辞は付けません。ワイルドカードや別のアニメーション種別の名前は使用できません。モデル別エディターは現在選択中のモデルIDを編集可能な項目として自動追加し、空の行は保存しません。ConfiguredがなくてもTOML設定は有効でModも正常に起動し、ゲーム内設定画面だけが利用できません。
+## 設定
 
-ParCoolとSWEMは、それぞれ独立した任意連携です。導入済みModのプレイヤー動作・騎乗状態を読み取り、使用可能な対応YSMクリップがある場合に適用します。移動・攻撃・馬の挙動は変更しません。SWEM連携は馬ではなく騎乗者のアニメーションで、YSM乗り物モデル設定にも依存しません。この2つのアダプターはメイド連携の対象を拡張しません。任意Modがない場合や使用可能なクリップがない場合は、既存の描画経路を維持します。
+設定ファイルは `config/ysm_epicfight_compat/` に保存されます。
 
-Touhou Little Maid連携は任意で、Touhou Little MaidとEpicFight_TouhouLittleMaidの両方を導入した場合だけ有効になります。メイドの戦闘モデル連携を使用しない場合、どちらも必須ではありません。
+| ファイル | 内容 |
+| --- | --- |
+| `ysm_epicfight_compat-client.toml` | クライアントの表示・アニメーション・モデル・除外・クライアントキャッシュ設定。以下の `[common.*]` テーブルもこのファイル内です。 |
+| `ysm_epicfight_compat-common.toml` | `[server.cache]` にある統合・専用サーバー共通のキャッシュ設定。ワールド別の `serverconfig` ファイルではありません。 |
+
+Configuredの画面、またはTOMLファイルで編集できます。保存・再読み込みした設定はゲームを再起動せずに反映されます。モデル使用者の設定や除外リストは本人のクライアントに保持し、マルチプレイではルールの一覧ではなく、判定済みの表示・姿勢状態を同期します。
+
+### クライアント表示・評価頻度 — `[client]`
+
+| キー | 初期値 | 効果・指定範囲 |
+| --- | --- | --- |
+| `suppressBattleModeOverlay` | `true` | Epic Fightの戦闘モード中に、公式YSMの左上プレイヤー表示を隠します。 |
+| `animationEvaluationRateLimitHz` | `60` | モデルのアニメーション・スクリプト・Controller評価の目標となる毎秒上限回数。整数の `30～240`、または無制限を表す `0`。状態変更時は予定より早く評価する場合があります。 |
+
+評価頻度の設定は描画FPSやゲームtickを制限せず、アニメーションの再生速度も変えません。低い値ほどモデルの更新が粗くなり、スクリプト・Controllerの出力頻度も低くなる場合があります。無制限ではこの設定による制限を適用しませんが、対象となるリモートモデルの距離別更新制御は適用されます。
+
+Configuredのスライダーは **30 Hzから240 Hz、その右端が無制限** です。無制限は `0` として保存し、設定をリセットすると `60` になります。
+
+### アニメーション — `[common.animations]`
+
+| キー | 初期値 | 効果 |
+| --- | --- | --- |
+| `useYsmHeldItemSwitchAnimations` | `true` | Epic Fightが描画する通常アイテムに、使用可能なYSM持ち替え姿勢を適用。モデル独自の置換アイテムは手持ち品モデル設定に従います。 |
+| `useYsmMovementAnimations` | `true` | 使用可能なYSM全身移動アニメーションを使用。Epic Fightの戦闘アクションを優先します。 |
+| `useNaturalLadderAnimations` | `true` | YSMが担当する専用はしごアニメーションに腕動作がある場合、両腕を使用。通常アイテムは収納し、YSM置換アイテムは非表示にします。移動設定が有効かつ除外対象外である必要があり、プレイヤーに適用されます。 |
+| `useYsmParCoolAnimations` | `true` | 対応するYSMのParCool動作を使用。通常移動の設定から独立しています。 |
+| `useYsmSwemAnimations` | `true` | 対応するYSMのSWEM騎乗動作を使用。通常移動・乗り物モデル設定から独立しています。 |
+
+ParCool・SWEMの設定と除外エディターは、対応Modの導入時に利用できます。未導入時も保存済みの値は保持し、未作成の任意設定項目は生成しません。
+
+### モデル置換 — `[common.models]`
+
+| キー | 初期値 | 効果 |
+| --- | --- | --- |
+| `useYsmHeldItemModels` | `true` | モデル定義の武器・道具と、その置換アニメーションを使用。置換モデルがないアイテムはEpic Fightが描画します。 |
+| `useYsmProjectileModels` | `true` | 対応するYSM手持ち品置換が制御していない場合に、モデル定義の投射物を使用します。 |
+| `useYsmVehicleModels` | `true` | モデル定義の乗り物と、対応する騎乗姿勢を使用。無効にすると、その騎乗姿勢もEpic Fightに委ねます。 |
+
+釣り針は釣り竿の手持ち品設定に従います。弓・トライデントの投射物は、対応する手持ち品置換モデルがある場合はその設定に従い、ない場合は投射物設定を使用します。クロスボウの投射物は投射物設定に従います。
+
+### モデル別の除外設定
+
+7種類すべてのテーブルの初期値は空です。**選択したYSMモデルのID** ごとに、対応する有効な機能を個別に無効化する値を並べます。メイン設定が無効な機能を、除外設定によって有効化することはありません。
+
+| クライアントファイル内のテーブル | モデルごとに指定する値 |
+| --- | --- |
+| `common.models.exclusions.heldItemModelExclusions` | アイテムID、または `#アイテムタグ`。 |
+| `common.models.exclusions.projectileModelExclusions` | エンティティ種別ID、または `#エンティティ種別タグ`。 |
+| `common.models.exclusions.vehicleModelExclusions` | エンティティ種別ID、または `#エンティティ種別タグ`。 |
+| `common.animations.exclusions.heldItemSwitchAnimationExclusions` | アイテムID、または `#アイテムタグ`。`minecraft:air` で空の手への持ち替えを指定。 |
+| `common.animations.exclusions.movementAnimationExclusions` | 下記の移動状態名。 |
+| `common.animations.exclusions.parcoolAnimationExclusions` | 下記のParCoolの短い動作名。 |
+| `common.animations.exclusions.swemAnimationExclusions` | 下記のSWEMの短い騎乗アニメーション名。 |
+
+モデルIDは引用符で囲み、スラッシュやドットもキーの一部として指定します。前後の空白と大文字・小文字を正規化して照合し、モデルIDのワイルドカードは使用できません。各テーブルは最大256モデル、アイテム・エンティティ系は1モデルあたり最大256指定で、モデルIDとこれらの指定文字列はそれぞれ最大256文字です。
+
+設定例（`example/model` を使用中のモデルIDに置き換えてください）:
+
+```toml
+[common.models.exclusions.heldItemModelExclusions]
+"example/model" = ["minecraft:diamond_sword", "#forge:tools/bows"]
+
+[common.models.exclusions.projectileModelExclusions]
+"example/model" = ["minecraft:arrow"]
+
+[common.models.exclusions.vehicleModelExclusions]
+"example/model" = ["minecraft:boat"]
+
+[common.animations.exclusions.heldItemSwitchAnimationExclusions]
+"example/model" = ["minecraft:air"]
+
+[common.animations.exclusions.movementAnimationExclusions]
+"example/model" = ["run", "ladder_up"]
+
+[common.animations.exclusions.parcoolAnimationExclusions]
+"example/model" = ["fast_running", "roll_front"]
+
+[common.animations.exclusions.swemAnimationExclusions]
+"example/model" = ["gallop", "jump_lv2"]
+```
+
+移動状態の指定値:
+
+```text
+walk, run, sneak_idle, sneak_move, jump, creative_flight, elytra_flight,
+swim, water_idle, crawl_idle, crawl_move, ladder_idle, ladder_up, ladder_down
+```
+
+ParCoolの指定値:
+
+```text
+backward_wall_jump, cat_leap, climb_up, cling_to_cliff,
+cling_to_cliff_left, cling_to_cliff_right, dive_animation_host, dive_into_water,
+dodge_front, dodge_back, dodge_left, dodge_right, fast_running, fast_swim,
+flipping_front, flipping_back, horizontal_wall_run_right, horizontal_wall_run_left,
+vertical_wall_run, jump_from_bar, hang, hang_vertical, kong_vault,
+speed_vault_left, speed_vault_right, roll_front, roll_back, roll_left, roll_right,
+sliding, tap, wall_jump_left, wall_jump_right, wall_slide_left, wall_slide_right,
+jump_charging, charge_jump, ride_zipline
+```
+
+SWEMの指定値:
+
+```text
+idle, walk, trot, canter, canter_ext, gallop,
+jump_lv1, jump_lv2, jump_lv3, jump_lv4, jump_lv5
+```
+
+移動・連携アニメーションのリストには、各一覧の名前だけを使用できます。タグやワイルドカードは使えません。ParCool・SWEMには `parcool:`・`swem:` の接頭辞を付けず、別の種別に属する動作名も指定できません。
+
+Configuredでは保存済みモデルの項目に加え、現在選択中のモデルを編集行として表示します。空の行は保存しません。追加したいモデルをYSMで選択すると、各エディターで編集できます。
+
+### クライアントキャッシュ — `[client.cache]`
+
+| キー | 初期値 | 効果・指定範囲 |
+| --- | --- | --- |
+| `clientModelMemoryCacheTargetCount` | `64` | メモリへ保持する変換モデル数の目標。`8～512`。選択中・処理待ちのモデルは保護するため、厳密な上限ではありません。 |
+| `clientModelDiskCacheMiB` | `64` | 解析済みローカルモデルのディスク容量。`0～4096` MiB。`0` でこのディスクキャッシュを無効化・消去します。 |
+| `remoteModelDiskCacheMiB` | `64` | サーバーから受け取ったモデルのディスク容量。`0～4096` MiB。`0` でこのディスクキャッシュを無効化・消去します。 |
+
+### サーバーキャッシュ — `[server.cache]`
+
+以下のキーは `ysm_epicfight_compat-common.toml` に属します。
+
+| キー | 初期値 | 効果・指定範囲 |
+| --- | --- | --- |
+| `serverModelDiskCacheEnabled` | `true` | 生成済みモデル転送データをディスクへ保存。`false` ではファイルを削除せずディスクキャッシュを使用停止し、制限付きメモリ転送キャッシュは維持します。 |
+| `serverModelDiskCacheMiB` | `256` | 生成済み転送データのディスク容量。`0～4096` MiB。`0` で保存を無効にし、`serverModelDiskCacheEnabled` が `true` の場合はキャッシュ整理時に既存データを消去します。 |
+
+ディスクキャッシュは `config/ysm_epicfight_compat/cache/client`・`remote`・`server` に分けて保存し、容量も個別に制限します。消去・整理はキャッシュへのアクセスやメンテナンス時に行うため、設定の保存直後とは限りません。
+
+### 自動管理される状態 — `[client]`
+
+`epicFightCompatibilityWarningShown` の初期値は `false` で、公式YSMのEpic Fight互換性警告を表示済みかどうかを記録します。モデルやアニメーションの使用設定ではなく、通常は手動編集する必要はありません。
+
+## モデル・装備に関する注意
+
+各機能は選択モデルのジオメトリとアニメーションに依存します。骨格構造から識別できる非人型の形態ではモデル定義の動作を維持しますが、非人型用の新しい戦闘アニメーションを生成する機能ではありません。
+
+変換済みプレイヤーモデルでは防具と頭装備を非表示にします。エリトラの表示には、使用可能な `ElytraLocator` が一つだけ必要です。通常の手持ち品は対応するモデル定義の装着位置へ追従し、その表示規則によって非表示になる場合があります。変換モデルを準備できない場合は、Epic Fightのデフォルトメッシュと装備描画へフォールバックします。
 
 ## ビルド
 
-Java 17とGitが必要です。
+対応するMinecraftのソースブランチを選択してください。JavaとGitが必要です。
 
 ```powershell
-.\gradlew.bat build
+./gradlew.bat build
 ```
 
-開発中のMapping API checkoutを使用する場合は、そのパスを明示してください。
-
-```powershell
-.\gradlew.bat build -PysmMappingApiPath=D:\src\YSM-Mapping-API
-```
-
-配布用jarは次の場所に生成されます。
-
-```text
-build/libs/ysm-epicfight-compat-mc1.20.1-<mod-version>-all.jar
-```
+配布用jarは `build/libs/ysm-epicfight-compat-<mc-version>-<mod-version>-all.jar` に生成されます。
 
 ## ドキュメント
 
 - [実装詳細](docs/implementation.ja.md)
+
+## クレジット
+
+- [Yes Steve Model](https://modrinth.com/mod/yes-steve-model) — YesSteveModel team.
+- [Epic Fight](https://www.curseforge.com/minecraft/mc-mods/epic-fight-mod) — Antikythera Studios.
 
 ## ライセンス
 
