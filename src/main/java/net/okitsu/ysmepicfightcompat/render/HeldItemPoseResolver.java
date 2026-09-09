@@ -15,6 +15,12 @@ import yesman.epicfight.world.capabilities.entitypatch.LivingEntityPatch;
 
 /** Selects the converted model transform used by Epic Fight's ordinary item renderer. */
 public final class HeldItemPoseResolver {
+    // Official YSM's item layer uses T(0, -1/16, -0.1) * Rx(-90), whereas
+    // Epic Fight 20.14's standard Tool correction uses T(0, 0, -0.13) * Rx(-90).
+    // Convert between those attachment origins before the item-specific transform.
+    private static final OpenMatrix4f YSM_ITEM_ORIGIN_ADJUSTMENT = new OpenMatrix4f()
+            .translate(0.0F, -1.0F / 16.0F, 0.13F - 0.1F).unmodifiable();
+
     private HeldItemPoseResolver() {
     }
 
@@ -78,11 +84,10 @@ public final class HeldItemPoseResolver {
      * Resolves the whole correction-matrix expression intercepted in
      * {@code RenderItemBase#getCorrectionMatrix}.
      *
-     * <p>An animated YSM hand locator replaces Epic Fight's Tool joint, but not the
-     * item-layer correction that follows it. Official YSM likewise applies the
-     * locator hierarchy first and then its third-person item translation and
-     * -90-degree X rotation. Keeping Epic Fight's equivalent per-item correction
-     * preserves that second stage while making the item follow the authored locator.</p>
+     * <p>A model hand anchor replaces Epic Fight's Tool origin. Its item-layer
+     * correction must also be rebased to YSM's post-locator origin; the two renderers
+     * use different grip translations. Preserve the live Tool orientation and each
+     * item's additional correction, including special weapon poses.</p>
      */
     public static OpenMatrix4f resolveCorrection(
             LivingEntityPatch<?> patch, OpenMatrix4f[] poses,
@@ -91,20 +96,22 @@ public final class HeldItemPoseResolver {
         if (patch == null || joint < 0) {
             return applyItemCorrection(itemCorrection, originalPose);
         }
-        if (AttachmentArmatureScope.isDisplayedPoseArray(patch.getArmature(), poses)) {
-            // An add-on has read the scoped final skeleton rather than the layer
-            // argument. It is already placed/scaled, including optional entity scale.
-            return applyItemCorrection(itemCorrection, originalPose);
-        }
         LivingEntity entity = patch.getOriginal();
         CompatHumanoidMesh mesh = RenderFrameContext.currentMeshFor(entity);
         if (mesh == null) {
             return applyItemCorrection(itemCorrection, originalPose);
         }
+        int modelToolJoint = RenderFrameContext.hasModelToolAnchor(entity, mesh, joint)
+                ? joint : -1;
+        if (AttachmentArmatureScope.isDisplayedPoseArray(patch.getArmature(), poses)) {
+            // This skeleton is already placed/scaled, including optional entity
+            // scale. Only the separate item-origin convention remains to be applied.
+            return applyYsmAttachmentItemCorrection(itemCorrection, originalPose, modelToolJoint);
+        }
         OpenMatrix4f displayed = RenderFrameContext.displayedAttachmentPose(
                 entity, mesh, poses, joint);
         if (displayed != null) {
-            return applyItemCorrection(itemCorrection, displayed);
+            return applyYsmAttachmentItemCorrection(itemCorrection, displayed, modelToolJoint);
         }
         if (joint != HumanoidRig.RIGHT_TOOL && joint != HumanoidRig.LEFT_TOOL) {
             return applyItemCorrection(itemCorrection, originalPose);
@@ -114,8 +121,8 @@ public final class HeldItemPoseResolver {
         OpenMatrix4f authored = RenderFrameContext.authoredHeldItemPose(
                 entity, mesh, poses, joint);
         if (authored != null) {
-            return applyItemCorrection(itemCorrection,
-                    scaleToolTranslation(authored, translationScale));
+            return applyYsmAttachmentItemCorrection(itemCorrection,
+                    scaleToolTranslation(authored, translationScale), joint);
         }
         Vector3f displayedFist = RenderFrameContext.displayedFist(
                 entity, mesh, poses, joint);
@@ -125,18 +132,31 @@ public final class HeldItemPoseResolver {
         }
         OpenMatrix4f corrected = mesh.heldItemPose(
                 patch.getArmature(), poses, joint, displayedFist);
-        return applyItemCorrection(itemCorrection,
-                scaleToolTranslation(corrected == null ? originalPose : corrected,
-                        translationScale));
+        if (corrected == null) {
+            return applyItemCorrection(itemCorrection,
+                    scaleToolTranslation(originalPose, translationScale));
+        }
+        return applyYsmAttachmentItemCorrection(itemCorrection,
+                scaleToolTranslation(corrected, translationScale), joint);
     }
 
     static OpenMatrix4f applyItemCorrection(OpenMatrix4f itemCorrection,
                                             OpenMatrix4f toolPose) {
         // Both Epic Fight call sites discard mulFront's return value and later
         // return their reusable transformHolder receiver. Mutate that receiver in
-        // both paths. For an authored locator, toolPose is the replacement first
-        // stage; itemCorrection remains the item-layer second stage.
+        // both paths. Pose arrays belong to the body and must never be mutated.
         return itemCorrection.mulFront(toolPose);
+    }
+
+    static OpenMatrix4f applyYsmAttachmentItemCorrection(
+            OpenMatrix4f itemCorrection, OpenMatrix4f attachmentPose, int joint) {
+        if (joint == HumanoidRig.RIGHT_TOOL || joint == HumanoidRig.LEFT_TOOL) {
+            // P * (YSM_default * inverse(EF_default)) * itemCorrection.
+            // Premultiply in the Tool frame: translating after P would leave the
+            // offset in world space; replacing itemCorrection would lose overrides.
+            itemCorrection.mulFront(YSM_ITEM_ORIGIN_ADJUSTMENT);
+        }
+        return applyItemCorrection(itemCorrection, attachmentPose);
     }
 
     /**

@@ -421,6 +421,25 @@ public final class RenderFrameContext {
         return frame != null && frame.entity == entity && frame.formItemDrawDepth > 0;
     }
 
+    /**
+     * Whether this body supplied a model-space origin for the selected Tool.
+     * Use only with a matching pose source or attachment scope:
+     * projected arrays may retain an original Tool when its model anchor is missing.
+     */
+    static boolean hasModelToolAnchor(LivingEntity entity, CompatHumanoidMesh mesh, int joint) {
+        Frame frame = current();
+        if (frame == null || frame.entity != entity || frame.mesh != mesh) {
+            return false;
+        }
+        return switch (joint) {
+            case HumanoidRig.RIGHT_TOOL -> frame.formItemDrawDepth > 0
+                    || frame.rightFist != null || frame.rightAuthoredItemPose != null;
+            case HumanoidRig.LEFT_TOOL -> frame.formItemDrawDepth > 0
+                    || frame.leftFist != null || frame.leftAuthoredItemPose != null;
+            default -> false;
+        };
+    }
+
     static boolean formHidesHeldItem(LivingEntity entity, InteractionHand hand) {
         Frame frame = current();
         return frame != null && frame.entity == entity && !frame.naturalLadderPose
