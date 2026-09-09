@@ -43,7 +43,7 @@ public final class RenderFrameContext {
         private boolean suppressRightHeldItem;
         private boolean suppressLeftHeldItem;
         private boolean mainHandItemSwitchUsesOffArmTool;
-        private boolean naturalLadderPose;
+        private boolean suppressHeldItemPose;
         private Set<InteractionHand> ladderItemsInHand = Set.of();
         private OpenMatrix4f formMainHandPose;
         private OpenMatrix4f formOffHandPose;
@@ -277,7 +277,7 @@ public final class RenderFrameContext {
                                              boolean suppressRightHeldItem,
                                              boolean suppressLeftHeldItem,
                                              boolean mainHandItemSwitchUsesOffArmTool,
-                                             boolean naturalLadderPose,
+                                             boolean suppressHeldItemPose,
                                              Set<InteractionHand> ladderItemsInHand) {
         Frame frame = current();
         if (frame == null || frame.entity != entity || frame.mesh != mesh
@@ -298,7 +298,7 @@ public final class RenderFrameContext {
         frame.suppressLeftHeldItem = suppressLeftHeldItem;
         frame.mainHandItemSwitchUsesOffArmTool =
                 mainHandItemSwitchUsesOffArmTool;
-        frame.naturalLadderPose = naturalLadderPose;
+        frame.suppressHeldItemPose = suppressHeldItemPose;
         frame.ladderItemsInHand = ladderItemsInHand == null
                 ? Set.of() : Set.copyOf(ladderItemsInHand);
         frame.formMainHandPose = null;
@@ -388,7 +388,7 @@ public final class RenderFrameContext {
             OpenMatrix4f[] requestedPoses) {
         Frame frame = current();
         if (frame == null || frame.entity != entity || frame.firstPerson
-                || frame.naturalLadderPose || hand == null || requestedPoses == null
+                || frame.suppressHeldItemPose || hand == null || requestedPoses == null
                 || requestedPoses.length < HumanoidRig.EPIC_JOINT_COUNT
                 || (!sameBodyPoseSource(frame.inputPoses, requestedPoses)
                 && requestedPoses != frame.attachmentPoses
@@ -442,7 +442,7 @@ public final class RenderFrameContext {
 
     static boolean formHidesHeldItem(LivingEntity entity, InteractionHand hand) {
         Frame frame = current();
-        return frame != null && frame.entity == entity && !frame.naturalLadderPose
+        return frame != null && frame.entity == entity && !frame.suppressHeldItemPose
                 && (hand == InteractionHand.MAIN_HAND
                 ? frame.hideFormMainHand : frame.hideFormOffHand);
     }
@@ -450,7 +450,7 @@ public final class RenderFrameContext {
     static boolean hasVisibleFormHeldItem(LivingEntity entity, InteractionHand hand) {
         Frame frame = current();
         return frame != null && frame.entity == entity && !frame.firstPerson
-                && !frame.naturalLadderPose && finite(hand == InteractionHand.MAIN_HAND
+                && !frame.suppressHeldItemPose && finite(hand == InteractionHand.MAIN_HAND
                 ? frame.formMainHandPose : frame.formOffHandPose);
     }
 
@@ -609,29 +609,29 @@ public final class RenderFrameContext {
         boolean right = physicalRightForLogicalHand(
                 hand, entity.getMainArm(),
                 frame.mainHandItemSwitchUsesOffArmTool);
-        return shouldSuppressHeldItem(frame.naturalLadderPose,
+        return shouldSuppressHeldItem(frame.suppressHeldItemPose,
                 frame.mesh.replacesHeldItem(entity, hand),
                 right ? frame.suppressRightHeldItem : frame.suppressLeftHeldItem,
                 hasVisibleFormHeldItem(entity, hand), formHidesHeldItem(entity, hand));
     }
 
     static boolean shouldSuppressHeldItem(
-            boolean naturalLadderPose, boolean modelReplaces,
+            boolean suppressHeldItemPose, boolean modelReplaces,
             boolean authoredLocatorSuppresses, boolean visibleFormLocator,
             boolean hiddenFormLocator) {
         // A visible form's mouth supersedes a collapsed inactive human locator, but
-        // never resurrects an item replaced by authored geometry or ladder policy.
-        return shouldSuppressHeldItem(naturalLadderPose, modelReplaces,
+        // never resurrects an item hidden by authored geometry or movement policy.
+        return shouldSuppressHeldItem(suppressHeldItemPose, modelReplaces,
                 hiddenFormLocator || !visibleFormLocator && authoredLocatorSuppresses);
     }
 
     static boolean shouldSuppressHeldItem(
-            boolean naturalLadderPose, boolean modelReplaces,
+            boolean suppressHeldItemPose, boolean modelReplaces,
             boolean authoredLocatorSuppresses) {
-        // Natural ladder mode hides the YSM prop. Keep Epic Fight's back item only
-        // when the selected model does not replace it; otherwise both render paths
-        // stay hidden while both hands climb.
-        return naturalLadderPose ? modelReplaces
+        // Natural ladder and Epic ParCool running poses hide the YSM prop. Keep
+        // Epic Fight's back item only when the selected model does not replace it;
+        // an inactive hand/form locator must not hide that stowed ordinary item.
+        return suppressHeldItemPose ? modelReplaces
                 : modelReplaces || authoredLocatorSuppresses;
     }
 
@@ -666,7 +666,7 @@ public final class RenderFrameContext {
         frame.suppressRightHeldItem = false;
         frame.suppressLeftHeldItem = false;
         frame.mainHandItemSwitchUsesOffArmTool = false;
-        frame.naturalLadderPose = false;
+        frame.suppressHeldItemPose = false;
         frame.ladderItemsInHand = Set.of();
         frame.formMainHandPose = null;
         frame.formOffHandPose = null;

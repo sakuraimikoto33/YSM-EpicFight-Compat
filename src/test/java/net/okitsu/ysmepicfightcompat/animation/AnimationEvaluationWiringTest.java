@@ -338,13 +338,42 @@ class AnimationEvaluationWiringTest {
     }
 
     @Test
+    void stowingAndReturningWeaponsInvalidateTheCappedFrameInBothViews() throws IOException {
+        Code code = sample();
+        assertTrue(code.call("net/okitsu/ysmepicfightcompat/integration/parcool/EpicParCoolAnimationAccess",
+                "fastRunToolsOnBack") < code.call(LIMITER, "shouldEvaluate"));
+        for (boolean firstPerson : List.of(false, true)) {
+            ParallelAnimationProgram.EvaluationContext holding = fastRunContext(firstPerson, false);
+            ParallelAnimationProgram.EvaluationContext stowed = fastRunContext(firstPerson, true);
+            AnimationEvaluationRateLimiter<ParallelAnimationProgram.EvaluationContext> limiter =
+                    new AnimationEvaluationRateLimiter<>();
+            limiter.evaluated(0.0D, 60, holding);
+            assertFalse(limiter.shouldEvaluate(0.001D, 60, holding, false));
+            assertTrue(limiter.shouldEvaluate(0.001D, 60, stowed, false));
+            limiter.evaluated(0.001D, 60, stowed);
+            assertFalse(limiter.shouldEvaluate(0.002D, 60, stowed, false));
+            assertTrue(limiter.shouldEvaluate(0.002D, 60, holding, false));
+        }
+    }
+
+    private static ParallelAnimationProgram.EvaluationContext fastRunContext(
+            boolean firstPerson, boolean toolsOnBack) {
+        return new ParallelAnimationProgram.EvaluationContext(firstPerson, false, false,
+                null, List.of("parcool:fast_running", "hold_mainhand:sword"),
+                "parcool:fast_running", null, ModAnimationType.PARCOOL,
+                OfficialRoamingVariables.RouletteState.NONE,
+                Set.of(), Set.of(), Set.of(), true, false, toolsOnBack,
+                true, true, null, true, null);
+    }
+
+    @Test
     void contextOwnsImmutableCollectionSnapshotsAndHasNoContinuouslyAdvancingClockFields() {
         List<String> clips = new ArrayList<>(List.of("idle"));
         Set<InteractionHand> hands = EnumSet.of(InteractionHand.MAIN_HAND);
         ParallelAnimationProgram.EvaluationContext context = new ParallelAnimationProgram.EvaluationContext(
                 false, false, false, null, clips, "idle", MovementAnimationType.WALK, null,
                 new OfficialRoamingVariables.RouletteState("", false, 0),
-                hands, hands, hands, true, false, true, false, null, true, new Object());
+                hands, hands, hands, true, false, false, true, false, null, true, new Object());
         clips.clear();
         hands.clear();
         assertEquals(List.of("idle"), context.clips());
@@ -368,7 +397,7 @@ class AnimationEvaluationWiringTest {
                 ParallelAnimationProgram.hasModelYawReference(modelYaw), false, null,
                 List.of("use_mainhand:bow"), "idle", null, null,
                 new OfficialRoamingVariables.RouletteState("", false, 0),
-                hands, hands, hands, true, false, true, false, null, true, token);
+                hands, hands, hands, true, false, false, true, false, null, true, token);
     }
 
     private static ParallelAnimationProgram.EvaluationContext context(
@@ -378,7 +407,7 @@ class AnimationEvaluationWiringTest {
         return new ParallelAnimationProgram.EvaluationContext(firstPerson, false, action, renderedMovement,
                 List.of("idle"), "idle", MovementAnimationType.WALK, null,
                 new OfficialRoamingVariables.RouletteState("dance", true, rouletteGeneration),
-                replacement, activeReplacement, itemAnimation, true, false,
+                replacement, activeReplacement, itemAnimation, true, false, false,
                 true, false, null, true, token);
     }
 

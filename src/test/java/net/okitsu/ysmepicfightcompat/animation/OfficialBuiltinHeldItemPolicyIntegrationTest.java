@@ -521,7 +521,7 @@ class OfficialBuiltinHeldItemPolicyIntegrationTest {
         return new ParallelAnimationProgram.EvaluationContext(
                 false, ParallelAnimationProgram.hasModelYawReference(modelYaw), false,
                 null, clips, "idle", null, null, OfficialRoamingVariables.RouletteState.NONE,
-                main, main, main, false, false, true, false, null, true, null);
+                main, main, main, false, false, false, true, false, null, true, null);
     }
 
     /** Synthetic draw/tick scheduling over the real fixture and physics, not an in-game FPS test. */

@@ -1022,6 +1022,133 @@ class ParallelAnimationProgramTest {
     }
 
     @Test
+    void fastRunKeepsBothAuthoredArmsAndRestoresTheirHoldLayersAfterStowing() {
+        GeometryDocument geometry = bowUpperBodyGeometry();
+        AuxiliaryBoneLayout layout = AuxiliaryBoneLayout.create(geometry);
+        AnimationClip run = new AnimationClip("parcool:fast_running");
+        run.boneTracks().put("LeftArm", rotation(0.0D, 0.0D, 30.0D));
+        run.boneTracks().put("RightArm", rotation(0.0D, 0.0D, -35.0D));
+        AnimationClip mainHold = new AnimationClip("hold_mainhand:sword");
+        mainHold.boneTracks().put("RightArm", rotation(0.0D, 0.0D, 80.0D));
+        AnimationClip offHold = new AnimationClip("hold_offhand:shield");
+        offHold.boneTracks().put("LeftArm", rotation(0.0D, 0.0D, 45.0D));
+        ParallelAnimationProgram program = new ParallelAnimationProgram(geometry,
+                Map.of(run.name(), run, mainHold.name(), mainHold, offHold.name(), offHold),
+                layout, 1.0F, 1.0F);
+        ModAnimationSample sample = new ModAnimationSample(
+                ModAnimationType.PARCOOL, run.name(), 0.0D, 1L);
+        List<String> holds = List.of(mainHold.name(), offHold.name());
+        int left = layout.entryForBoneName("LeftArm").auxiliaryIndex();
+        int right = layout.entryForBoneName("RightArm").auxiliaryIndex();
+
+        ParallelAnimationProgram.Frame holding = program.sampleModAnimationAt(
+                0.0D, sample, holds, false, Set.of(), new NeutralEnvironment());
+        assertFalse(holding.suppressHeldItemPose());
+        assertMatrix(new Matrix4f().rotateZ((float) Math.toRadians(80.0D)),
+                holding.wholeModelDeltas()[right]);
+
+        ParallelAnimationProgram.Frame stowed = program.sampleModAnimationAt(
+                0.0D, sample, holds, true, Set.of(), new NeutralEnvironment());
+        assertTrue(stowed.suppressHeldItemPose());
+        assertFalse(stowed.naturalLadderPose());
+        assertTrue(stowed.ladderItemsInHand().isEmpty());
+        assertMatrix(new Matrix4f().rotateZ((float) Math.toRadians(30.0D)),
+                stowed.wholeModelDeltas()[left]);
+        assertMatrix(new Matrix4f().rotateZ((float) Math.toRadians(-35.0D)),
+                stowed.wholeModelDeltas()[right]);
+        assertIdentity(stowed.parallelDeltas()[left]);
+        assertIdentity(stowed.parallelDeltas()[right]);
+
+        ParallelAnimationProgram.Frame restored = program.sampleModAnimationAt(
+                0.0D, sample, holds, false, Set.of(), new NeutralEnvironment());
+        assertFalse(restored.suppressHeldItemPose());
+        assertMatrix(new Matrix4f().rotateZ((float) Math.toRadians(45.0D)),
+                restored.wholeModelDeltas()[left]);
+        assertMatrix(new Matrix4f().rotateZ((float) Math.toRadians(80.0D)),
+                restored.wholeModelDeltas()[right]);
+    }
+
+    @Test
+    void fastRunDoesNotApplyTheLadderMirrorToAnUnauthoredRightArm() {
+        GeometryDocument geometry = bowUpperBodyGeometry();
+        AuxiliaryBoneLayout layout = AuxiliaryBoneLayout.create(geometry);
+        AnimationClip run = new AnimationClip("parcool:fast_running");
+        run.boneTracks().put("LeftArm", rotation(0.0D, 0.0D, 30.0D));
+        AnimationClip hold = new AnimationClip("hold_mainhand:sword");
+        hold.boneTracks().put("RightArm", rotation(0.0D, 0.0D, 80.0D));
+        ParallelAnimationProgram program = new ParallelAnimationProgram(geometry,
+                Map.of(run.name(), run, hold.name(), hold), layout, 1.0F, 1.0F);
+
+        ParallelAnimationProgram.Frame stowed = program.sampleModAnimationAt(0.0D,
+                new ModAnimationSample(ModAnimationType.PARCOOL, run.name(), 0.0D, 1L),
+                List.of(hold.name()), true, Set.of(), new NeutralEnvironment());
+
+        assertTrue(stowed.suppressHeldItemPose());
+        assertMatrix(new Matrix4f().rotateZ((float) Math.toRadians(30.0D)),
+                stowed.wholeModelDeltas()[layout.entryForBoneName("LeftArm").auxiliaryIndex()]);
+        assertIdentity(stowed.wholeModelDeltas()[layout.entryForBoneName("RightArm").auxiliaryIndex()]);
+    }
+
+    @Test
+    void fastRunHidesCustomWeaponSubtreesAndRestoresThemWhenItemsReturn() {
+        GeometryDocument geometry = bowUpperBodyGeometry();
+        AuxiliaryBoneLayout layout = AuxiliaryBoneLayout.create(geometry);
+        AnimationClip run = new AnimationClip("parcool:fast_running");
+        run.boneTracks().put("RightArm", rotation(0.0D, 0.0D, -35.0D));
+        AnimationClip hold = customBowHold();
+        ParallelAnimationProgram program = new ParallelAnimationProgram(geometry,
+                Map.of(run.name(), run, hold.name(), hold), layout, 1.0F, 1.0F);
+        ModAnimationSample sample = new ModAnimationSample(
+                ModAnimationType.PARCOOL, run.name(), 0.0D, 1L);
+
+        ParallelAnimationProgram.Frame stowed = program.sampleModAnimationAt(
+                0.0D, sample, List.of(hold.name()), true,
+                Set.of("custom_bow"), new NeutralEnvironment());
+        assertTrue(stowed.hiddenBones().contains("custom_bow"));
+        assertTrue(stowed.hiddenBones().contains("magic_circle"));
+        assertMatrix(new Matrix4f().rotateZ((float) Math.toRadians(-35.0D)),
+                stowed.wholeModelDeltas()[layout.entryForBoneName("RightArm").auxiliaryIndex()]);
+
+        ParallelAnimationProgram.Frame restored = program.sampleModAnimationAt(
+                0.0D, sample, List.of(hold.name()), false,
+                Set.of("custom_bow"), new NeutralEnvironment());
+        assertFalse(restored.hiddenBones().contains("custom_bow"));
+        assertFalse(restored.hiddenBones().contains("magic_circle"));
+    }
+
+    @Test
+    void ordinaryRunFallbackUsesBackStorageWithoutChangingLadderOrOtherMovementPolicies() {
+        GeometryDocument geometry = bowUpperBodyGeometry();
+        AuxiliaryBoneLayout layout = AuxiliaryBoneLayout.create(geometry);
+        AnimationClip run = new AnimationClip("run");
+        run.boneTracks().put("RightArm", rotation(0.0D, 0.0D, -35.0D));
+        AnimationClip hold = new AnimationClip("hold_mainhand:sword");
+        hold.boneTracks().put("RightArm", rotation(0.0D, 0.0D, 80.0D));
+        ParallelAnimationProgram program = new ParallelAnimationProgram(geometry,
+                Map.of(run.name(), run, hold.name(), hold), layout, 1.0F, 1.0F);
+        int right = layout.entryForBoneName("RightArm").auxiliaryIndex();
+
+        for (MovementAnimationType movement : MovementAnimationType.values()) {
+            ParallelAnimationProgram.Frame frame = program.sampleMovementAt(0.0D,
+                    List.of(run.name(), hold.name()), run.name(), movement,
+                    false, Set.of(), Set.of(), true, new NeutralEnvironment(),
+                    new AnimationControllerProgram.RuntimeState());
+            assertEquals(movement == MovementAnimationType.RUN, frame.suppressHeldItemPose(), movement.name());
+            assertMatrix(new Matrix4f().rotateZ((float) Math.toRadians(
+                    movement == MovementAnimationType.RUN ? -35.0D : 80.0D)),
+                    frame.wholeModelDeltas()[right]);
+        }
+        ParallelAnimationProgram.Frame ordinary = program.sampleMovementAt(0.0D,
+                List.of(run.name(), hold.name()), run.name(), MovementAnimationType.RUN,
+                false, Set.of(), Set.of(), false, new NeutralEnvironment(),
+                new AnimationControllerProgram.RuntimeState());
+        assertFalse(ordinary.suppressHeldItemPose());
+        assertMatrix(new Matrix4f().rotateZ((float) Math.toRadians(80.0D)), ordinary.wholeModelDeltas()[right]);
+        assertFalse(ParallelAnimationProgram.stowsItemsDuringYsmRun(null, null, true));
+        assertFalse(ParallelAnimationProgram.stowsItemsDuringYsmRun(null, ModAnimationType.SWEM, true));
+    }
+
+    @Test
     void naturalLadderKeepsBothAuthoredArmsInsteadOfTheHeldItemPose() {
         GeometryDocument geometry = bowUpperBodyGeometry();
         AuxiliaryBoneLayout layout = AuxiliaryBoneLayout.create(geometry);

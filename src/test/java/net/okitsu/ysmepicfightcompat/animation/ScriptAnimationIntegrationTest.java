@@ -226,6 +226,44 @@ class ScriptAnimationIntegrationTest {
     }
 
     @Test
+    void stowedRunDiscardsBuiltinHoldPoseHistoryAndRestoresItsProviderOnReturn() {
+        AnimationClip run = rotationClip("run", "RightArm", 25);
+        AnimationClip hold = rotationClip("hold_mainhand:sword", "RightArm", 80);
+        hold.boneTracks().put("ear", scaleClip("unused", "ear", 0.5).boneTracks().get("ear"));
+        AnimationController controller = builtinController("player.hold_mainhand", 1.0F);
+        Fixture fixture = fixture(List.of(run, hold, scaleClip("custom_pose", "ear", 2)),
+                Map.of(controller.name(), controller), Map.of());
+        java.util.function.BiFunction<Double, Boolean, ParallelAnimationProgram.Frame> sample =
+                (now, toolsOnBack) -> fixture.program.sampleMovementAt(
+                        now, List.of(run.name(), hold.name()), run.name(), MovementAnimationType.RUN,
+                        false, Set.of(), Set.of(), toolsOnBack,
+                        fixture.environment, fixture.controllerState);
+
+        ParallelAnimationProgram.Frame held = sample.apply(0.0D, false);
+        assertRotationZ(80, held.wholeModelDeltas()[3]);
+        assertUniformScale(0.5, held.wholeModelDeltas()[1]);
+
+        // Begin an authored blend while the old builtin HOLD still owns its source.
+        fixture.environment.writeVariable(ExpressionEngine.slot("v.custom"), 1);
+        assertRotationZ(80, sample.apply(1.0D, false).wholeModelDeltas()[3]);
+        ParallelAnimationProgram.Frame stowed = sample.apply(1.1D, true);
+        assertTrue(stowed.suppressHeldItemPose());
+        assertFalse(stowed.naturalLadderPose());
+        assertRotationZ(25, stowed.wholeModelDeltas()[3]);
+        assertUniformScale(1, stowed.wholeModelDeltas()[1]);
+        assertUniformScale(1, stowed.parallelDeltas()[1]);
+
+        fixture.environment.writeVariable(ExpressionEngine.slot("v.custom"), 0);
+        sample.apply(2.0D, false);
+        ParallelAnimationProgram.Frame restored = sample.apply(3.1D, false);
+        assertFalse(restored.suppressHeldItemPose());
+        assertRotationZ(80, restored.wholeModelDeltas()[3]);
+        assertUniformScale(0.5, restored.wholeModelDeltas()[1]);
+        assertEquals(2, fixture.environment.value("v.builtin_entries"));
+        assertEquals(1, fixture.environment.value("v.custom_entries"));
+    }
+
+    @Test
     void builtinStateDelegatesNativeParallelOnceAndIgnoresItsAnimationReferences() {
         AnimationController controller = builtinController("player.parallel_0", 0.2F);
         Fixture fixture = fixture(List.of(

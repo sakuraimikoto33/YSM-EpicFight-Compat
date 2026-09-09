@@ -89,6 +89,7 @@ public final class ParallelAnimationProgram {
                         @Nullable String movementPoseKey,
                         Set<InteractionHand> itemSwitchHands,
                         boolean naturalLadderPose,
+                        boolean suppressHeldItemPose,
                         Set<InteractionHand> ladderItemsInHand,
                         Set<String> hiddenBones,
                         @Nullable OpenMatrix4f[] authoredDeltas) {
@@ -105,6 +106,7 @@ public final class ParallelAnimationProgram {
                              Set<InteractionHand> activeReplacementHands,
                              Set<InteractionHand> itemAnimationHands,
                              boolean movementEnabled, boolean naturalLadder,
+                             boolean fastRunToolsOnBack,
                              boolean mainHandEnabled, boolean offHandEnabled,
                              UUID vehicle, boolean ysmVehicle, Object configurationToken) {
         EvaluationContext {
@@ -189,14 +191,15 @@ public final class ParallelAnimationProgram {
         }
     }
 
-    /** Resolved visual ladder behavior; raw client configuration never enters a frame. */
-    private record LadderRenderPolicy(boolean naturalPose,
+    /** Resolved movement item display; the ladder arm fallback remains independent. */
+    private record MovementItemRenderPolicy(boolean naturalLadderPose,
+                                      boolean suppressHeldItemPose,
                                       Set<InteractionHand> itemsInHand,
                                       Set<String> hiddenYsmItemRoots) {
-        private static final LadderRenderPolicy NONE =
-                new LadderRenderPolicy(false, Set.of(), Set.of());
+        private static final MovementItemRenderPolicy NONE =
+                new MovementItemRenderPolicy(false, false, Set.of(), Set.of());
 
-        private LadderRenderPolicy {
+        private MovementItemRenderPolicy {
             itemsInHand = Set.copyOf(itemsInHand);
             hiddenYsmItemRoots = Set.copyOf(hiddenYsmItemRoots);
         }
@@ -1048,6 +1051,7 @@ public final class ParallelAnimationProgram {
                 ysmActiveReplacementHands(entity);
         Set<InteractionHand> enabledItemAnimationHands =
                 ysmHeldItemAnimationHands(entity);
+        boolean fastRunToolsOnBack = EpicParCoolAnimationAccess.fastRunToolsOnBack(entity);
         MovementAnimationType synchronizedMovement = renderedYsmMovement == null
                 ? ClientMovementAnimationPreferences.remoteMovementOverride(
                 entity, modelId) : renderedYsmMovement;
@@ -1070,6 +1074,7 @@ public final class ParallelAnimationProgram {
                 ClientMovementAnimationPreferences.usesYsm(entity, modelId, selected.movement()),
                 ClientMovementAnimationPreferences.usesNaturalLadderPose(
                         entity, modelId, selected.movement()),
+                fastRunToolsOnBack,
                 ClientHeldItemModelPreferences.usesYsm(entity, modelId, InteractionHand.MAIN_HAND),
                 ClientHeldItemModelPreferences.usesYsm(entity, modelId, InteractionHand.OFF_HAND),
                 entity.getVehicle() == null ? null : entity.getVehicle().getUUID(), ysmVehicle,
@@ -1181,8 +1186,8 @@ public final class ParallelAnimationProgram {
                 && fullBodyHands.isEmpty() && fullBodyEnding == null && rouletteClip == null) {
             movementPose = new MovementPose(selected.main(), null, selected.modAnimation());
         }
-        LadderRenderPolicy ladderPolicy = ladderRenderPolicy(
-                entity, movementPose);
+        MovementItemRenderPolicy itemRenderPolicy = movementItemRenderPolicy(
+                entity, movementPose, fastRunToolsOnBack);
         boolean customBowHeadYaw = shouldUseCustomBowHeadYaw(
                 !fullBodyHands.isEmpty(), fullBodyEnding != null,
                 fullBodyEnding != null && fullBodyEnding.compositeSnapshot() != null);
@@ -1222,7 +1227,7 @@ public final class ParallelAnimationProgram {
         HoldClipSelection holdSelection =
                 filterInactiveOrdinaryHoldClips(
                         entity, selectedAutomatic, itemSwitchPose,
-                        movementPose != null, ladderPolicy.naturalPose());
+                        movementPose != null, itemRenderPolicy.suppressHeldItemPose());
         List<AutomaticAnimationSelector.ActiveClip> automatic = holdSelection.clips();
         state.scratch.authoredOnlyHoldClips = holdSelection.authoredOnlyClips();
         LinkedHashSet<String> authoredOnlyControllers = new LinkedHashSet<>();
@@ -1278,7 +1283,7 @@ public final class ParallelAnimationProgram {
         if (!workerEligible) {
             discardPendingEvaluation(state);
             evaluate(elapsed, automatic, controlled, fullBodyEnding, movementPose,
-                    ladderPolicy, itemSwitchPose,
+                    itemRenderPolicy, itemSwitchPose,
                     rouletteClip, rouletteElapsed,
                     state.environment, state, state.scratch);
             state.publishedFrame = frame(state.scratch);
@@ -1777,10 +1782,10 @@ public final class ParallelAnimationProgram {
                 && selected.movement() != null
                 ? new MovementPose(selected.main(), selected.movement()) : null;
         ClipProgram main = movement == null ? null : automaticProgram(movement.active().name());
-        LadderRenderPolicy ladder = naturalLadderRequested && movement != null
+        MovementItemRenderPolicy ladder = naturalLadderRequested && movement != null
                 && main != null && main.authoredLeftArmPose()
                 && isDedicatedLadderClip(movement.movement(), movement.active().name())
-                ? new LadderRenderPolicy(true, Set.of(), Set.of()) : LadderRenderPolicy.NONE;
+                ? new MovementItemRenderPolicy(true, true, Set.of(), Set.of()) : MovementItemRenderPolicy.NONE;
         evaluate(now, selected.clips(), controlled.outputActive(), null, movement,
                 ladder, null, null, 0.0D, environment,
                 null, testScratch, outputs);
@@ -1798,11 +1803,17 @@ public final class ParallelAnimationProgram {
         return Set.copyOf(result);
     }
 
-    private LadderRenderPolicy ladderRenderPolicy(
-            LivingEntity entity, @Nullable MovementPose movementPose) {
+    private MovementItemRenderPolicy movementItemRenderPolicy(
+            LivingEntity entity, @Nullable MovementPose movementPose,
+            boolean fastRunToolsOnBack) {
+        if (movementPose != null && stowsItemsDuringYsmRun(
+                movementPose.movement(), movementPose.modAnimation(), fastRunToolsOnBack)) {
+            return new MovementItemRenderPolicy(false, true, Set.of(),
+                    hiddenHeldItemRoots(entity));
+        }
         if (movementPose == null || movementPose.movement() == null
                 || !movementPose.movement().isLadder()) {
-            return LadderRenderPolicy.NONE;
+            return MovementItemRenderPolicy.NONE;
         }
         boolean naturalRequested =
                 ClientMovementAnimationPreferences.usesNaturalLadderPose(
@@ -1814,16 +1825,9 @@ public final class ParallelAnimationProgram {
             if (main == null || !isDedicatedLadderClip(
                     movementPose.movement(), movementPose.active().name())
                     || !main.authoredLeftArmPose()) {
-                return LadderRenderPolicy.NONE;
+                return MovementItemRenderPolicy.NONE;
             }
-            LinkedHashSet<String> hiddenYsmItemRoots = new LinkedHashSet<>();
-            for (InteractionHand hand : InteractionHand.values()) {
-                if (ClientHeldItemModelPreferences.usesYsm(entity, modelId, hand)) {
-                    hiddenYsmItemRoots.addAll(
-                            customHeldItems.heldItemReplacementRoots(entity, hand));
-                }
-            }
-            return new LadderRenderPolicy(true, Set.of(), hiddenYsmItemRoots);
+            return new MovementItemRenderPolicy(true, true, Set.of(), hiddenHeldItemRoots(entity));
         }
         LinkedHashSet<InteractionHand> ordinaryItems = new LinkedHashSet<>();
         for (InteractionHand hand : InteractionHand.values()) {
@@ -1834,8 +1838,28 @@ public final class ParallelAnimationProgram {
                 ordinaryItems.add(hand);
             }
         }
-        return ordinaryItems.isEmpty() ? LadderRenderPolicy.NONE
-                : new LadderRenderPolicy(false, ordinaryItems, Set.of());
+        return ordinaryItems.isEmpty() ? MovementItemRenderPolicy.NONE
+                : new MovementItemRenderPolicy(false, false, ordinaryItems, Set.of());
+    }
+
+    static boolean stowsItemsDuringYsmRun(
+            @Nullable MovementAnimationType movement, @Nullable ModAnimationType modAnimation,
+            boolean fastRunToolsOnBack) {
+        // The native fast-run owner and actual tool parents are authoritative. A
+        // model may use the configured ordinary RUN when its ParCool clip is absent.
+        // Ladder item placement must continue to follow its existing display policy.
+        return fastRunToolsOnBack && (movement == MovementAnimationType.RUN
+                || movement == null && modAnimation == ModAnimationType.PARCOOL);
+    }
+
+    private Set<String> hiddenHeldItemRoots(LivingEntity entity) {
+        LinkedHashSet<String> roots = new LinkedHashSet<>();
+        for (InteractionHand hand : InteractionHand.values()) {
+            if (ClientHeldItemModelPreferences.usesYsm(entity, modelId, hand)) {
+                roots.addAll(customHeldItems.heldItemReplacementRoots(entity, hand));
+            }
+        }
+        return Set.copyOf(roots);
     }
 
     private List<AutomaticAnimationSelector.ActiveClip>
@@ -1876,7 +1900,7 @@ public final class ParallelAnimationProgram {
             List<AutomaticAnimationSelector.ActiveClip> automatic,
             @Nullable ItemSwitchPose itemSwitchPose,
             boolean ysmMovementActive,
-            boolean naturalLadderPose) {
+            boolean suppressHeldItemPose) {
         if (automatic.isEmpty()) {
             return new HoldClipSelection(automatic, Set.of());
         }
@@ -1887,7 +1911,7 @@ public final class ParallelAnimationProgram {
         Set<String> authoredOnly = new LinkedHashSet<>();
         for (AutomaticAnimationSelector.ActiveClip active : automatic) {
             InteractionHand hand = holdHand(active.name());
-            boolean keep = hand == null || (!naturalLadderPose
+            boolean keep = hand == null || (!suppressHeldItemPose
                     && keepsHeldItemHoldClip(
                     customHeldItems.replacesHeldItemAtRest(entity, hand),
                     switchingHands.contains(hand), ysmMovementActive));
@@ -2160,6 +2184,18 @@ public final class ParallelAnimationProgram {
             Set<String> hiddenYsmItemRoots,
             ExpressionEngine.Environment environment,
             AnimationControllerProgram.RuntimeState controllerState) {
+        return sampleMovementAt(now, animationNames, mainAnimation, movement,
+                naturalLadderRequested, ladderItemsInHand, hiddenYsmItemRoots, false,
+                environment, controllerState);
+    }
+
+    Frame sampleMovementAt(
+            double now, List<String> animationNames, String mainAnimation,
+            MovementAnimationType movement, boolean naturalLadderRequested,
+            Set<InteractionHand> ladderItemsInHand,
+            Set<String> hiddenYsmItemRoots, boolean fastRunToolsOnBack,
+            ExpressionEngine.Environment environment,
+            AnimationControllerProgram.RuntimeState controllerState) {
         List<AutomaticAnimationSelector.ActiveClip> automatic = animationNames.stream()
                 .map(ParallelAnimationProgram::normalize)
                 .map(name -> new AutomaticAnimationSelector.ActiveClip(name, now, false))
@@ -2171,17 +2207,21 @@ public final class ParallelAnimationProgram {
         List<AnimationControllerProgram.ActiveAnimation> controlled =
                 controllerProgram.select(now, environment, controllerState);
         ClipProgram mainProgram = automaticClips.get(main.name());
-        LadderRenderPolicy ladderPolicy = naturalLadderRequested
+        MovementItemRenderPolicy itemRenderPolicy = naturalLadderRequested
                 && movement.isLadder() && mainProgram != null
                 && isDedicatedLadderClip(movement, main.name())
                 && mainProgram.authoredLeftArmPose()
-                ? new LadderRenderPolicy(true, Set.of(), hiddenYsmItemRoots)
+                ? new MovementItemRenderPolicy(true, true, Set.of(), hiddenYsmItemRoots)
                 : !naturalLadderRequested && movement.isLadder()
                 && !ladderItemsInHand.isEmpty()
-                ? new LadderRenderPolicy(false, ladderItemsInHand, Set.of())
-                : LadderRenderPolicy.NONE;
+                ? new MovementItemRenderPolicy(false, false, ladderItemsInHand, Set.of())
+                : MovementItemRenderPolicy.NONE;
+        if (stowsItemsDuringYsmRun(movement, null, fastRunToolsOnBack)) {
+            itemRenderPolicy = new MovementItemRenderPolicy(
+                    false, true, Set.of(), hiddenYsmItemRoots);
+        }
         evaluate(now, automatic, controlled, null,
-                new MovementPose(main, movement), ladderPolicy,
+                new MovementPose(main, movement), itemRenderPolicy,
                 null, null, 0.0D,
                 environment, null, testScratch);
         return frame(testScratch);
@@ -2189,16 +2229,32 @@ public final class ParallelAnimationProgram {
 
     Frame sampleModAnimationAt(double now, ModAnimationSample sample,
                                ExpressionEngine.Environment environment) {
+        return sampleModAnimationAt(now, sample, List.of(), false, Set.of(), environment);
+    }
+
+    Frame sampleModAnimationAt(double now, ModAnimationSample sample,
+                               List<String> holdAnimations, boolean fastRunToolsOnBack,
+                               Set<String> hiddenYsmItemRoots,
+                               ExpressionEngine.Environment environment) {
         if (!supportsModAnimation(sample.clipName())) {
             return sampleAt(now, environment);
         }
         AutomaticAnimationSelector.ActiveClip main = automaticSelector.trackMod(
                 new AutomaticAnimationSelector.State(), sample, now);
+        List<AutomaticAnimationSelector.ActiveClip> automatic = new ArrayList<>();
+        automatic.add(main);
+        holdAnimations.stream().map(ParallelAnimationProgram::normalize)
+                .map(name -> new AutomaticAnimationSelector.ActiveClip(name, now, false))
+                .forEach(automatic::add);
         testScratch.automaticChannels = Map.of(main.name(), "player.main");
         List<AnimationControllerProgram.ActiveAnimation> controlled = controllerProgram.select(
                 now, environment, new AnimationControllerProgram.RuntimeState());
-        evaluate(now, List.of(main), controlled, null,
-                new MovementPose(main, null, sample.type()), LadderRenderPolicy.NONE,
+        MovementItemRenderPolicy itemRenderPolicy =
+                stowsItemsDuringYsmRun(null, sample.type(), fastRunToolsOnBack)
+                ? new MovementItemRenderPolicy(false, true, Set.of(), hiddenYsmItemRoots)
+                : MovementItemRenderPolicy.NONE;
+        evaluate(now, automatic, controlled, null,
+                new MovementPose(main, null, sample.type()), itemRenderPolicy,
                 null, null, 0.0D, environment, null, testScratch);
         return frame(testScratch);
     }
@@ -2267,7 +2323,7 @@ public final class ParallelAnimationProgram {
                 scratch.fullBodyBlendSource, scratch.fullBodyBlendWeight,
                 scratch.movementPoseKey,
                 Set.copyOf(scratch.itemSwitchHands),
-                scratch.naturalLadderPose,
+                scratch.naturalLadderPose, scratch.suppressHeldItemPose,
                 Set.copyOf(scratch.ladderItemsInHand),
                 scratch.hiddenView,
                 scratch.authoredPose == null ? null : scratch.authoredPose.output);
@@ -2396,7 +2452,7 @@ public final class ParallelAnimationProgram {
                           ExpressionEngine.Environment environment,
                           RuntimeState runtimeState, EvaluationScratch scratch) {
         evaluate(elapsed, automatic, controlled, fullBodyEnding, movementPose,
-                LadderRenderPolicy.NONE, itemSwitchPose, rouletteClip,
+                MovementItemRenderPolicy.NONE, itemSwitchPose, rouletteClip,
                 rouletteElapsed, environment, runtimeState, scratch);
     }
 
@@ -2405,13 +2461,13 @@ public final class ParallelAnimationProgram {
                           List<AnimationControllerProgram.ActiveAnimation> controlled,
                           @Nullable FullBodyEnding fullBodyEnding,
                           @Nullable MovementPose movementPose,
-                          LadderRenderPolicy ladderPolicy,
+                          MovementItemRenderPolicy itemRenderPolicy,
                           @Nullable ItemSwitchPose itemSwitchPose,
                           ClipProgram rouletteClip, double rouletteElapsed,
                           ExpressionEngine.Environment environment,
                           RuntimeState runtimeState, EvaluationScratch scratch) {
         evaluate(elapsed, automatic, controlled, fullBodyEnding, movementPose,
-                ladderPolicy, itemSwitchPose, rouletteClip, rouletteElapsed,
+                itemRenderPolicy, itemSwitchPose, rouletteClip, rouletteElapsed,
                 environment, runtimeState, scratch,
                 runtimeState == null ? Map.of() : runtimeState.scriptOutputs);
     }
@@ -2421,7 +2477,7 @@ public final class ParallelAnimationProgram {
                           List<AnimationControllerProgram.ActiveAnimation> controlled,
                           @Nullable FullBodyEnding fullBodyEnding,
                           @Nullable MovementPose movementPose,
-                          LadderRenderPolicy ladderPolicy,
+                          MovementItemRenderPolicy itemRenderPolicy,
                           @Nullable ItemSwitchPose itemSwitchPose,
                           ClipProgram rouletteClip, double rouletteElapsed,
                           ExpressionEngine.Environment environment,
@@ -2454,8 +2510,9 @@ public final class ParallelAnimationProgram {
             }
         }
         if (poseControlled != null) controlled = poseControlled;
-        scratch.naturalLadderPose = ladderPolicy.naturalPose();
-        scratch.ladderItemsInHand.addAll(ladderPolicy.itemsInHand());
+        scratch.naturalLadderPose = itemRenderPolicy.naturalLadderPose();
+        scratch.suppressHeldItemPose = itemRenderPolicy.suppressHeldItemPose();
+        scratch.ladderItemsInHand.addAll(itemRenderPolicy.itemsInHand());
         if (itemSwitchPose != null) {
             scratch.itemSwitchHands.addAll(itemSwitchPose.hands());
         }
@@ -2588,7 +2645,7 @@ public final class ParallelAnimationProgram {
         scratch.builtinTransitions.keySet().retainAll(scratch.sampledBuiltinSlots);
         silenceUnusedBuiltinProviders(elapsed, environment, runtimeState, scratch);
         applyOfficialHeadTracking(customFullBodyPose, movementPose, environment, scratch);
-        composeVisibility(scratch, ladderPolicy.hiddenYsmItemRoots());
+        composeVisibility(scratch, itemRenderPolicy.hiddenYsmItemRoots());
         composeAuxiliaryMatrices(scratch.parallelPose, scratch);
         composeAuxiliaryMatrices(scratch.wholeModelPose, scratch);
         composeAuxiliaryMatrices(scratch.heldItemPose, scratch);
@@ -2656,10 +2713,10 @@ public final class ParallelAnimationProgram {
         }
         boolean mounted = isWholeModelMountedClip(active.name());
         boolean selectiveReplacement = !program.replacementIndices().isEmpty();
-        boolean naturalLadderHold = scratch.naturalLadderPose && movementComposition
+        boolean suppressedMovementHold = scratch.suppressHeldItemPose && movementComposition
                 && !movementFullBody
                 && action == AnimationConditionMatcher.ItemAction.HOLD;
-        if (naturalLadderHold && scratch.authoredPose == null) {
+        if (suppressedMovementHold && scratch.authoredPose == null) {
             return;
         }
         // Official YSM composes the complete matching hold layer after its movement
@@ -2669,7 +2726,7 @@ public final class ParallelAnimationProgram {
         // remains governed by replacement indices and the existing display policy.
         boolean movementHoldComposition = movementComposition && !movementFullBody
                 && action == AnimationConditionMatcher.ItemAction.HOLD
-                && !naturalLadderHold;
+                && !suppressedMovementHold;
         boolean poseOnlyMovementHold = movementHoldComposition
                 && !selectiveReplacement;
         // Equipment conditions are authored after pre_parallel in official YSM. When a
@@ -2683,7 +2740,7 @@ public final class ParallelAnimationProgram {
                 || equipmentComposition;
         boolean authoredOnlyHold = scratch.authoredPose != null
                 && action == AnimationConditionMatcher.ItemAction.HOLD
-                && (naturalLadderHold || scratch.authoredOnlyHoldClips.contains(active.name()));
+                && (suppressedMovementHold || scratch.authoredOnlyHoldClips.contains(active.name()));
         BoneSelection selection = continuedAuthoredClock || authoredOnlyHold
                 ? BoneSelection.AUTHORED_ONLY : BoneSelection.ALL;
         PoseScratch target = wholeModel ? scratch.wholeModelPose
@@ -2868,7 +2925,8 @@ public final class ParallelAnimationProgram {
         boolean movement = scratch.frameMovement != null;
         boolean itemSwitch = scratch.frameItemSwitch != null;
         int policy = (scratch.frameCustomFullBody ? 1 : 0) | (movement ? 2 : 0)
-                | (itemSwitch ? 4 : 0) | (scratch.mirrorOrdinaryMainhandBowSwitch ? 8 : 0);
+                | (itemSwitch ? 4 : 0) | (scratch.mirrorOrdinaryMainhandBowSwitch ? 8 : 0)
+                | (scratch.suppressHeldItemPose ? 16 : 0) | (scratch.naturalLadderPose ? 32 : 0);
         BuiltinPoseTransition transition = scratch.builtinTransitions.get(channel);
         if (transition == null || transition.policy != policy) {
             transition = new BuiltinPoseTransition(scratch, policy);
@@ -3015,8 +3073,19 @@ public final class ParallelAnimationProgram {
         if (controllerProgram.hasBuiltinController(active.controllerName())
                 && !channelKey(active.controllerName()).equals(scratch.activeBuiltinChannel)) return;
         if (active.instanceKey().startsWith("script/") && ControllerOrder.parallel(active.controllerName())) return;
+        boolean suppressedMovementHold = scratch.suppressHeldItemPose
+                && scratch.frameMovement != null
+                && !ControllerOrder.dynamic(active.controllerName())
+                && !holdControllerHands(active.controllerName()).isEmpty();
         ClipProgram program = active.instanceKey().startsWith("script/")
                 ? scriptClips.get(active.name()) : controllerClips.get(active.name());
+        if (suppressedMovementHold && (scratch.authoredPose == null || program == null)) {
+            if (runtimeState != null && program != null) {
+                runtimeState.silenceTimeline(active.instanceKey(), active.instanceKey().startsWith("script/")
+                        ? (float) active.elapsed() : controllerTime(program, active.elapsed()));
+            }
+            return;
+        }
         if (program == null) {
             if (active.instanceKey().startsWith("script/") && active.name().isEmpty()) {
                 boolean wholeModel = movementFullBody || itemSwitchFullBody;
@@ -3039,8 +3108,8 @@ public final class ParallelAnimationProgram {
         boolean wholeModel = movementFullBody || customControllerFullBody
                 || itemSwitchFullBody;
         boolean authoredOnlyHold = scratch.authoredPose != null
-                && scratch.authoredOnlyControllerOutputs.contains(
-                channelKey(active.controllerName()));
+                && (suppressedMovementHold || scratch.authoredOnlyControllerOutputs.contains(
+                channelKey(active.controllerName())));
         ExpressionEngine.Environment controllerEnvironment = active.stateVariables().isEmpty()
                 ? environment : new ControllerVariableEnvironment(
                 environment, active.stateVariables());
@@ -4473,6 +4542,7 @@ public final class ParallelAnimationProgram {
         scratch.authoredHeadPitch = false;
         scratch.authoredHeadYaw = false;
         scratch.naturalLadderPose = false;
+        scratch.suppressHeldItemPose = false;
         scratch.itemSwitchHands.clear();
         scratch.ladderItemsInHand.clear();
         Arrays.fill(scratch.replaceEpicFightAnchors, false);
@@ -4688,6 +4758,7 @@ public final class ParallelAnimationProgram {
         private boolean authoredHeadPitch;
         private boolean authoredHeadYaw;
         private boolean naturalLadderPose;
+        private boolean suppressHeldItemPose;
 
         private EvaluationScratch(int visibilityCount, int auxiliaryCount,
                                   boolean hasAuthoredBranches) {

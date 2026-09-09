@@ -326,7 +326,7 @@ public final class CompatHumanoidMesh extends HumanoidMesh {
                             suppressRightItem, suppressLeftItem,
                             mainHandItemSwitchUsesOffArmTool,
                             animationFrame != null
-                                    && animationFrame.naturalLadderPose(),
+                                    && animationFrame.suppressHeldItemPose(),
                             animationFrame == null ? Set.of()
                                     : animationFrame.ladderItemsInHand());
                     if (!frame.firstPerson()) {

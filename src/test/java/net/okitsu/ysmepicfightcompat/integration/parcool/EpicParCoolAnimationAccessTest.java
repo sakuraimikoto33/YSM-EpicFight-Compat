@@ -3,10 +3,12 @@ package net.okitsu.ysmepicfightcompat.integration.parcool;
 import net.minecraft.resources.ResourceLocation;
 import org.junit.jupiter.api.Test;
 import yesman.epicfight.api.animation.AnimationManager;
+import yesman.epicfight.api.animation.Joint;
 import yesman.epicfight.api.animation.types.DynamicAnimation;
 import yesman.epicfight.api.animation.types.LinkAnimation;
 import yesman.epicfight.api.animation.types.StaticAnimation;
 import yesman.epicfight.api.asset.AssetAccessor;
+import yesman.epicfight.api.utils.math.OpenMatrix4f;
 
 import java.util.HashSet;
 import java.util.Set;
@@ -125,6 +127,62 @@ class EpicParCoolAnimationAccessTest {
     @Test
     void missingPublicAccessorsDoNotInvokeUnsafeRegistryNameGetter() {
         assertFalse(EpicParCoolAnimationAccess.isReservedAnimation(new NamedAnimation(null, null)));
+    }
+
+    @Test
+    void fastRunRequiresBothResolvedHandParentsToBeTheActualBackJoint() {
+        Joint back = new Joint("CustomBack", 3, new OpenMatrix4f());
+        Joint right = new Joint("Tool_R", 4, new OpenMatrix4f());
+        Joint left = new Joint("Tool_L", 5, new OpenMatrix4f());
+        assertTrue(EpicParCoolAnimationAccess.toolsOnBack(back, back, back));
+        assertFalse(EpicParCoolAnimationAccess.toolsOnBack(right, left, back));
+        assertFalse(EpicParCoolAnimationAccess.toolsOnBack(back, left, back));
+        assertFalse(EpicParCoolAnimationAccess.toolsOnBack(right, back, back));
+        Joint sameNameAndId = new Joint("CustomBack", 3, new OpenMatrix4f());
+        assertFalse(EpicParCoolAnimationAccess.toolsOnBack(sameNameAndId, sameNameAndId, back));
+        assertFalse(EpicParCoolAnimationAccess.toolsOnBack(null, back, back));
+        assertFalse(EpicParCoolAnimationAccess.toolsOnBack(back, null, back));
+        assertFalse(EpicParCoolAnimationAccess.toolsOnBack(null, null, null));
+    }
+
+    @Test
+    void fastRunUsesOnlyTheExactPublicAnimationId() {
+        assertTrue(EpicParCoolAnimationAccess.fastRunAnimationVisible(
+                named("epicparcool:biped/fast_run", null), null));
+        for (String id : new String[]{"epicfight:biped/fast_run", "parcool:biped/fast_run",
+                "epicparcool:biped/fast_running", "epicparcool:biped/fast_run_extra",
+                "epicparcool:biped/wall_run_left", "epicfight:biped/living/climb"}) {
+            assertFalse(EpicParCoolAnimationAccess.fastRunAnimationVisible(named(id, null), null), id);
+        }
+        assertFalse(EpicParCoolAnimationAccess.fastRunAnimationVisible(null, null));
+        assertFalse(EpicParCoolAnimationAccess.fastRunAnimationVisible(
+                new NamedAnimation(null, null), null));
+        assertFalse(EpicParCoolAnimationAccess.fastRunToolsOnBack(null));
+    }
+
+    @Test
+    void queuedFastRunUsesItsPublicIdWithoutLoadingTheDestination() {
+        NamedTarget queued = new NamedTarget(ResourceLocation.parse("epicparcool:biped/fast_run"));
+        assertTrue(EpicParCoolAnimationAccess.fastRunAnimationVisible(
+                named("epicfight:biped/living/run", null), queued));
+        assertTrue(EpicParCoolAnimationAccess.fastRunAnimationVisible(null, queued));
+        assertFalse(EpicParCoolAnimationAccess.fastRunAnimationVisible(null,
+                new NamedTarget(ResourceLocation.parse("epicfight:biped/living/run"))));
+        assertFalse(EpicParCoolAnimationAccess.fastRunAnimationVisible(null, new NamedTarget(null)));
+    }
+
+    @Test
+    void runtimeFastRunLinksFollowOnlyTheRegisteredDestination() {
+        LinkAnimation link = new LinkAnimation();
+        assertFalse(EpicParCoolAnimationAccess.fastRunAnimationVisible(link, null));
+        AssetAccessor<DynamicAnimation> from = new LoadedSource(
+                named("epicparcool:biped/fast_run", "epicparcool:biped/fast_run"));
+        link.setConnectedAnimations(from,
+                new NamedTarget(ResourceLocation.parse("epicparcool:biped/fast_run")));
+        assertTrue(EpicParCoolAnimationAccess.fastRunAnimationVisible(link, null));
+        link.setConnectedAnimations(from,
+                new NamedTarget(ResourceLocation.parse("epicfight:biped/living/run")));
+        assertFalse(EpicParCoolAnimationAccess.fastRunAnimationVisible(link, null));
     }
 
     private static DynamicAnimation named(String id, String targetId) {

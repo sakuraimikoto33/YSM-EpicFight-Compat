@@ -137,7 +137,7 @@ class RenderFrameContextTest {
     }
 
     @Test
-    void naturalLadderHidesEpicItemOnlyWhenTheModelReplacesIt() {
+    void stowedMovementHidesEpicItemOnlyWhenTheModelReplacesIt() {
         assertTrue(RenderFrameContext.shouldSuppressHeldItem(
                 true, true, true));
         assertTrue(RenderFrameContext.shouldSuppressHeldItem(

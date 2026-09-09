@@ -160,7 +160,7 @@ class FormHeldItemRenderTest {
     }
 
     @Test
-    void firstPersonAndNaturalLadderRetainTheirEstablishedAttachmentPolicy() {
+    void firstPersonAndStowedMovementKeepFormAttachmentsDisabled() {
         OpenMatrix4f[] original = poses();
         RenderFrameContext.pushFirstPerson(null, Map.of(), true);
         publishBase(original, false);
@@ -176,6 +176,44 @@ class FormHeldItemRenderTest {
         assertNull(RenderFrameContext.openFormHeldItem(
                 null, InteractionHand.MAIN_HAND, armature(), original));
         assertFalse(RenderFrameContext.formHidesHeldItem(null, InteractionHand.MAIN_HAND));
+    }
+
+    @Test
+    void stowedRunningFrameRestoresBothFormAttachmentsWhenMovementEnds() {
+        Armature armature = armature();
+        OpenMatrix4f[] original = poses();
+        publish(original, HumanoidArm.RIGHT, 1);
+        // YSM Epic ParCool running and natural ladder poses publish the same policy.
+        publishBase(original, true);
+        RenderFrameContext.publishFormHeldItemPoints(null, null, HumanoidArm.RIGHT,
+                new OpenMatrix4f().translate(2, 3, 4),
+                new OpenMatrix4f().translate(-2, 5, 6), true, true, 1);
+
+        for (InteractionHand hand : InteractionHand.values()) {
+            assertNull(RenderFrameContext.openFormHeldItem(null, hand, armature, original));
+            assertFalse(RenderFrameContext.hasVisibleFormHeldItem(null, hand));
+            assertFalse(RenderFrameContext.formHidesHeldItem(null, hand));
+        }
+        assertFalse(AttachmentArmatureScope.suppressPoseWrite(armature));
+
+        // Reusing the same body frame must release the policy as soon as running ends.
+        publishBase(original, false);
+        RenderFrameContext.publishFormHeldItemPoints(null, null, HumanoidArm.RIGHT,
+                new OpenMatrix4f().translate(2, 3, 4),
+                new OpenMatrix4f().translate(-2, 5, 6), false, false, 1);
+        for (InteractionHand hand : InteractionHand.values()) {
+            assertTrue(RenderFrameContext.hasVisibleFormHeldItem(null, hand));
+            try (RenderFrameContext.FormHeldItemDraw item = RenderFrameContext.openFormHeldItem(
+                    null, hand, armature, original)) {
+                assertNotNull(item);
+                if (hand == InteractionHand.MAIN_HAND) {
+                    assertToolPair(item.poses(), 2, 3, 4);
+                } else {
+                    assertToolPair(item.poses(), -2, 5, 6);
+                }
+            }
+        }
+        assertFalse(AttachmentArmatureScope.suppressPoseWrite(armature));
     }
 
     @Test
@@ -199,9 +237,9 @@ class FormHeldItemRenderTest {
         right.m30 = left.m30 = 999;
     }
 
-    private static void publishBase(OpenMatrix4f[] original, boolean naturalLadder) {
+    private static void publishBase(OpenMatrix4f[] original, boolean suppressHeldItemPose) {
         RenderFrameContext.publishHeldItemPoints(null, null, original, null, null,
-                null, null, null, null, false, false, false, naturalLadder, Set.of());
+                null, null, null, null, false, false, false, suppressHeldItemPose, Set.of());
     }
 
     private static Armature armature() {
