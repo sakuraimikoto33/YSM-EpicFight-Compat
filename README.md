@@ -2,7 +2,7 @@
 
 [日本語](README.ja.md)
 
-YSM Epic Fight Compat is a Forge mod that renders player models selected in the official Yes Steve Model mod with Epic Fight combat animations. Official YSM continues to own normal player rendering outside Epic Fight's combat renderer. An optional adapter also applies the same converted models to supported Touhou Little Maid entities while EpicFight_TouhouLittleMaid owns their combat rendering.
+Use the player model selected in official Yes Steve Model with Epic Fight combat animations. Outside Epic Fight's combat renderer, official YSM handles normal player rendering.
 
 ## Version branches
 
@@ -17,65 +17,182 @@ Select the appropriate version branch before building the mod. Each `mc/*` branc
 
 ## Features
 
-- Converts YSM folder models and `.ysm` packages, including encrypted packages, into Epic Fight combat meshes.
-- Preserves model-authored motion for structurally recognized non-humanoid bodies and alternate forms instead of forcing those branches onto the biped skeleton. Third-person ordinary held items can follow the current form's visible Tool locator, including a mouth or paw; this does not generate new non-humanoid combat animations.
-- Renders geometry authored directly on bones whose case-sensitive names begin with `ysmGlow` as full-bright mesh parts and carries model-authored normal/specular textures through the optional Oculus/Iris LabPBR path when fallback textures are required.
-- Honors the model's `all_cutout` back-face-culling and `render_layers_first` layer-order settings while preserving the selected material's transparency behavior.
-- Uses the model and texture selected by each player in single-player and multiplayer.
-- Keeps parsed local models, validated remote models, and generated server transfer data in separate bounded disk caches without writing model JSON or standalone texture images.
-- Supports Epic Fight's third-person and first-person combat rendering for players.
-- Optionally replaces EpicFight_TouhouLittleMaid's third-person combat mesh for a maid that has an official-YSM model selected. The original maid mesh remains the fallback while conversion is unavailable or the maid has no usable YSM selection.
-- Uses model-authored YSM full-body movement for walking, running, sneaking, jumping, creative and elytra flight, swimming, crawling, and ladder movement. It is enabled by default and supports per-model state exclusions; Epic Fight actions immediately regain pose ownership from configured movement. An additional default-enabled natural ladder option keeps an authored two-handed climbing pose, stows ordinary Epic Fight items, and hides active YSM item replacements when the model provides dedicated ladder arm motion.
-- Applies YSM auxiliary-bone, automatic, conditional, roulette, item-switch, and Animation Controller motion through pose paths appropriate to each animation. Model-authored riding motion uses its complete-pose path while YSM owns the matching vehicle model.
-- Optionally uses supported YSM ParCool action and SWEM rider clips in player battle-mode rendering. Both animation settings default to enabled and have independent per-model, per-clip exclusions, separate from ordinary movement settings. Actual attacks, guarding, and hit reactions retain Epic Fight's pose; Epic ParCool's Chain movement and Wall movement always retain the addon's pose when it is loaded.
-- Uses a model-authored YSM weapon or tool when the selected model actually defines one for the held item; otherwise Epic Fight keeps rendering the item.
-- Preserves model-authored YSM projectiles, fishing hooks, and vehicles in battle mode when the model owner's resolved local policy selects them. Otherwise, their original Epic Fight or vanilla rendering remains active, and a disabled YSM vehicle also leaves the matching rider pose to Epic Fight.
-- Plays an authored YSM full-body hold transition, when the model provides one, after an item changes. Model-authored replacements follow the held-item model setting, while ordinary items rendered by Epic Fight use an independent switch-animation setting.
-- Applies the complete authored YSM draw and release pose for detected custom bows, and prevents duplicate Epic Fight/YSM attack-swing audio when a custom replacement owns the sound.
-- Evaluates the supported official YSM Molang math functions, read-only queries, auxiliary physics functions, and model variables, including the `v.*`/`variable.*` and `v.roaming.*`/`variable.roaming.*` aliases.
-- Supports Animation Controller state variables and `remap_curve`, model-local sound output, Molang particle helpers, and declarative Bedrock `particle_effects`.
-- Runs supported model-local Molang functions, initialization/update/sync events, and player animation-controller hooks in a bounded interpreter. Player script sync events carry validated numeric arguments through the server; scripts cannot execute arbitrary native code.
-- Synchronizes player model selection, model-variable state, semantic movement state, resolved movement ownership and the current natural-ladder request, the active ParCool/SWEM animation family, clip name, and resolved pose decision, each model owner's resolved per-hand replacement and switch-animation state, and owner-resolved projectile, fishing-hook, and vehicle display state so remote players see the same cosmetic result without receiving the owner's local rules.
-- Applies compatible YSM movement, auxiliary, roulette, held-item, item-switch, sound, and particle behavior to supported maids. Viewers receive the maid owner's resolved held-item, item-switch, and movement decisions with a bounded source fingerprint; local settings, exclusions, and tag rules are never synchronized.
-- Can hide official YSM's top-left overlay while Epic Fight battle mode is active.
-- Returns player rendering to official YSM when Epic Fight no longer overrides it. Maid rendering remains owned by Touhou Little Maid and EpicFight_TouhouLittleMaid outside the adapter's exact patched-renderer scope.
-- Refreshes converted models after resource reloads and YSM model reload commands.
-- Falls back to Epic Fight's default player mesh for players, or EpicFight_TouhouLittleMaid's original maid mesh for supported maids, when a selected model cannot be prepared.
-- Limits YSM's Epic Fight compatibility warning to its first display on a client installation.
+- Yes Steve Model (YSM) player models in Epic Fight's first- and third-person combat rendering.
+- Folder models and supported `.ysm` packages, including encrypted packages.
+- Model-authored movement, secondary motion, item switches, controllers, sounds, and particles.
+- Custom weapons, bow actions, projectiles, fishing hooks, and vehicles.
+- Multiplayer synchronization of selected models, textures, and cosmetic animation state.
+- Optional integrations with Touhou Little Maid + EpicFight：TouhouLittleMaid, ParCool!, Epic ParCool, SWEM, and Oculus.
 
-For converted player models, armor and head equipment remain hidden because their biped attachment points do not match arbitrary YSM bodies. Elytra are rendered at the model's final animated `ElytraLocator` when exactly one usable locator exists and are hidden otherwise. Capes, arrows, bee stingers, ordinary held items, and locator-backed elytra follow the final displayed YSM pose while Epic Fight's patched layers remain active. Authored hidden or collapsed hand locators can suppress ordinary items; ambiguous or invalid form locators do not select an arbitrary attachment. Equipment rendering remains unchanged when the default Epic Fight player mesh is used. The optional maid adapter retains EpicFight_TouhouLittleMaid's existing layers while applying the converted model's per-hand replacement and locator-visibility rules.
+## Optional integrations
 
-## Installation
+These mods are not required for player-model compatibility. Install each integration's own dependencies as well.
 
-Install this mod and all requirements in the `mods` directory. For multiplayer, install YSM Epic Fight Compat on both the dedicated server and every participating client so that player selections and server-provided models can be resolved consistently.
+| Mod | Integration |
+| --- | --- |
+| [Configured](https://www.curseforge.com/minecraft/mc-mods/configured) | Provides an in-game settings screen. |
+| [Touhou Little Maid](https://www.curseforge.com/minecraft/mc-mods/touhou-little-maid) + [EpicFight：TouhouLittleMaid](https://modrinth.com/mod/epicfight_touhoulittlemaid) | Lets maids use YSM models while performing the Epic Fight task. |
+| [ParCool! ~ Minecraft Parkour ~](https://www.curseforge.com/minecraft/mc-mods/parcool) | Uses the YSM model's matching animations during parkour. |
+| [\[Official\] Epic ParCool](https://www.curseforge.com/minecraft/mc-mods/official-epic-fight-x-parcool) | Keeps Epic ParCool's own animations for Chain movement and Wall movement. Other supported actions can use YSM animations. |
+| [Star Worm Equestrian (Upgrading Horses)](https://www.curseforge.com/minecraft/mc-mods/swem) (SWEM) | Uses YSM riding animations when riding a SWEM horse. The horse's appearance and movement are unchanged. |
+| [Oculus](https://www.curseforge.com/minecraft/mc-mods/oculus) | Enables compatible shaders to use the YSM model's surface-detail and shine textures. |
 
-[Configured](https://www.curseforge.com/minecraft/mc-mods/configured) is optional. When installed, it displays **Animations** (`[common.animations]`) and **Models** (`[common.models]`) under the client config's **Common** group. Each group has an **Exclusions** folder matching its `.exclusions` table: Animations contains model-specific item-switch, movement, ParCool, and SWEM exclusions, alongside their animation toggles and the natural-ladder toggle; Models contains held-item, projectile, and vehicle exclusions, alongside their model toggles. Overlay options belong to `[client]`, and cache options to `[client.cache]`. The settings screen follows the actual TOML hierarchy.
+ParCool and SWEM integration changes only the player's appearance and requires matching animations in the YSM model. Movement and combat mechanics are unchanged; attacks, guarding, and hit reactions use Epic Fight's animations.
 
-An exclusion disables the matching YSM behavior while its main setting is enabled and never enables it while that setting is disabled. ParCool and SWEM use short clip names such as `fast_running` or `gallop`, without the `parcool:` or `swem:` prefix; wildcards and names from the other animation family are not accepted. The model-specific editors add the currently selected model ID as an editable entry, and empty rows are not saved. Without Configured, the TOML settings still work and the mod starts normally; only the in-game settings screen is unavailable.
+## Configuration
 
-ParCool and SWEM are optional and independent. Their animation adapters read the installed mod's player action or riding state and require a usable matching YSM clip; they do not change movement, attacks, or horse behavior. SWEM integration animates the rider, not the horse, and does not depend on the YSM vehicle-model setting. These two adapters do not extend the maid integration. Missing optional mods or unusable clips leave the existing rendering path in place.
+Settings are stored below `config/ysm_epicfight_compat/`:
 
-Touhou Little Maid integration is optional and activates only when both Touhou Little Maid and EpicFight_TouhouLittleMaid are installed. Neither mod is required when maid combat-model integration is not needed.
+| File | Contents |
+| --- | --- |
+| `ysm_epicfight_compat-client.toml` | Client display, animation, model, exclusion, and client-cache settings. The `[common.*]` tables below are also in this client file. |
+| `ysm_epicfight_compat-common.toml` | Global cache settings for integrated and dedicated servers, under `[server.cache]`. This is not a per-world `serverconfig` file. |
+
+Use Configured's screen or edit the TOML files. Saved/reloaded settings take effect without restarting the game. Model-owner preferences and exclusion lists stay on that owner's client; multiplayer sends resolved display/pose decisions rather than the rule lists.
+
+### Client display and evaluation — `[client]`
+
+| Key | Default | Effect / allowed values |
+| --- | --- | --- |
+| `suppressBattleModeOverlay` | `true` | Hides official YSM's top-left player overlay during Epic Fight battle mode. |
+| `animationEvaluationRateLimitHz` | `60` | Target maximum model animation, script, and controller evaluations per second: integer `30–240`, or `0` for Unlimited. State changes can trigger earlier evaluations. |
+
+The evaluation-rate setting does not cap rendering FPS or game ticks, and does not change animation playback speed. Lower values reduce model-update smoothness and can make script/controller output less frequent. Unlimited disables this setting's restriction; distance-based scheduling of eligible remote models still applies.
+
+Configured's slider runs from **30 Hz through 240 Hz to Unlimited at the right end**. Unlimited is saved as `0`; resetting the setting selects `60`.
+
+### Animation behavior — `[common.animations]`
+
+| Key | Default | Effect |
+| --- | --- | --- |
+| `useYsmHeldItemSwitchAnimations` | `true` | Plays available YSM item-switch poses for ordinary items rendered by Epic Fight. Model-authored replacement items instead follow the held-item model setting. |
+| `useYsmMovementAnimations` | `true` | Uses available YSM full-body locomotion animations. Epic Fight combat actions take priority. |
+| `useNaturalLadderAnimations` | `true` | Uses both arms when YSM owns a dedicated ladder animation with arm motion. Ordinary items are stowed and YSM replacement items are hidden. Requires movement to be enabled and not excluded; applies to players. |
+| `useYsmParCoolAnimations` | `true` | Enables supported YSM ParCool action animations. Independent of ordinary movement settings. |
+| `useYsmSwemAnimations` | `true` | Enables supported YSM SWEM rider animations. Independent of ordinary movement and vehicle-model settings. |
+
+ParCool/SWEM settings and their exclusion editors are available only with the corresponding mod installed. Existing saved values are retained when that mod is absent; missing optional entries are not generated.
+
+### Model replacements — `[common.models]`
+
+| Key | Default | Effect |
+| --- | --- | --- |
+| `useYsmHeldItemModels` | `true` | Uses available model-authored weapons and tools, including their replacement animations. Items without a replacement remain rendered by Epic Fight. |
+| `useYsmProjectileModels` | `true` | Uses available model-authored projectiles when a corresponding YSM held-item replacement does not control them. |
+| `useYsmVehicleModels` | `true` | Uses available model-authored vehicles and their matching riding poses. Disabling it also returns that mounted-pose path to Epic Fight. |
+
+Fishing hooks follow the fishing rod's held-item policy. Bow/trident projectiles follow that policy when the model defines the corresponding held-item replacement; otherwise they use the projectile setting. Crossbow projectiles use the projectile setting.
+
+### Model-specific exclusions
+
+All seven tables default to empty. Each maps a **selected YSM model ID** to a list of values that disable the corresponding enabled feature. An exclusion never enables a feature whose main setting is off.
+
+| Table in the client file | Values for each model |
+| --- | --- |
+| `common.models.exclusions.heldItemModelExclusions` | Item IDs or `#item_tags`. |
+| `common.models.exclusions.projectileModelExclusions` | Entity-type IDs or `#entity_type_tags`. |
+| `common.models.exclusions.vehicleModelExclusions` | Entity-type IDs or `#entity_type_tags`. |
+| `common.animations.exclusions.heldItemSwitchAnimationExclusions` | Item IDs or `#item_tags`; `minecraft:air` targets switching to an empty hand. |
+| `common.animations.exclusions.movementAnimationExclusions` | Movement state names listed below. |
+| `common.animations.exclusions.parcoolAnimationExclusions` | Short ParCool action names listed below. |
+| `common.animations.exclusions.swemAnimationExclusions` | Short SWEM rider-animation names listed below. |
+
+Quote each model ID so slashes and dots remain part of the key. Model IDs are matched after trimming whitespace and normalizing case; wildcard model IDs are not supported. Each table accepts up to 256 models. Item/entity tables accept up to 256 selectors per model; model IDs and these selectors are limited to 256 characters each.
+
+Example (replace `example/model` with your selected model's ID):
+
+```toml
+[common.models.exclusions.heldItemModelExclusions]
+"example/model" = ["minecraft:diamond_sword", "#forge:tools/bows"]
+
+[common.models.exclusions.projectileModelExclusions]
+"example/model" = ["minecraft:arrow"]
+
+[common.models.exclusions.vehicleModelExclusions]
+"example/model" = ["minecraft:boat"]
+
+[common.animations.exclusions.heldItemSwitchAnimationExclusions]
+"example/model" = ["minecraft:air"]
+
+[common.animations.exclusions.movementAnimationExclusions]
+"example/model" = ["run", "ladder_up"]
+
+[common.animations.exclusions.parcoolAnimationExclusions]
+"example/model" = ["fast_running", "roll_front"]
+
+[common.animations.exclusions.swemAnimationExclusions]
+"example/model" = ["gallop", "jump_lv2"]
+```
+
+Movement values:
+
+```text
+walk, run, sneak_idle, sneak_move, jump, creative_flight, elytra_flight,
+swim, water_idle, crawl_idle, crawl_move, ladder_idle, ladder_up, ladder_down
+```
+
+ParCool values:
+
+```text
+backward_wall_jump, cat_leap, climb_up, cling_to_cliff,
+cling_to_cliff_left, cling_to_cliff_right, dive_animation_host, dive_into_water,
+dodge_front, dodge_back, dodge_left, dodge_right, fast_running, fast_swim,
+flipping_front, flipping_back, horizontal_wall_run_right, horizontal_wall_run_left,
+vertical_wall_run, jump_from_bar, hang, hang_vertical, kong_vault,
+speed_vault_left, speed_vault_right, roll_front, roll_back, roll_left, roll_right,
+sliding, tap, wall_jump_left, wall_jump_right, wall_slide_left, wall_slide_right,
+jump_charging, charge_jump, ride_zipline
+```
+
+SWEM values:
+
+```text
+idle, walk, trot, canter, canter_ext, gallop,
+jump_lv1, jump_lv2, jump_lv3, jump_lv4, jump_lv5
+```
+
+Movement and mod-animation lists accept only their listed names, not tags or wildcards. Use short names for ParCool/SWEM without `parcool:` or `swem:`; names from the other family are not accepted.
+
+Configured shows saved model entries and adds the currently selected model as an editable row. Empty rows are not saved. Select a model in YSM to make it available in these editors.
+
+### Client caches — `[client.cache]`
+
+| Key | Default | Effect / allowed values |
+| --- | --- | --- |
+| `clientModelMemoryCacheTargetCount` | `64` | Target number of converted models retained in memory, `8–512`. Selected and pending models are protected, so this is not a hard limit. |
+| `clientModelDiskCacheMiB` | `64` | Disk limit for parsed local models, `0–4096` MiB. `0` disables and clears this disk cache. |
+| `remoteModelDiskCacheMiB` | `64` | Disk limit for models received from servers, `0–4096` MiB. `0` disables and clears this disk cache. |
+
+### Server cache — `[server.cache]`
+
+These keys belong to `ysm_epicfight_compat-common.toml`.
+
+| Key | Default | Effect / allowed values |
+| --- | --- | --- |
+| `serverModelDiskCacheEnabled` | `true` | Persists generated model-transfer data. `false` bypasses the disk cache without deleting its files; the bounded in-memory transfer cache stays active. |
+| `serverModelDiskCacheMiB` | `256` | Disk limit for generated transfer data, `0–4096` MiB. `0` disables persistence and clears entries during cache maintenance while `serverModelDiskCacheEnabled` is `true`. |
+
+Disk caches use `config/ysm_epicfight_compat/cache/client`, `remote`, and `server`. Each size limit applies independently. Cleanup happens during cache access or cache maintenance, not necessarily when a setting is saved.
+
+### Automatically managed state — `[client]`
+
+`epicFightCompatibilityWarningShown` defaults to `false` and records whether the official YSM/Epic Fight warning has been displayed. It is an acknowledgement record, not a model or animation toggle, and normally needs no manual editing.
+
+## Model and equipment notes
+
+Features depend on the selected model's geometry and animations. Structurally recognized non-humanoid forms retain authored motion; this mod does not generate new combat animations for them.
+
+Converted player models hide armor and head equipment. Elytra require exactly one usable `ElytraLocator`. Ordinary held items can follow supported model-authored attachment points or be hidden by their visibility rules. If model conversion is unavailable, Epic Fight's default mesh and equipment remain the fallback.
 
 ## Building
 
-Java 17 and Git are required.
+Select the matching Minecraft source branch first. Java and Git are required.
 
 ```powershell
-.\gradlew.bat build
+./gradlew.bat build
 ```
 
-To use a Mapping API checkout under development, provide its path explicitly:
-
-```powershell
-.\gradlew.bat build -PysmMappingApiPath=D:\src\YSM-Mapping-API
-```
-
-The distributable jar is written to:
-
-```text
-build/libs/ysm-epicfight-compat-mc1.20.1-<mod-version>-all.jar
-```
+The distributable jar is written to `build/libs/ysm-epicfight-compat-<mc-version>-<mod-version>-all.jar`.
 
 ## Documentation
 
@@ -90,6 +207,11 @@ Project artwork, screenshots, documentation templates, and other files reused ac
 - Use stable, descriptive file names and avoid Minecraft-version-specific content.
 - Do not store dependency jars, build outputs, game files, or model packages in shared assets.
 - Keep assets used by only one Minecraft version on that version branch.
+
+## Credits
+
+- [Yes Steve Model](https://modrinth.com/mod/yes-steve-model) — YesSteveModel team.
+- [Epic Fight](https://www.curseforge.com/minecraft/mc-mods/epic-fight-mod) — Antikythera Studios.
 
 ## License
 
