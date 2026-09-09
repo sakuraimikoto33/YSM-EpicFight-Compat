@@ -12,18 +12,51 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class CompatHumanoidMeshTest {
     @Test
     void computeSkinningRequiresBothTheLiveSettingAndPreparedGpuState() {
-        assertFalse(CompatHumanoidMesh.usesComputeSkinning(false, false));
-        assertFalse(CompatHumanoidMesh.usesComputeSkinning(false, true));
-        assertFalse(CompatHumanoidMesh.usesComputeSkinning(true, false));
-        assertTrue(CompatHumanoidMesh.usesComputeSkinning(true, true));
+        assertFalse(CompatHumanoidMesh.usesComputeSkinning(false, false, true));
+        assertFalse(CompatHumanoidMesh.usesComputeSkinning(false, true, true));
+        assertFalse(CompatHumanoidMesh.usesComputeSkinning(true, false, true));
+        assertTrue(CompatHumanoidMesh.usesComputeSkinning(true, true, true));
     }
 
     @Test
     void aPreparedMeshFollowsOnOffOnWithoutRecreatingItsGpuState() {
         boolean prepared = true;
-        assertTrue(CompatHumanoidMesh.usesComputeSkinning(true, prepared));
-        assertFalse(CompatHumanoidMesh.usesComputeSkinning(false, prepared));
-        assertTrue(CompatHumanoidMesh.usesComputeSkinning(true, prepared));
+        assertTrue(CompatHumanoidMesh.usesComputeSkinning(true, prepared, true));
+        assertFalse(CompatHumanoidMesh.usesComputeSkinning(false, prepared, true));
+        assertTrue(CompatHumanoidMesh.usesComputeSkinning(true, prepared, true));
+    }
+
+    @Test
+    void computeCapacityUsesActualPosesAndAllowsMoreThan256Parts() {
+        assertTrue(CompatHumanoidMesh.withinComputePoseCapacity(556, 443, 0));
+        assertTrue(CompatHumanoidMesh.withinComputePoseCapacity(557, 443, 0));
+        assertFalse(CompatHumanoidMesh.withinComputePoseCapacity(558, 443, 0));
+        assertFalse(CompatHumanoidMesh.withinComputePoseCapacity(900, 101, 0));
+    }
+
+    @Test
+    void baseAndGlowEachHaveAPaletteButShareTheFallbackDecision() {
+        assertTrue(CompatHumanoidMesh.withinComputePoseCapacity(500, 300, 300));
+        assertTrue(CompatHumanoidMesh.withinComputePoseCapacity(999, 0, 1));
+        for (int[] parts : new int[][]{{399, 401}, {401, 399}}) {
+            boolean capacity = CompatHumanoidMesh.withinComputePoseCapacity(
+                    600, parts[0], parts[1]);
+            assertFalse(capacity);
+            assertFalse(CompatHumanoidMesh.usesComputeSkinning(true, true, capacity));
+            assertFalse(CompatHumanoidMesh.usesComputeSkinning(true, false, capacity));
+        }
+    }
+
+    @Test
+    void computeCapacityRejectsInvalidCountsWithoutOverflow() {
+        assertTrue(CompatHumanoidMesh.withinComputePoseCapacity(1000, 0, 0));
+        assertFalse(CompatHumanoidMesh.withinComputePoseCapacity(1001, 0, 0));
+        assertFalse(CompatHumanoidMesh.withinComputePoseCapacity(-1, 0, 0));
+        assertFalse(CompatHumanoidMesh.withinComputePoseCapacity(0, -1, 0));
+        assertFalse(CompatHumanoidMesh.withinComputePoseCapacity(0, 0, -1));
+        assertFalse(CompatHumanoidMesh.withinComputePoseCapacity(Integer.MAX_VALUE, 1, 0));
+        assertFalse(CompatHumanoidMesh.withinComputePoseCapacity(1, Integer.MAX_VALUE, 0));
+        assertFalse(CompatHumanoidMesh.withinComputePoseCapacity(1, 0, Integer.MAX_VALUE));
     }
 
     @Test

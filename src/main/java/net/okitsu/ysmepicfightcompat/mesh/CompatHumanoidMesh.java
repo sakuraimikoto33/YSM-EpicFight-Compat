@@ -29,6 +29,7 @@ import yesman.epicfight.client.mesh.HumanoidMesh;
 import yesman.epicfight.client.renderer.EpicFightRenderTypes;
 import yesman.epicfight.client.renderer.shader.compute.ComputeShaderSetup;
 import yesman.epicfight.config.ClientConfig;
+import yesman.epicfight.main.EpicFightSharedConstants;
 
 import javax.annotation.Nullable;
 import java.lang.reflect.Field;
@@ -43,6 +44,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 public final class CompatHumanoidMesh extends HumanoidMesh {
     private static final Field COMPUTE_SETUP = locateComputeSetup();
     private static final AtomicBoolean CPU_FALLBACK_LOGGED = new AtomicBoolean();
+    private static final AtomicBoolean COMPUTE_CAPACITY_LOGGED = new AtomicBoolean();
     private static final AtomicBoolean AUXILIARY_FALLBACK_LOGGED = new AtomicBoolean();
 
     private final String modelId;
@@ -56,6 +58,8 @@ public final class CompatHumanoidMesh extends HumanoidMesh {
     @Nullable
     private final SkinnedMesh glowMesh;
     private final boolean hasBaseGeometry;
+    private final int basePartCount;
+    private final int glowPartCount;
     private final Set<Map.Entry<String, MeshPart>> allParts;
     private ResourceLocation texture;
 
@@ -79,6 +83,10 @@ public final class CompatHumanoidMesh extends HumanoidMesh {
         // Keep this mesh independent so the glow-only part definitions are retained.
         glowMesh = glowParts.isEmpty() ? null
                 : new SkinnedMesh(arrays, glowParts, null, properties);
+        // Mesh membership is fixed after construction; visibility can still change.
+        // Compute uploads one transform for every part, including hidden/empty ones.
+        basePartCount = hasBaseGeometry ? getPartEntry().size() : 0;
+        glowPartCount = glowMesh == null ? 0 : glowMesh.getPartEntry().size();
         allParts = collectParts(this, glowMesh);
         auxiliaryPoses = auxiliaryBones.isEmpty() ? null
                 : new AuxiliaryPoseMatrices(auxiliaryBones);
@@ -376,6 +384,19 @@ public final class CompatHumanoidMesh extends HumanoidMesh {
                 snapshot.restoreParts();
             }
         }
+        // Vanilla and Iris compute skinning share a fixed pose+part palette in
+        // Epic Fight 20.14.x. Test the actual composed pose count, not guessed
+        // joint headroom or a 256-part visibility limit (flags are variable-size).
+        boolean computeCapacity = poses != null && withinComputePoseCapacity(
+                poses.length, basePartCount, glowPartCount);
+        if (ClientConfig.activateComputeShader && !computeCapacity
+                && COMPUTE_CAPACITY_LOGGED.compareAndSet(false, true)) {
+            CompatMod.LOG.warn(
+                    "YSM-EF Compat: compute palette capacity exceeded for {} "
+                            + "(poses={}, base parts={}, glow parts={}, capacity={}); using CPU skinning",
+                    modelId, poses == null ? -1 : poses.length,
+                    basePartCount, glowPartCount, EpicFightSharedConstants.MAX_JOINTS);
+        }
         boolean restoreScale = meshScale != 1.0F;
         if (restoreScale) {
             matrices.pushPose();
@@ -384,12 +405,12 @@ public final class CompatHumanoidMesh extends HumanoidMesh {
         try {
             if (hasBaseGeometry) {
                 drawSkinned(this, matrices, buffers, actualType, drawingFunction, light,
-                        red, green, blue, alpha, overlay, armature, poses);
+                        red, green, blue, alpha, overlay, armature, poses, computeCapacity);
             }
             if (glowMesh != null) {
                 drawSkinned(glowMesh, matrices, buffers, actualType, drawingFunction,
                         LightTexture.FULL_BRIGHT, red, green, blue, alpha, overlay,
-                        armature, poses);
+                        armature, poses, computeCapacity);
             }
         } finally {
             if (restoreScale) {
@@ -491,16 +512,19 @@ public final class CompatHumanoidMesh extends HumanoidMesh {
             SkinnedMesh mesh, PoseStack matrices, MultiBufferSource buffers,
             RenderType type, Mesh.DrawingFunction drawingFunction, int light,
             float red, float green, float blue, float alpha, int overlay,
-            @Nullable Armature armature, OpenMatrix4f[] poses) {
+            @Nullable Armature armature, OpenMatrix4f[] poses, boolean computeCapacity) {
         // The graphics screen changes this live flag before saving its config value.
         boolean computeEnabled = ClientConfig.activateComputeShader;
-        ComputeShaderSetup compute = computeSetup(mesh);
-        if (usesComputeSkinning(computeEnabled, compute != null)) {
+        // Use the same capacity decision for base and glow: mixing buffered CPU
+        // and immediate GPU emission here would change their relative draw order.
+        ComputeShaderSetup compute = computeCapacity ? computeSetup(mesh) : null;
+        if (usesComputeSkinning(computeEnabled, compute != null, computeCapacity)) {
             compute.drawWithShader(mesh, matrices, buffers, type, light,
                     red, green, blue, alpha, overlay, armature, poses);
             return;
         }
-        if (computeEnabled && CPU_FALLBACK_LOGGED.compareAndSet(false, true)) {
+        if (computeEnabled && computeCapacity
+                && CPU_FALLBACK_LOGGED.compareAndSet(false, true)) {
             CompatMod.LOG.warn(
                     "YSM-EF Compat: compute skinning is unavailable; using Epic Fight's CPU path");
         }
@@ -514,8 +538,17 @@ public final class CompatHumanoidMesh extends HumanoidMesh {
                 armature, poses);
     }
 
-    static boolean usesComputeSkinning(boolean enabled, boolean available) {
-        return enabled && available;
+    static boolean usesComputeSkinning(boolean enabled, boolean available,
+                                       boolean withinCapacity) {
+        return enabled && available && withinCapacity;
+    }
+
+    static boolean withinComputePoseCapacity(int poseCount, int baseParts, int glowParts) {
+        // Check each submesh independently; subtraction avoids integer overflow.
+        return poseCount >= 0 && poseCount <= EpicFightSharedConstants.MAX_JOINTS
+                && baseParts >= 0 && glowParts >= 0
+                && baseParts <= EpicFightSharedConstants.MAX_JOINTS - poseCount
+                && glowParts <= EpicFightSharedConstants.MAX_JOINTS - poseCount;
     }
 
     /** Keeps Epic Fight's action matrices unless YSM owns the complete displayed pose. */
