@@ -28,6 +28,7 @@ import yesman.epicfight.api.utils.math.OpenMatrix4f;
 import yesman.epicfight.client.mesh.HumanoidMesh;
 import yesman.epicfight.client.renderer.EpicFightRenderTypes;
 import yesman.epicfight.client.renderer.shader.compute.ComputeShaderSetup;
+import yesman.epicfight.config.ClientConfig;
 
 import javax.annotation.Nullable;
 import java.lang.reflect.Field;
@@ -491,13 +492,15 @@ public final class CompatHumanoidMesh extends HumanoidMesh {
             RenderType type, Mesh.DrawingFunction drawingFunction, int light,
             float red, float green, float blue, float alpha, int overlay,
             @Nullable Armature armature, OpenMatrix4f[] poses) {
+        // The graphics screen changes this live flag before saving its config value.
+        boolean computeEnabled = ClientConfig.activateComputeShader;
         ComputeShaderSetup compute = computeSetup(mesh);
-        if (compute != null) {
+        if (usesComputeSkinning(computeEnabled, compute != null)) {
             compute.drawWithShader(mesh, matrices, buffers, type, light,
                     red, green, blue, alpha, overlay, armature, poses);
             return;
         }
-        if (CPU_FALLBACK_LOGGED.compareAndSet(false, true)) {
+        if (computeEnabled && CPU_FALLBACK_LOGGED.compareAndSet(false, true)) {
             CompatMod.LOG.warn(
                     "YSM-EF Compat: compute skinning is unavailable; using Epic Fight's CPU path");
         }
@@ -509,6 +512,10 @@ public final class CompatHumanoidMesh extends HumanoidMesh {
                 buffers.getBuffer(EpicFightRenderTypes.makeTriangulated(type)),
                 drawingFunction, light, red, green, blue, alpha, overlay,
                 armature, poses);
+    }
+
+    static boolean usesComputeSkinning(boolean enabled, boolean available) {
+        return enabled && available;
     }
 
     /** Keeps Epic Fight's action matrices unless YSM owns the complete displayed pose. */

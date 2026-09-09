@@ -11,6 +11,22 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class CompatHumanoidMeshTest {
     @Test
+    void computeSkinningRequiresBothTheLiveSettingAndPreparedGpuState() {
+        assertFalse(CompatHumanoidMesh.usesComputeSkinning(false, false));
+        assertFalse(CompatHumanoidMesh.usesComputeSkinning(false, true));
+        assertFalse(CompatHumanoidMesh.usesComputeSkinning(true, false));
+        assertTrue(CompatHumanoidMesh.usesComputeSkinning(true, true));
+    }
+
+    @Test
+    void aPreparedMeshFollowsOnOffOnWithoutRecreatingItsGpuState() {
+        boolean prepared = true;
+        assertTrue(CompatHumanoidMesh.usesComputeSkinning(true, prepared));
+        assertFalse(CompatHumanoidMesh.usesComputeSkinning(false, prepared));
+        assertTrue(CompatHumanoidMesh.usesComputeSkinning(true, prepared));
+    }
+
+    @Test
     void firstPersonRebasesOnlyACustomFullBodyBowOrItsEndingSource() {
         assertTrue(CompatHumanoidMesh.usesFirstPersonPoseTransform(true, true, false));
         assertTrue(CompatHumanoidMesh.usesFirstPersonPoseTransform(true, false, true));
