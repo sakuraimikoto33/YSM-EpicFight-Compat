@@ -10,7 +10,7 @@ import java.nio.ByteOrder;
 import java.util.Arrays;
 
 /** Opens crypto-v3 YSM package envelopes and returns their uncompressed binary payload. */
-public final class PackageEnvelopeDecoder {
+public final class V3PackageDecoder {
     private static final int TRAILER_BYTES = 64;
     private static final int KEY_BYTES = 32;
     private static final int NONCE_BYTES = 24;
@@ -18,7 +18,7 @@ public final class PackageEnvelopeDecoder {
     private static final long STREAM_SEED = 0xA62B1A2C43842BC3L;
     private static final long WHITENING_SEED = 0xD017CBBA7B5D3581L;
 
-    private PackageEnvelopeDecoder() {
+    private V3PackageDecoder() {
     }
 
     public static byte[] open(byte[] file) {

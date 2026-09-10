@@ -15,8 +15,8 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
-/** Boundary-checked decoder for decrypted YSM binary model payloads. */
-public final class BinaryPackageParser {
+/** Boundary-checked decoder for binary model payloads carried in V3 YSM envelopes. */
+public final class V3BinaryPackageParser {
     private static final int SUB_TEXTURE_NORMAL = 1;
     private static final int SUB_TEXTURE_SPECULAR = 2;
     private static final int MAX_ITEMS = 1_000_000;
@@ -26,7 +26,7 @@ public final class BinaryPackageParser {
     private static final int MAX_CONTROLLER_STATES = 65_536;
     private static final int MAX_CONTROLLER_ENTRIES = 1_000_000;
 
-    private BinaryPackageParser() {
+    private V3BinaryPackageParser() {
     }
 
     public static ModelBundle parse(String modelId, byte[] payload) {
