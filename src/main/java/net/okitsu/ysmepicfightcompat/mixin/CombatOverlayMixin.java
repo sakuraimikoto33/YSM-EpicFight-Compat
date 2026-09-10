@@ -12,13 +12,13 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 @Mixin(targets = "net.okitsu.ysmepicfightcompat.ysmref.ModelPreviewRendererAlias", remap = false)
 public abstract class CombatOverlayMixin {
     @Inject(
-            method = "renderPlayerOverlay(Lnet/minecraft/client/gui/GuiGraphics;Lnet/minecraft/client/player/LocalPlayer;DDFFIF)V",
+            method = "renderPlayerOverlay(Lnet/minecraft/client/gui/GuiGraphics;Lnet/minecraft/client/player/LocalPlayer;FFFFIF)V",
             at = @At("HEAD"),
             cancellable = true,
             remap = false
     )
     private static void ysmCompat$suppressBattleOverlay(
-            GuiGraphics graphics, LocalPlayer player, double x, double y,
+            GuiGraphics graphics, LocalPlayer player, float x, float y,
             float scale, float yawOffset, int depth, float partialTick,
             CallbackInfo callback) {
         if (CombatOverlayPolicy.shouldSuppress(player)) {

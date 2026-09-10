@@ -1,8 +1,9 @@
 package net.okitsu.ysmepicfightcompat.render;
 
 import com.electronwill.nightconfig.core.file.CommentedFileConfig;
-import net.minecraftforge.common.ForgeConfigSpec;
+import net.neoforged.neoforge.common.ModConfigSpec;
 import net.okitsu.ysmepicfightcompat.config.ClientPreferences;
+import net.okitsu.ysmepicfightcompat.config.ConfigTestSupport;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -20,16 +21,16 @@ class CombatOverlayPolicyTest {
     void defaultsToSuppressedAndObservesLivePersistedConfigChanges(@TempDir Path directory)
             throws IOException {
         Path path = directory.resolve("ysm-epicfight-compat-client.toml");
-        try (CommentedFileConfig config = CommentedFileConfig.builder(path).sync().build()) {
+        try (CommentedFileConfig config = ConfigTestSupport.fileConfigBuilder(path).sync().build()) {
             config.load();
-            ClientPreferences.CLIENT_SPEC.setConfig(config);
+            ConfigTestSupport.bind(ClientPreferences.CLIENT_SPEC, config);
 
             assertTrue(CombatOverlayPolicy.shouldSuppress(true));
             assertFalse(CombatOverlayPolicy.shouldSuppress(false));
             assertEquals("config.ysm_epicfight_compat.client",
                     ClientPreferences.CLIENT_SPEC.getLevelTranslationKey(List.of("client")));
             assertEquals("config.ysm_epicfight_compat.suppress_battle_overlay",
-                    ((ForgeConfigSpec.ValueSpec) ClientPreferences.CLIENT_SPEC
+                    ((ModConfigSpec.ValueSpec) ClientPreferences.CLIENT_SPEC.getSpec()
                             .getRaw(List.of("client", "suppressBattleModeOverlay")))
                             .getTranslationKey());
 
@@ -45,7 +46,7 @@ class CombatOverlayPolicyTest {
             assertTrue(CombatOverlayPolicy.shouldSuppress(true));
             assertTrue(Files.readString(path).contains("suppressBattleModeOverlay = true"));
         } finally {
-            ClientPreferences.CLIENT_SPEC.setConfig(null);
+            ConfigTestSupport.clear(ClientPreferences.CLIENT_SPEC);
         }
     }
 }

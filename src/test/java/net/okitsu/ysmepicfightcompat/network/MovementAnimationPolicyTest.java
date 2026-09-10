@@ -2,6 +2,7 @@ package net.okitsu.ysmepicfightcompat.network;
 
 import com.electronwill.nightconfig.core.Config;
 import com.electronwill.nightconfig.toml.TomlWriter;
+import com.electronwill.nightconfig.toml.TomlParser;
 import net.okitsu.ysmepicfightcompat.animation.MovementAnimationType;
 import org.junit.jupiter.api.Test;
 
@@ -97,8 +98,10 @@ class MovementAnimationPolicyTest {
         StringWriter output = new StringWriter();
         new TomlWriter().write(root, output);
         String toml = output.toString();
+        Config restored = new TomlParser().parse(toml);
+        assertEquals(expected, MovementAnimationPolicy.decodeConfiguration(
+                restored.get(List.of("common", "animations", "exclusions", "movementAnimationExclusions"))));
 
-        assertTrue(toml.contains("[common.animations.exclusions.movementAnimationExclusions]"));
         assertTrue(toml.contains("\"wine_fox/21_saint\" = ["));
     }
 

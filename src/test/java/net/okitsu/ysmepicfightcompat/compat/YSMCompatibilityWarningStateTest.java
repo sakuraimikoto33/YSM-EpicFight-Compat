@@ -2,6 +2,7 @@ package net.okitsu.ysmepicfightcompat.compat;
 
 import com.electronwill.nightconfig.core.file.CommentedFileConfig;
 import net.okitsu.ysmepicfightcompat.config.ClientPreferences;
+import net.okitsu.ysmepicfightcompat.config.ConfigTestSupport;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -34,16 +35,16 @@ class YSMCompatibilityWarningStateTest {
     void acknowledgementSurvivesAClientConfigReload(@TempDir Path directory) {
         Path path = directory.resolve("ysm-epicfight-compat-client.toml");
         // Match Forge's synchronous writes so defaults cannot race with the acknowledgement save.
-        try (CommentedFileConfig config = CommentedFileConfig.builder(path).sync().build()) {
+        try (CommentedFileConfig config = ConfigTestSupport.fileConfigBuilder(path).sync().build()) {
             config.load();
-            ClientPreferences.CLIENT_SPEC.setConfig(config);
+            ConfigTestSupport.bind(ClientPreferences.CLIENT_SPEC, config);
             assertFalse(ClientPreferences.YSM_WARNING_ACKNOWLEDGED.get());
             ClientPreferences.YSM_WARNING_ACKNOWLEDGED.set(true);
             ClientPreferences.YSM_WARNING_ACKNOWLEDGED.save();
         } finally {
-            ClientPreferences.CLIENT_SPEC.setConfig(null);
+            ConfigTestSupport.clear(ClientPreferences.CLIENT_SPEC);
         }
-        try (CommentedFileConfig config = CommentedFileConfig.builder(path).sync().build()) {
+        try (CommentedFileConfig config = ConfigTestSupport.fileConfigBuilder(path).sync().build()) {
             config.load();
             assertEquals(Boolean.TRUE,
                     config.<Boolean>get(List.of("client", "epicFightCompatibilityWarningShown")));

@@ -1,12 +1,9 @@
 package net.okitsu.ysmepicfightcompat.animation;
 
-import com.mojang.brigadier.StringReader;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.particle.Particle;
 import net.minecraft.client.particle.ParticleEngine;
-import net.minecraft.commands.arguments.ParticleArgument;
 import net.minecraft.core.particles.ParticleOptions;
-import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.phys.Vec3;
@@ -167,6 +164,7 @@ final class ClientParticleOutput {
     }
 
     static void clear() {
+        PARTICLES.clear();
         SCOPES.values().forEach(scopes -> scopes.values().forEach(particles ->
                 particles.forEach(bound -> bound.particle().remove())));
         SCOPES.clear();
@@ -243,9 +241,14 @@ final class ClientParticleOutput {
                                double x, double y, double z,
                                double velocityX, double velocityY, double velocityZ,
                                int lifetime) {
+        ParticleOptions renderOptions = particle instanceof ParticleCommandParser.LegacyEntityEffect effect
+                ? effect.renderOptions() : particle;
         Particle created = engine.createParticle(
-                particle, x, y, z, velocityX, velocityY, velocityZ);
+                renderOptions, x, y, z, velocityX, velocityY, velocityZ);
         if (created != null) {
+            if (particle instanceof ParticleCommandParser.LegacyEntityEffect) {
+                created.setColor((float) velocityX, (float) velocityY, (float) velocityZ);
+            }
             created.setLifetime(lifetime);
         }
         return created;
@@ -275,6 +278,9 @@ final class ClientParticleOutput {
     }
 
     private static ParticleOptions particle(String source) {
+        if (source == null || source.length() > ParticleCommandParser.MAX_COMMAND_LENGTH) {
+            return null;
+        }
         Optional<ParticleOptions> cached;
         synchronized (PARTICLES) {
             cached = PARTICLES.get(source);
@@ -287,9 +293,10 @@ final class ClientParticleOutput {
     }
 
     private static Optional<ParticleOptions> parseParticle(String source) {
+        var level = Minecraft.getInstance().level;
+        if (level == null) return Optional.empty();
         try {
-            return Optional.of(ParticleArgument.readParticle(
-                    new StringReader(source), BuiltInRegistries.PARTICLE_TYPE.asLookup()));
+            return Optional.of(ParticleCommandParser.parse(source, level.registryAccess()));
         } catch (Exception ignored) {
             return Optional.empty();
         }

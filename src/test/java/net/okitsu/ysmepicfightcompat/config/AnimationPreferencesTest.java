@@ -2,7 +2,7 @@ package net.okitsu.ysmepicfightcompat.config;
 
 import com.electronwill.nightconfig.core.CommentedConfig;
 import com.electronwill.nightconfig.core.file.CommentedFileConfig;
-import net.minecraftforge.common.ForgeConfigSpec;
+import net.neoforged.neoforge.common.ModConfigSpec;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -24,8 +24,8 @@ class AnimationPreferencesTest {
     void defaultsToSixtyWithAnExplicitUnlimitedOptionAndStrictIntegerRange() {
         assertEquals(RATE_PATH, ClientPreferences.ANIMATION_EVALUATION_RATE_LIMIT_HZ.getPath());
         assertEquals(60, ClientPreferences.ANIMATION_EVALUATION_RATE_LIMIT_HZ.getDefault().intValue());
-        ForgeConfigSpec.ValueSpec rate = assertInstanceOf(ForgeConfigSpec.ValueSpec.class,
-                ClientPreferences.CLIENT_SPEC.getRaw(RATE_PATH));
+        ModConfigSpec.ValueSpec rate = assertInstanceOf(ModConfigSpec.ValueSpec.class,
+                ClientPreferences.CLIENT_SPEC.getSpec().getRaw(RATE_PATH));
         assertEquals("config.ysm_epicfight_compat.animation_evaluation_rate_limit_hz",
                 rate.getTranslationKey());
         assertTrue(rate.getComment().contains("zero to disable this added rate limit"));
@@ -60,9 +60,9 @@ class AnimationPreferencesTest {
     void persistsUnlimitedAndCustomRatesAndReadsLiveReloadsWithoutRestarting(@TempDir Path directory)
             throws IOException {
         Path path = directory.resolve("ysm-epicfight-compat-client.toml");
-        try (CommentedFileConfig config = CommentedFileConfig.builder(path).sync().build()) {
+        try (CommentedFileConfig config = ConfigTestSupport.fileConfigBuilder(path).sync().build()) {
             config.load();
-            ClientPreferences.CLIENT_SPEC.setConfig(config);
+            ConfigTestSupport.bind(ClientPreferences.CLIENT_SPEC, config);
             assertEquals(60, ClientPreferences.animationEvaluationRateLimitHz());
 
             for (int rate : List.of(0, 30, 120, 240, 60)) {
@@ -75,7 +75,7 @@ class AnimationPreferencesTest {
                 assertTrue(Files.readString(path).contains("animationEvaluationRateLimitHz = " + rate));
             }
         } finally {
-            ClientPreferences.CLIENT_SPEC.setConfig(null);
+            ConfigTestSupport.clear(ClientPreferences.CLIENT_SPEC);
         }
     }
 }

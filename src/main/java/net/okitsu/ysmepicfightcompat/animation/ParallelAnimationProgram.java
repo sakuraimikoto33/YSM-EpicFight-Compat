@@ -939,7 +939,7 @@ public final class ParallelAnimationProgram {
             return false;
         }
         RuntimeState runtime = stateFor(entity, renderingInInventory);
-        double sampledNow = (entity.tickCount + Minecraft.getInstance().getFrameTime()) / 20.0D;
+        double sampledNow = (entity.tickCount + Minecraft.getInstance().getTimer().getGameTimeDeltaPartialTick(false)) / 20.0D;
         double now = runtime == null ? sampledNow : Math.max(sampledNow, runtime.lastNow);
         if (runtime != null && runtime.itemSwitchState
                 .hasPoseOwnershipPotential(enabledHands, now)) {
@@ -5562,7 +5562,7 @@ public final class ParallelAnimationProgram {
                     scratch.visibilityScales.length);
             fullBodyCompositeSnapshot = new FullBodyCompositeSnapshot(
                     scratch.wholeModelPose.positions.length);
-            startedAt = (entity.tickCount + Minecraft.getInstance().getFrameTime()) / 20.0D;
+            startedAt = (entity.tickCount + Minecraft.getInstance().getTimer().getGameTimeDeltaPartialTick(false)) / 20.0D;
         }
 
         private void reset(double now) {

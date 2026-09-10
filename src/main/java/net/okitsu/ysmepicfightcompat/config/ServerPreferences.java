@@ -1,20 +1,20 @@
 package net.okitsu.ysmepicfightcompat.config;
 
-import net.minecraftforge.common.ForgeConfigSpec;
-import net.minecraftforge.fml.ModLoadingContext;
-import net.minecraftforge.fml.config.ModConfig;
+import net.neoforged.neoforge.common.ModConfigSpec;
+import net.neoforged.fml.ModContainer;
+import net.neoforged.fml.config.ModConfig;
 
 /** Global settings used by both dedicated and integrated servers. */
 public final class ServerPreferences {
     public static final String CONFIG_FILE =
             "ysm_epicfight_compat/ysm_epicfight_compat-common.toml";
-    public static final ForgeConfigSpec COMMON_SPEC;
-    public static final ForgeConfigSpec.BooleanValue SERVER_MODEL_DISK_CACHE_ENABLED;
-    public static final ForgeConfigSpec.ConfigValue<Integer>
+    public static final ModConfigSpec COMMON_SPEC;
+    public static final ModConfigSpec.BooleanValue SERVER_MODEL_DISK_CACHE_ENABLED;
+    public static final ModConfigSpec.ConfigValue<Integer>
             SERVER_MODEL_DISK_CACHE_MIB;
 
     static {
-        ForgeConfigSpec.Builder config = new ForgeConfigSpec.Builder();
+        ModConfigSpec.Builder config = new ModConfigSpec.Builder();
         config.comment("Server model transfer cache settings.")
                 .translation("config.ysm_epicfight_compat.server")
                 .push("server");
@@ -48,9 +48,8 @@ public final class ServerPreferences {
                 && integer >= minimum && integer <= maximum;
     }
 
-    @SuppressWarnings("removal")
-    public static void register() {
-        ModLoadingContext.get().registerConfig(ModConfig.Type.COMMON, COMMON_SPEC, CONFIG_FILE);
+    public static void register(ModContainer container) {
+        container.registerConfig(ModConfig.Type.COMMON, COMMON_SPEC, CONFIG_FILE);
     }
 
     public static boolean diskCacheEnabled() {

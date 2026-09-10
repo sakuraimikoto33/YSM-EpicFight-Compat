@@ -1,6 +1,6 @@
 package net.okitsu.ysmepicfightcompat.mixin;
 
-import net.minecraftforge.common.ForgeConfigSpec;
+import net.neoforged.neoforge.common.ModConfigSpec;
 import net.okitsu.ysmepicfightcompat.animation.ModAnimationType;
 import net.okitsu.ysmepicfightcompat.config.ClientPreferences;
 import net.okitsu.ysmepicfightcompat.integration.configured.ConfiguredOptionalSettings;
@@ -21,12 +21,12 @@ import java.util.Map;
 
 /** Adds dynamic rule editors and optional-setting visibility to the real Forge categories. */
 @Pseudo
-@Mixin(targets = "com.mrcrayfish.configured.impl.forge.ForgeFolderEntry",
+@Mixin(targets = "com.mrcrayfish.configured.impl.neoforge.NeoForgeFolderEntry",
         remap = false)
 public abstract class ConfiguredForgeFolderEntryMixin {
     @Shadow
     @Final
-    protected ForgeConfigSpec spec;
+    protected ModConfigSpec spec;
 
     @Shadow
     @Final

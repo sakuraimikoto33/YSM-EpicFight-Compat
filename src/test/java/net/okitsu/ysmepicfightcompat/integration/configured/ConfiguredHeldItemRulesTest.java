@@ -2,6 +2,8 @@ package net.okitsu.ysmepicfightcompat.integration.configured;
 
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
+import com.mrcrayfish.configured.api.ActionResult;
+import com.mrcrayfish.configured.api.IConfigValue;
 import net.okitsu.ysmepicfightcompat.animation.ModAnimationClips;
 import net.okitsu.ysmepicfightcompat.animation.ModAnimationType;
 import org.junit.jupiter.api.Test;
@@ -14,6 +16,7 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -22,6 +25,31 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class ConfiguredHeldItemRulesTest {
+    @Test
+    @SuppressWarnings({"rawtypes", "unchecked"})
+    void failedConfiguredSaveKeepsDynamicRuleEditsPending() throws ReflectiveOperationException {
+        Class<?> kindType = Class.forName(ConfiguredHeldItemRules.class.getName() + "$RuleKind");
+        Object kind = Enum.valueOf((Class) kindType, "PARCOOL");
+        Class<?> folderType = Class.forName(ConfiguredHeldItemRules.class.getName() + "$RulesFolder");
+        var constructor = folderType.getDeclaredConstructor(kindType, Map.class, String.class);
+        constructor.setAccessible(true);
+        Object folder = constructor.newInstance(kind,
+                Map.of("example/model", List.of("roll_front")), "example/model");
+        var valuesField = folderType.getDeclaredField("values");
+        valuesField.setAccessible(true);
+        IConfigValue<List<String>> value = (IConfigValue<List<String>>)
+                ((Map<?, ?>) valuesField.get(folder)).get("example/model");
+        value.set(List.of("hang"));
+
+        ConfiguredHeldItemRules.finishSave(folder, ActionResult.fail());
+
+        assertTrue(value.isChanged());
+        assertEquals(List.of("hang"), value.get());
+        ConfiguredHeldItemRules.finishSave(folder, ActionResult.success());
+        assertFalse(value.isChanged());
+        assertEquals(List.of("hang"), value.get());
+    }
+
     @Test
     void recognizesEveryDynamicClientRuleTable() {
         assertTrue(ConfiguredHeldItemRules.recognizesRuleEntry(

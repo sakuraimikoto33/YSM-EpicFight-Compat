@@ -4,14 +4,15 @@ import net.minecraft.client.Minecraft;
 import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.player.Player;
-import net.minecraftforge.api.distmarker.Dist;
-import net.minecraftforge.client.event.ClientPlayerNetworkEvent;
-import net.minecraftforge.event.CommandEvent;
-import net.minecraftforge.event.TagsUpdatedEvent;
-import net.minecraftforge.event.TickEvent;
-import net.minecraftforge.event.entity.EntityLeaveLevelEvent;
-import net.minecraftforge.eventbus.api.SubscribeEvent;
-import net.minecraftforge.fml.common.Mod;
+import net.neoforged.api.distmarker.Dist;
+import net.neoforged.neoforge.client.event.ClientPlayerNetworkEvent;
+import net.neoforged.neoforge.event.CommandEvent;
+import net.neoforged.neoforge.event.TagsUpdatedEvent;
+import net.neoforged.neoforge.client.event.ClientTickEvent;
+import net.neoforged.neoforge.client.event.RenderFrameEvent;
+import net.neoforged.neoforge.event.entity.EntityLeaveLevelEvent;
+import net.neoforged.bus.api.SubscribeEvent;
+import net.neoforged.fml.common.EventBusSubscriber;
 import net.okitsu.ysmepicfightcompat.CompatMod;
 import net.okitsu.ysmepicfightcompat.animation.ClientAttackSoundRouter;
 import net.okitsu.ysmepicfightcompat.animation.ClientShieldBlockState;
@@ -32,8 +33,8 @@ import net.okitsu.ysmepicfightcompat.network.geometry.ClientModelTransfers;
 import net.okitsu.ysmepicfightcompat.render.PlayerSelectionResolver;
 
 /** Clears session state and schedules conversion refreshes after official YSM reloads. */
-@Mod.EventBusSubscriber(modid = CompatMod.MOD_ID,
-        bus = Mod.EventBusSubscriber.Bus.FORGE, value = Dist.CLIENT)
+@EventBusSubscriber(modid = CompatMod.MOD_ID,
+        bus = EventBusSubscriber.Bus.GAME, value = Dist.CLIENT)
 public final class ClientMaintenanceEvents {
     private static final int RELOAD_DELAY = 40;
     private static final int FAILURE_RECHECK_INTERVAL = 100;
@@ -101,17 +102,12 @@ public final class ClientMaintenanceEvents {
     }
 
     @SubscribeEvent
-    public static void renderFrame(TickEvent.RenderTickEvent event) {
-        if (event.phase == TickEvent.Phase.START) {
-            CombatMeshCache.uploadReadyTextures();
-        }
+    public static void renderFrame(RenderFrameEvent.Pre event) {
+        CombatMeshCache.uploadReadyTextures();
     }
 
     @SubscribeEvent
-    public static void clientTick(TickEvent.ClientTickEvent event) {
-        if (event.phase != TickEvent.Phase.END) {
-            return;
-        }
+    public static void clientTick(ClientTickEvent.Post event) {
         TouhouMaidRenderBridge.endClientTick();
         CombatMeshCache.advanceAnimationOutputs();
         ClientAttackSoundRouter.tick();

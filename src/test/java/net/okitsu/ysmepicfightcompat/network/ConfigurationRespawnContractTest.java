@@ -25,7 +25,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-/** Locks the Forge event wiring without loading Minecraft's static registries. */
+/** Locks the NeoForge event wiring without loading Minecraft's static registries. */
 class ConfigurationRespawnContractTest {
     private static final String ROOT = "net/okitsu/ysmepicfightcompat/network/";
     private static final String CONFIGURATION = ROOT + "ConfigurationVariableBroadcaster";
@@ -35,20 +35,20 @@ class ConfigurationRespawnContractTest {
     private static final String NBT = ROOT + "PlayerSelectionNbt";
     private static final String NETWORK = ROOT + "CompatNetwork";
     private static final String MAP = "java/util/Map";
-    private static final String SUBSCRIBE = "Lnet/minecraftforge/eventbus/api/SubscribeEvent;";
+    private static final String SUBSCRIBE = "Lnet/neoforged/bus/api/SubscribeEvent;";
 
     @Test
-    void forgeEventsForwardTheirDeathFlagsToTheTransitionBoundary() throws IOException {
+    void neoForgeEventsForwardTheirDeathFlagsToTheTransitionBoundary() throws IOException {
         List<MethodCode> methods = read(SELECTION);
         MethodCode cloned = method(methods, "playerCloned");
         assertTrue(cloned.annotations.contains(SUBSCRIBE));
-        assertEquals(only(cloned.calls("net/minecraftforge/event/entity/player/PlayerEvent$Clone",
+        assertEquals(only(cloned.calls("net/neoforged/neoforge/event/entity/player/PlayerEvent$Clone",
                 "isWasDeath")) + 1, only(cloned.calls(CONFIGURATION, "cloned")),
                 "The death flag must be forwarded without negation or replacement");
         MethodCode respawned = method(methods, "playerRespawned");
         assertTrue(respawned.annotations.contains(SUBSCRIBE));
         assertEquals(only(respawned.calls(
-                "net/minecraftforge/event/entity/player/PlayerEvent$PlayerRespawnEvent",
+                "net/neoforged/neoforge/event/entity/player/PlayerEvent$PlayerRespawnEvent",
                 "isEndConquered")) + 1, only(respawned.calls(CONFIGURATION, "respawned")),
                 "The End-return flag must be forwarded without negation or replacement");
         for (MethodCode handler : List.of(cloned, respawned)) {
@@ -120,22 +120,16 @@ class ConfigurationRespawnContractTest {
     void readyRespawnsFlushEveryEndTickBeforeTheTwentyTickSelectionPoll() throws IOException {
         MethodCode tick = method(read(SELECTION), "serverTick");
         assertTrue(tick.annotations.contains(SUBSCRIBE));
-        int end = only(tick.fields("net/minecraftforge/event/TickEvent$Phase", "END"));
-        int server = only(tick.calls("net/minecraftforge/event/TickEvent$ServerTickEvent", "getServer"));
+        assertEquals("(Lnet/neoforged/neoforge/event/tick/ServerTickEvent$Post;)V",
+                tick.descriptor, "Only post ticks may enter the respawn flush path");
+        int server = only(tick.calls("net/neoforged/neoforge/event/tick/ServerTickEvent$Post", "getServer"));
         int flush = only(tick.calls(CONFIGURATION, "flushRespawns"));
         int tickCount = only(tick.calls("net/minecraft/server/MinecraftServer", "getTickCount"));
         int modulo = only(tick.opcodes(Opcodes.IREM));
         int synchronization = only(tick.calls(SELECTION, "synchronize"));
 
-        assertTrue(end < server && server < flush && flush < tickCount);
+        assertTrue(server < flush && flush < tickCount);
         assertTrue(tickCount < modulo && modulo < synchronization);
-        Step phaseGuard = tick.steps.get(end + 1);
-        assertEquals(Opcodes.IF_ACMPEQ, phaseGuard.opcode,
-                "Only END ticks may enter the flush path");
-        assertEquals(Opcodes.RETURN, tick.steps.get(end + 2).opcode,
-                "START ticks must return before reaching the respawn flush");
-        assertTrue(tick.labels.get(phaseGuard.target) > end + 2
-                && tick.labels.get(phaseGuard.target) < server);
         assertEquals(Opcodes.BIPUSH, tick.steps.get(tickCount + 1).opcode);
         assertEquals(20, tick.steps.get(tickCount + 1).operand);
         assertTrue(tick.steps.subList(flush + 1, tickCount).stream()
@@ -313,7 +307,7 @@ class ConfigurationRespawnContractTest {
                 @Override
                 public MethodVisitor visitMethod(int access, String name, String descriptor,
                                                  String signature, String[] exceptions) {
-                    MethodCode method = new MethodCode(name);
+                    MethodCode method = new MethodCode(name, descriptor);
                     methods.add(method);
                     return new MethodVisitor(Opcodes.ASM9) {
                         @Override
@@ -392,12 +386,14 @@ class ConfigurationRespawnContractTest {
 
     private static final class MethodCode {
         private final String name;
+        private final String descriptor;
         private final List<Step> steps = new ArrayList<>();
         private final Map<Label, Integer> labels = new IdentityHashMap<>();
         private final Set<String> annotations = new HashSet<>();
 
-        private MethodCode(String name) {
+        private MethodCode(String name, String descriptor) {
             this.name = name;
+            this.descriptor = descriptor;
         }
 
         private List<Integer> calls(String owner, String name) {

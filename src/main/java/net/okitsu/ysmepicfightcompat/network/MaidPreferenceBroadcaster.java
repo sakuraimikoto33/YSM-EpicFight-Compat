@@ -8,12 +8,12 @@ import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.item.ItemStack;
-import net.minecraftforge.event.TickEvent;
-import net.minecraftforge.event.entity.EntityLeaveLevelEvent;
-import net.minecraftforge.event.entity.player.PlayerEvent;
-import net.minecraftforge.event.server.ServerStoppedEvent;
-import net.minecraftforge.eventbus.api.SubscribeEvent;
-import net.minecraftforge.fml.common.Mod;
+import net.neoforged.neoforge.event.tick.ServerTickEvent;
+import net.neoforged.neoforge.event.entity.EntityLeaveLevelEvent;
+import net.neoforged.neoforge.event.entity.player.PlayerEvent;
+import net.neoforged.neoforge.event.server.ServerStoppedEvent;
+import net.neoforged.bus.api.SubscribeEvent;
+import net.neoforged.fml.common.EventBusSubscriber;
 import net.okitsu.ysmepicfightcompat.CompatMod;
 import net.okitsu.ysmepicfightcompat.animation.MovementAnimationType;
 import net.okitsu.ysmepicfightcompat.integration.tlm.TouhouMaidSelectionAccess;
@@ -33,7 +33,7 @@ import java.util.UUID;
 import java.util.concurrent.atomic.AtomicLong;
 
 /** Server state machine for owner-resolved settings on tracked TLM maids. */
-@Mod.EventBusSubscriber(modid = CompatMod.MOD_ID, bus = Mod.EventBusSubscriber.Bus.FORGE)
+@EventBusSubscriber(modid = CompatMod.MOD_ID, bus = EventBusSubscriber.Bus.GAME)
 public final class MaidPreferenceBroadcaster {
     static final int MAX_TRACKED_MAIDS = 2048;
     static final int MAX_OWNER_DECISIONS = 256;
@@ -258,10 +258,7 @@ public final class MaidPreferenceBroadcaster {
     }
 
     @SubscribeEvent
-    public static void serverTick(TickEvent.ServerTickEvent event) {
-        if (event.phase != TickEvent.Phase.END) {
-            return;
-        }
+    public static void serverTick(ServerTickEvent.Post event) {
         MinecraftServer server = event.getServer();
         long tick = server.getTickCount();
         for (Map.Entry<UUID, OwnerSession> owner : OWNERS.entrySet()) {

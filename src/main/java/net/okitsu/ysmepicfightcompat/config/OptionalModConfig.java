@@ -1,8 +1,8 @@
 package net.okitsu.ysmepicfightcompat.config;
 
 import com.electronwill.nightconfig.core.Config;
-import net.minecraftforge.common.ForgeConfigSpec;
-import net.minecraftforge.fml.ModList;
+import net.neoforged.neoforge.common.ModConfigSpec;
+import net.neoforged.fml.ModList;
 import net.okitsu.ysmepicfightcompat.animation.ModAnimationType;
 import net.okitsu.ysmepicfightcompat.network.ModAnimationPolicy;
 
@@ -21,8 +21,8 @@ final class OptionalModConfig {
         });
     }
 
-    static ForgeConfigSpec.ConfigValue<Boolean> defineBoolean(
-            ForgeConfigSpec.Builder builder, String key, boolean available,
+    static ModConfigSpec.ConfigValue<Boolean> defineBoolean(
+            ModConfigSpec.Builder builder, String key, boolean available,
             String... comments) {
         commentWhenAvailable(builder, available, comments);
         // Removing the spec would make Forge delete existing user preferences.
@@ -33,8 +33,8 @@ final class OptionalModConfig {
                 Boolean.class);
     }
 
-    static ForgeConfigSpec.ConfigValue<Config> defineExclusions(
-            ForgeConfigSpec.Builder builder, String key, ModAnimationType family,
+    static ModConfigSpec.ConfigValue<Config> defineExclusions(
+            ModConfigSpec.Builder builder, String key, ModAnimationType family,
             boolean available, String... comments) {
         commentWhenAvailable(builder, available, comments);
         return builder.define(key, Config::inMemory,
@@ -43,7 +43,7 @@ final class OptionalModConfig {
     }
 
     private static void commentWhenAvailable(
-            ForgeConfigSpec.Builder builder, boolean available, String[] comments) {
+            ModConfigSpec.Builder builder, boolean available, String[] comments) {
         // An orphaned comment on a missing key cannot survive TOML serialization
         // and would otherwise trigger another Forge correction on every load.
         if (available) {

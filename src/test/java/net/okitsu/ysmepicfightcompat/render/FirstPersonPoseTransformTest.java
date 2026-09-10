@@ -21,7 +21,7 @@ class FirstPersonPoseTransformTest {
         for (float eye : new float[]{0.4F, 1.62F, 2.25F}) {
             for (float pitch : new float[]{-60.0F, 0.0F, 35.0F}) {
                 for (float yaw : new float[]{-40.0F, 15.0F, 70.0F}) {
-                    assertMatrix(worldRoot(pitch, yaw - 15.0F, eye),
+                    assertMatrix(worldRoot(incoming, pitch, yaw - 15.0F, eye),
                             correctedRoot(incoming, pitch, yaw, 15.0F, eye));
                 }
             }
@@ -29,13 +29,28 @@ class FirstPersonPoseTransformTest {
     }
 
     @Test
-    void removesNoncommutingIncomingTranslationRotationAndScale() {
+    void preservesNoncommutingIncomingTranslationRotationAndScale() {
         Matrix4f incoming = incomingHandTransform();
 
-        assertMatrix(worldRoot(-27.0F, 48.0F, 1.54F),
+        assertMatrix(worldRoot(incoming, -27.0F, 48.0F, 1.54F),
                 correctedRoot(incoming, -27.0F, 73.0F, 25.0F, 1.54F));
-        assertMatrix(new Matrix4f().translation(0.0F, -1.54F, 0.0F),
+        assertMatrix(new Matrix4f(incoming).translate(0.0F, -1.54F, 0.0F),
                 correctedRoot(incoming, 0.0F, 25.0F, 25.0F, 1.54F));
+    }
+
+    @Test
+    void retainsCameraAnimationBeforeEitherRootTransform() {
+        Matrix4f incoming = incomingHandTransform();
+        Matrix4f cameraCorrection = new Matrix4f().translate(-0.07F, 0.04F, 0.12F)
+                .rotateY(-0.13F).rotateZ(0.08F);
+        Matrix4f sharedFraming = new Matrix4f(incoming).mul(cameraCorrection);
+        OpenMatrix4f correction = FirstPersonPoseTransform.forCameraRelativePose(
+                true, incoming, -27.0F, 73.0F, 25.0F, 1.54F);
+        assertNotNull(correction);
+
+        Matrix4f cameraRoot = new Matrix4f(sharedFraming).translate(0.0F, -1.54F, 0.0F);
+        assertMatrix(worldRoot(sharedFraming, -27.0F, 48.0F, 1.54F),
+                cameraRoot.mul(OpenMatrix4f.exportToMojangMatrix(correction)));
     }
 
     @Test
@@ -48,7 +63,8 @@ class FirstPersonPoseTransformTest {
                             .rotateY(radians(modelYaw - yaw)).rotateX(radians(-pitch));
                     for (Vector3f axis : List.of(new Vector3f(1, 0, 0),
                             new Vector3f(0, 1, 0), new Vector3f(0, 0, 1))) {
-                        assertVector(axis, composed.transformDirection(new Vector3f(axis)));
+                        assertVector(incoming.transformDirection(new Vector3f(axis)),
+                                composed.transformDirection(new Vector3f(axis)));
                     }
                 }
             }
@@ -58,9 +74,9 @@ class FirstPersonPoseTransformTest {
     @Test
     void wrapsYawAcrossTheSignedBoundaryAndFullTurns() {
         Matrix4f incoming = incomingHandTransform();
-        assertMatrix(worldRoot(10.0F, -2.0F, 1.62F),
+        assertMatrix(worldRoot(incoming, 10.0F, -2.0F, 1.62F),
                 correctedRoot(incoming, 10.0F, 179.0F, -179.0F, 1.62F));
-        assertMatrix(worldRoot(10.0F, 2.0F, 1.62F),
+        assertMatrix(worldRoot(incoming, 10.0F, 2.0F, 1.62F),
                 correctedRoot(incoming, 10.0F, -179.0F, 179.0F, 1.62F));
         assertMatrix(correctedRoot(incoming, 10.0F, 25.0F, 5.0F, 1.62F),
                 correctedRoot(incoming, 370.0F, 745.0F, -355.0F, 1.62F));
@@ -91,14 +107,21 @@ class FirstPersonPoseTransformTest {
         OpenMatrix4f second = FirstPersonPoseTransform.forCameraRelativePose(
                 true, incoming, 25.0F, 45.0F, 15.0F, 1.62F);
         assertNotNull(second);
+        OpenMatrix4f identityFraming = FirstPersonPoseTransform.forCameraRelativePose(
+                true, new Matrix4f(), 25.0F, 45.0F, 15.0F, 1.62F);
+        assertNotNull(identityFraming);
+        assertMatrix(expected, OpenMatrix4f.exportToMojangMatrix(identityFraming));
         incoming.identity();
         assertMatrix(expected, OpenMatrix4f.exportToMojangMatrix(second));
     }
 
     @Test
     void leavesOtherRootPoliciesAndInvalidInputsUnchanged() {
+        Matrix4f incoming = incomingHandTransform();
+        float[] before = incoming.get(new float[16]);
         assertNull(FirstPersonPoseTransform.forCameraRelativePose(
-                false, new Matrix4f(), 20, 30, 10, 1.62F));
+                false, incoming, 20, 30, 10, 1.62F));
+        assertArrayEquals(before, incoming.get(new float[16]), 0.0F);
         assertNull(FirstPersonPoseTransform.forCameraRelativePose(
                 true, null, 20, 30, 10, 1.62F));
         for (Matrix4f invalid : List.of(new Matrix4f().m00(Float.NaN),
@@ -136,12 +159,12 @@ class FirstPersonPoseTransformTest {
         OpenMatrix4f correction = FirstPersonPoseTransform.forCameraRelativePose(
                 true, incoming, pitch, yaw, modelYaw, eye);
         assertNotNull(correction);
-        return new Matrix4f().translate(0.0F, -eye, 0.0F).mul(incoming)
+        return new Matrix4f(incoming).translate(0.0F, -eye, 0.0F)
                 .mul(OpenMatrix4f.exportToMojangMatrix(correction));
     }
 
-    private static Matrix4f worldRoot(float pitch, float relativeYaw, float eye) {
-        return new Matrix4f().rotateX(radians(pitch)).rotateY(radians(relativeYaw))
+    private static Matrix4f worldRoot(Matrix4f incoming, float pitch, float relativeYaw, float eye) {
+        return new Matrix4f(incoming).rotateX(radians(pitch)).rotateY(radians(relativeYaw))
                 .translate(0.0F, -eye, 0.0F);
     }
 

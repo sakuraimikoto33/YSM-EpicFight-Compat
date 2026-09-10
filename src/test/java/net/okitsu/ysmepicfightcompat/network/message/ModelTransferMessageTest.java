@@ -255,12 +255,43 @@ class ModelTransferMessageTest {
                         42, sourceUuid, new byte[0]));
 
         FriendlyByteBuf buffer = new FriendlyByteBuf(Unpooled.buffer());
-        ModelRequestMessage.write(request, buffer);
-        ModelRequestMessage decoded = ModelRequestMessage.read(buffer);
+        ModelRequestMessage.STREAM_CODEC.encode(buffer, request);
+        ModelRequestMessage decoded = ModelRequestMessage.STREAM_CODEC.decode(buffer);
         assertEquals(request.modelId(), decoded.modelId());
         assertEquals(request.sourceEntityId(), decoded.sourceEntityId());
         assertEquals(request.sourceEntityUuid(), decoded.sourceEntityUuid());
         assertArrayEquals(request.knownPayloadDigest(), decoded.knownPayloadDigest());
+    }
+
+    @Test
+    void payloadCodecPreservesMaximumBoundedChunkAndStatusResponses() {
+        byte[] bytes = new byte[ModelChunkMessage.CHUNK_BYTES];
+        bytes[0] = 42;
+        bytes[bytes.length - 1] = 27;
+        byte[] digest = ModelDiskCache.sha256(bytes);
+        for (ModelChunkMessage message : new ModelChunkMessage[]{
+                new ModelChunkMessage(ModelChunkMessage.Status.DATA, UUID.randomUUID(),
+                        "server/model", digest, bytes.length, 0, 1, bytes),
+                ModelChunkMessage.unchanged("server/model", digest),
+                ModelChunkMessage.unavailable("server/model")}) {
+            FriendlyByteBuf buffer = new FriendlyByteBuf(Unpooled.buffer());
+            try {
+                ModelChunkMessage.STREAM_CODEC.encode(buffer, message);
+                ModelChunkMessage decoded = ModelChunkMessage.STREAM_CODEC.decode(buffer);
+                assertEquals(message.type(), decoded.type());
+                assertEquals(message.status(), decoded.status());
+                assertEquals(message.transferId(), decoded.transferId());
+                assertEquals(message.modelId(), decoded.modelId());
+                assertEquals(message.totalBytes(), decoded.totalBytes());
+                assertEquals(message.chunkIndex(), decoded.chunkIndex());
+                assertEquals(message.chunkCount(), decoded.chunkCount());
+                assertArrayEquals(message.payloadDigest(), decoded.payloadDigest());
+                assertArrayEquals(message.bytes(), decoded.bytes());
+                assertEquals(0, buffer.readableBytes());
+            } finally {
+                buffer.release();
+            }
+        }
     }
 
     @Test

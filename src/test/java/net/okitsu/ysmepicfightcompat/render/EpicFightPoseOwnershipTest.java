@@ -9,7 +9,7 @@ import yesman.epicfight.api.animation.types.EntityState;
 import yesman.epicfight.api.animation.types.GuardAnimation;
 import yesman.epicfight.api.animation.types.StaticAnimation;
 import yesman.epicfight.api.asset.AssetAccessor;
-import yesman.epicfight.api.utils.datastruct.TypeFlexibleHashMap;
+import yesman.epicfight.api.utils.datastructure.ParameterizedHashMap;
 
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -17,9 +17,9 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class EpicFightPoseOwnershipTest {
     @Test
     void nativeParkourLocksDoNotBecomeCombatOwnership() {
-        EntityState state = new EntityState(new TypeFlexibleHashMap<>(false));
-        state.setState(EntityState.INACTION, true);
-        state.setState(EntityState.MOVEMENT_LOCKED, true);
+        EntityState state = new EntityState(new ParameterizedHashMap<>());
+        state.getStateMap().put(EntityState.INACTION, true);
+        state.getStateMap().put(EntityState.MOVEMENT_LOCKED, true);
 
         assertFalse(EpicFightPoseOwnership.combatFlagsRequireEpicPose(
                 state, false, false, false));
@@ -34,12 +34,12 @@ class EpicFightPoseOwnershipTest {
     @Test
     void trueCombatFlagsWinEvenWhileNativeParkourLocksArePresent() {
         for (int active = 0; active < 6; active++) {
-            EntityState state = new EntityState(new TypeFlexibleHashMap<>(false));
-            state.setState(EntityState.INACTION, true);
-            state.setState(EntityState.MOVEMENT_LOCKED, true);
-            state.setState(EntityState.ATTACKING, active == 0);
-            state.setState(EntityState.HURT_LEVEL, active == 1 ? 1 : 0);
-            state.setState(EntityState.KNOCKDOWN, active == 2);
+            EntityState state = new EntityState(new ParameterizedHashMap<>());
+            state.getStateMap().put(EntityState.INACTION, true);
+            state.getStateMap().put(EntityState.MOVEMENT_LOCKED, true);
+            state.getStateMap().put(EntityState.ATTACKING, active == 0);
+            state.getStateMap().put(EntityState.HURT_LEVEL, active == 1 ? 1 : 0);
+            state.getStateMap().put(EntityState.KNOCKDOWN, active == 2);
             assertTrue(EpicFightPoseOwnership.combatFlagsRequireEpicPose(
                     state, active == 3, active == 4, active == 5));
         }

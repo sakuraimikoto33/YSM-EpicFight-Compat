@@ -1,14 +1,13 @@
 package net.okitsu.ysmepicfightcompat.network;
 
-import net.minecraft.resources.ResourceLocation;
+import net.minecraft.network.protocol.common.custom.CustomPacketPayload;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.player.Player;
-import net.minecraftforge.network.NetworkDirection;
-import net.minecraftforge.network.NetworkRegistry;
-import net.minecraftforge.network.PacketDistributor;
-import net.minecraftforge.network.simple.SimpleChannel;
-import net.okitsu.ysmepicfightcompat.CompatMod;
+import net.neoforged.neoforge.network.PacketDistributor;
+import net.neoforged.neoforge.network.event.RegisterPayloadHandlersEvent;
+import net.neoforged.neoforge.network.registration.HandlerThread;
+import net.neoforged.neoforge.network.registration.PayloadRegistrar;
 import net.okitsu.ysmepicfightcompat.network.message.AttackSwingSoundMessage;
 import net.okitsu.ysmepicfightcompat.network.message.ModelChunkMessage;
 import net.okitsu.ysmepicfightcompat.network.message.ModelRequestMessage;
@@ -34,188 +33,126 @@ import net.okitsu.ysmepicfightcompat.network.message.SubEntityPreferenceQueryMes
 import net.okitsu.ysmepicfightcompat.network.message.SubEntityPreferenceSnapshotMessage;
 import net.okitsu.ysmepicfightcompat.network.message.SubEntityPreferenceUpdateMessage;
 
-import java.util.Map;
-import java.util.Optional;
 import java.util.UUID;
 
-/** Forge channel for compatibility-owned state; official YSM's channel remains untouched. */
+/** NeoForge payloads for compatibility-owned state; official YSM's payloads remain untouched. */
 public final class CompatNetwork {
     public static final String PROTOCOL = "1";
-    public static final SimpleChannel CHANNEL = NetworkRegistry.newSimpleChannel(
-            ResourceLocation.fromNamespaceAndPath(CompatMod.MOD_ID, "bridge"),
-            () -> PROTOCOL, PROTOCOL::equals, PROTOCOL::equals);
 
     private CompatNetwork() {
     }
 
-    public static void registerMessages() {
-        int id = 0;
-        CHANNEL.registerMessage(id++, SelectionUpdateMessage.class,
-                SelectionUpdateMessage::write, SelectionUpdateMessage::read,
-                SelectionUpdateMessage::receive, Optional.of(NetworkDirection.PLAY_TO_CLIENT));
-        CHANNEL.registerMessage(id++, ModelRequestMessage.class,
-                ModelRequestMessage::write, ModelRequestMessage::read,
-                ModelRequestMessage::receive, Optional.of(NetworkDirection.PLAY_TO_SERVER));
-        CHANNEL.registerMessage(id++, ModelChunkMessage.class,
-                ModelChunkMessage::write, ModelChunkMessage::read,
-                ModelChunkMessage::receive, Optional.of(NetworkDirection.PLAY_TO_CLIENT));
-        CHANNEL.registerMessage(id++, ConfigurationVariableUpdateMessage.class,
-                ConfigurationVariableUpdateMessage::write,
-                ConfigurationVariableUpdateMessage::read,
-                ConfigurationVariableUpdateMessage::receive,
-                Optional.of(NetworkDirection.PLAY_TO_SERVER));
-        CHANNEL.registerMessage(id++, ConfigurationVariableSnapshotMessage.class,
-                ConfigurationVariableSnapshotMessage::write,
-                ConfigurationVariableSnapshotMessage::read,
-                ConfigurationVariableSnapshotMessage::receive,
-                Optional.of(NetworkDirection.PLAY_TO_CLIENT));
-        CHANNEL.registerMessage(id++, AttackSwingSoundMessage.class,
-                AttackSwingSoundMessage::write, AttackSwingSoundMessage::read,
-                AttackSwingSoundMessage::receive,
-                Optional.of(NetworkDirection.PLAY_TO_CLIENT));
-        CHANNEL.registerMessage(id++, HeldItemPreferenceUpdateMessage.class,
-                HeldItemPreferenceUpdateMessage::write,
-                HeldItemPreferenceUpdateMessage::read,
-                HeldItemPreferenceUpdateMessage::receive,
-                Optional.of(NetworkDirection.PLAY_TO_SERVER));
-        CHANNEL.registerMessage(id++, HeldItemPreferenceSnapshotMessage.class,
-                HeldItemPreferenceSnapshotMessage::write,
-                HeldItemPreferenceSnapshotMessage::read,
-                HeldItemPreferenceSnapshotMessage::receive,
-                Optional.of(NetworkDirection.PLAY_TO_CLIENT));
-        CHANNEL.registerMessage(id++, MovementAnimationPreferenceUpdateMessage.class,
-                MovementAnimationPreferenceUpdateMessage::write,
-                MovementAnimationPreferenceUpdateMessage::read,
-                MovementAnimationPreferenceUpdateMessage::receive,
-                Optional.of(NetworkDirection.PLAY_TO_SERVER));
-        CHANNEL.registerMessage(id++, MovementAnimationPreferenceSnapshotMessage.class,
-                MovementAnimationPreferenceSnapshotMessage::write,
-                MovementAnimationPreferenceSnapshotMessage::read,
-                MovementAnimationPreferenceSnapshotMessage::receive,
-                Optional.of(NetworkDirection.PLAY_TO_CLIENT));
-        CHANNEL.registerMessage(id++, OwnerPreferenceEpochMessage.class,
-                OwnerPreferenceEpochMessage::write,
-                OwnerPreferenceEpochMessage::read,
-                OwnerPreferenceEpochMessage::receive,
-                Optional.of(NetworkDirection.PLAY_TO_SERVER));
-        CHANNEL.registerMessage(id++, MaidPreferenceQueryMessage.class,
-                MaidPreferenceQueryMessage::write,
-                MaidPreferenceQueryMessage::read,
-                MaidPreferenceQueryMessage::receive,
-                Optional.of(NetworkDirection.PLAY_TO_CLIENT));
-        CHANNEL.registerMessage(id++, MaidPreferenceUpdateMessage.class,
-                MaidPreferenceUpdateMessage::write,
-                MaidPreferenceUpdateMessage::read,
-                MaidPreferenceUpdateMessage::receive,
-                Optional.of(NetworkDirection.PLAY_TO_SERVER));
-        CHANNEL.registerMessage(id++, MaidMovementPreferenceQueryMessage.class,
-                MaidMovementPreferenceQueryMessage::write,
-                MaidMovementPreferenceQueryMessage::read,
-                MaidMovementPreferenceQueryMessage::receive,
-                Optional.of(NetworkDirection.PLAY_TO_CLIENT));
-        CHANNEL.registerMessage(id++, MaidMovementPreferenceUpdateMessage.class,
-                MaidMovementPreferenceUpdateMessage::write,
-                MaidMovementPreferenceUpdateMessage::read,
-                MaidMovementPreferenceUpdateMessage::receive,
-                Optional.of(NetworkDirection.PLAY_TO_SERVER));
-        CHANNEL.registerMessage(id++, MaidPreferenceSnapshotMessage.class,
-                MaidPreferenceSnapshotMessage::write,
-                MaidPreferenceSnapshotMessage::read,
-                MaidPreferenceSnapshotMessage::receive,
-                Optional.of(NetworkDirection.PLAY_TO_CLIENT));
-        CHANNEL.registerMessage(id++, SubEntityPreferenceQueryMessage.class,
-                SubEntityPreferenceQueryMessage::write,
-                SubEntityPreferenceQueryMessage::read,
-                SubEntityPreferenceQueryMessage::receive,
-                Optional.of(NetworkDirection.PLAY_TO_CLIENT));
-        CHANNEL.registerMessage(id++, SubEntityPreferenceUpdateMessage.class,
-                SubEntityPreferenceUpdateMessage::write,
-                SubEntityPreferenceUpdateMessage::read,
-                SubEntityPreferenceUpdateMessage::receive,
-                Optional.of(NetworkDirection.PLAY_TO_SERVER));
-        CHANNEL.registerMessage(id++, SubEntityPreferenceSnapshotMessage.class,
-                SubEntityPreferenceSnapshotMessage::write,
-                SubEntityPreferenceSnapshotMessage::read,
-                SubEntityPreferenceSnapshotMessage::receive,
-                Optional.of(NetworkDirection.PLAY_TO_CLIENT));
-        CHANNEL.registerMessage(id++, ScriptSyncRequestMessage.class,
-                ScriptSyncRequestMessage::write, ScriptSyncRequestMessage::read,
-                ScriptSyncRequestMessage::receive,
-                Optional.of(NetworkDirection.PLAY_TO_SERVER));
-        CHANNEL.registerMessage(id++, ScriptSyncSnapshotMessage.class,
-                ScriptSyncSnapshotMessage::write, ScriptSyncSnapshotMessage::read,
-                ScriptSyncSnapshotMessage::receive,
-                Optional.of(NetworkDirection.PLAY_TO_CLIENT));
-        CHANNEL.registerMessage(id++, ShieldBlockMessage.class,
-                ShieldBlockMessage::write, ShieldBlockMessage::read,
-                ShieldBlockMessage::receive,
-                Optional.of(NetworkDirection.PLAY_TO_CLIENT));
-        CHANNEL.registerMessage(id++, ConfigurationVariableScopeRequestMessage.class,
-                ConfigurationVariableScopeRequestMessage::write,
-                ConfigurationVariableScopeRequestMessage::read,
-                ConfigurationVariableScopeRequestMessage::receive,
-                Optional.of(NetworkDirection.PLAY_TO_SERVER));
-        CHANNEL.registerMessage(id, ConfigurationVariableScopeReplyMessage.class,
-                ConfigurationVariableScopeReplyMessage::write,
-                ConfigurationVariableScopeReplyMessage::read,
-                ConfigurationVariableScopeReplyMessage::receive,
-                Optional.of(NetworkDirection.PLAY_TO_CLIENT));
+    public static void registerMessages(RegisterPayloadHandlersEvent event) {
+        PayloadRegistrar registrar = event.registrar(PROTOCOL)
+                .executesOn(HandlerThread.NETWORK);
+        registrar.playToClient(SelectionUpdateMessage.TYPE,
+                SelectionUpdateMessage.STREAM_CODEC, SelectionUpdateMessage::receive);
+        registrar.playToServer(ModelRequestMessage.TYPE,
+                ModelRequestMessage.STREAM_CODEC, ModelRequestMessage::receive);
+        registrar.playToClient(ModelChunkMessage.TYPE,
+                ModelChunkMessage.STREAM_CODEC, ModelChunkMessage::receive);
+        registrar.playToServer(ConfigurationVariableUpdateMessage.TYPE,
+                ConfigurationVariableUpdateMessage.STREAM_CODEC, ConfigurationVariableUpdateMessage::receive);
+        registrar.playToClient(ConfigurationVariableSnapshotMessage.TYPE,
+                ConfigurationVariableSnapshotMessage.STREAM_CODEC, ConfigurationVariableSnapshotMessage::receive);
+        registrar.playToClient(AttackSwingSoundMessage.TYPE,
+                AttackSwingSoundMessage.STREAM_CODEC, AttackSwingSoundMessage::receive);
+        registrar.playToServer(HeldItemPreferenceUpdateMessage.TYPE,
+                HeldItemPreferenceUpdateMessage.STREAM_CODEC, HeldItemPreferenceUpdateMessage::receive);
+        registrar.playToClient(HeldItemPreferenceSnapshotMessage.TYPE,
+                HeldItemPreferenceSnapshotMessage.STREAM_CODEC, HeldItemPreferenceSnapshotMessage::receive);
+        registrar.playToServer(MovementAnimationPreferenceUpdateMessage.TYPE,
+                MovementAnimationPreferenceUpdateMessage.STREAM_CODEC, MovementAnimationPreferenceUpdateMessage::receive);
+        registrar.playToClient(MovementAnimationPreferenceSnapshotMessage.TYPE,
+                MovementAnimationPreferenceSnapshotMessage.STREAM_CODEC, MovementAnimationPreferenceSnapshotMessage::receive);
+        registrar.playToServer(OwnerPreferenceEpochMessage.TYPE,
+                OwnerPreferenceEpochMessage.STREAM_CODEC, OwnerPreferenceEpochMessage::receive);
+        registrar.playToClient(MaidPreferenceQueryMessage.TYPE,
+                MaidPreferenceQueryMessage.STREAM_CODEC, MaidPreferenceQueryMessage::receive);
+        registrar.playToServer(MaidPreferenceUpdateMessage.TYPE,
+                MaidPreferenceUpdateMessage.STREAM_CODEC, MaidPreferenceUpdateMessage::receive);
+        registrar.playToClient(MaidMovementPreferenceQueryMessage.TYPE,
+                MaidMovementPreferenceQueryMessage.STREAM_CODEC, MaidMovementPreferenceQueryMessage::receive);
+        registrar.playToServer(MaidMovementPreferenceUpdateMessage.TYPE,
+                MaidMovementPreferenceUpdateMessage.STREAM_CODEC, MaidMovementPreferenceUpdateMessage::receive);
+        registrar.playToClient(MaidPreferenceSnapshotMessage.TYPE,
+                MaidPreferenceSnapshotMessage.STREAM_CODEC, MaidPreferenceSnapshotMessage::receive);
+        registrar.playToClient(SubEntityPreferenceQueryMessage.TYPE,
+                SubEntityPreferenceQueryMessage.STREAM_CODEC, SubEntityPreferenceQueryMessage::receive);
+        registrar.playToServer(SubEntityPreferenceUpdateMessage.TYPE,
+                SubEntityPreferenceUpdateMessage.STREAM_CODEC, SubEntityPreferenceUpdateMessage::receive);
+        registrar.playToClient(SubEntityPreferenceSnapshotMessage.TYPE,
+                SubEntityPreferenceSnapshotMessage.STREAM_CODEC, SubEntityPreferenceSnapshotMessage::receive);
+        registrar.playToServer(ScriptSyncRequestMessage.TYPE,
+                ScriptSyncRequestMessage.STREAM_CODEC, ScriptSyncRequestMessage::receive);
+        registrar.playToClient(ScriptSyncSnapshotMessage.TYPE,
+                ScriptSyncSnapshotMessage.STREAM_CODEC, ScriptSyncSnapshotMessage::receive);
+        registrar.playToClient(ShieldBlockMessage.TYPE,
+                ShieldBlockMessage.STREAM_CODEC, ShieldBlockMessage::receive);
+        registrar.playToServer(ConfigurationVariableScopeRequestMessage.TYPE,
+                ConfigurationVariableScopeRequestMessage.STREAM_CODEC, ConfigurationVariableScopeRequestMessage::receive);
+        registrar.playToClient(ConfigurationVariableScopeReplyMessage.TYPE,
+                ConfigurationVariableScopeReplyMessage.STREAM_CODEC, ConfigurationVariableScopeReplyMessage::receive);
     }
 
     public static boolean isConnected(ServerPlayer player) {
         return player != null && player.connection != null
-                && player.connection.connection != null
-                && player.connection.connection.isConnected();
+                && player.connection.getConnection() != null
+                && player.connection.getConnection().isConnected();
     }
 
-    public static void toPlayer(ServerPlayer player, Object message) {
+    public static void toPlayer(ServerPlayer player, CustomPacketPayload message) {
         if (isConnected(player)) {
-            CHANNEL.send(PacketDistributor.PLAYER.with(() -> player), message);
+            PacketDistributor.sendToPlayer(player, message);
         }
     }
 
-    public static void toTrackersAndSelf(Player player, Object message) {
-        CHANNEL.send(PacketDistributor.TRACKING_ENTITY_AND_SELF.with(() -> player), message);
+    public static void toTrackersAndSelf(Player player, CustomPacketPayload message) {
+        PacketDistributor.sendToPlayersTrackingEntityAndSelf(player, message);
     }
 
-    public static void toTrackers(Entity entity, Object message) {
-        CHANNEL.send(PacketDistributor.TRACKING_ENTITY.with(() -> entity), message);
+    public static void toTrackers(Entity entity, CustomPacketPayload message) {
+        PacketDistributor.sendToPlayersTrackingEntity(entity, message);
+    }
+
+    public static void toServer(CustomPacketPayload message) {
+        PacketDistributor.sendToServer(message);
     }
 
     public static void sendConfigurationUpdate(ConfigurationVariableUpdateMessage message) {
-        CHANNEL.sendToServer(message);
+        PacketDistributor.sendToServer(message);
     }
 
     public static void requestConfigurationScope(ConfigurationVariableScopeRequestMessage message) {
-        CHANNEL.sendToServer(message);
+        PacketDistributor.sendToServer(message);
     }
 
     public static void sendHeldItemPreferences(HeldItemModelDisplayState state) {
-        CHANNEL.sendToServer(new HeldItemPreferenceUpdateMessage(state));
+        PacketDistributor.sendToServer(new HeldItemPreferenceUpdateMessage(state));
     }
 
     public static void sendMovementAnimationPreferences(
             MovementAnimationDisplayState state) {
-        CHANNEL.sendToServer(new MovementAnimationPreferenceUpdateMessage(state));
+        PacketDistributor.sendToServer(new MovementAnimationPreferenceUpdateMessage(state));
     }
 
     public static void sendMaidPreferences(MaidPreferenceUpdateMessage message) {
-        CHANNEL.sendToServer(message);
+        PacketDistributor.sendToServer(message);
     }
 
     public static void sendMaidMovementPreferences(
             MaidMovementPreferenceUpdateMessage message) {
-        CHANNEL.sendToServer(message);
+        PacketDistributor.sendToServer(message);
     }
 
     public static void sendSubEntityPreferences(
             SubEntityPreferenceUpdateMessage message) {
-        CHANNEL.sendToServer(message);
+        PacketDistributor.sendToServer(message);
     }
 
     public static void sendOwnerPreferenceEpoch(
             UUID heldItemEpoch, UUID movementEpoch) {
-        CHANNEL.sendToServer(new OwnerPreferenceEpochMessage(
+        PacketDistributor.sendToServer(new OwnerPreferenceEpochMessage(
                 heldItemEpoch, movementEpoch));
     }
 }

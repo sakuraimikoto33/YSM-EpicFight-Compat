@@ -2,15 +2,15 @@ package net.okitsu.ysmepicfightcompat.network.message;
 
 import io.netty.buffer.Unpooled;
 import net.minecraft.network.FriendlyByteBuf;
+import net.minecraft.network.VarInt;
+import net.minecraft.network.codec.StreamCodec;
 import net.okitsu.ysmepicfightcompat.network.ConfigurationVariableValues;
 import org.junit.jupiter.api.Test;
 
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.UUID;
-import java.util.function.BiConsumer;
 import java.util.function.Consumer;
-import java.util.function.Function;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -42,22 +42,18 @@ class ConfigurationVariableMessagesTest {
                 () -> update.changes().put("v.eye", 3.0D));
         assertThrows(UnsupportedOperationException.class,
                 () -> snapshot.values().put("v.eye", 3.0D));
-        roundTrip(update, ConfigurationVariableUpdateMessage::write,
-                ConfigurationVariableUpdateMessage::read);
-        roundTrip(snapshot, ConfigurationVariableSnapshotMessage::write,
-                ConfigurationVariableSnapshotMessage::read);
+        roundTrip(update, ConfigurationVariableUpdateMessage.STREAM_CODEC);
+        roundTrip(snapshot, ConfigurationVariableSnapshotMessage.STREAM_CODEC);
     }
 
     @Test
     void scopeRequestsAndBothReplyKindsRoundTripWithoutVariableValues() {
         roundTrip(new ConfigurationVariableScopeRequestMessage(MODEL, CONTEXT, 128L),
-                ConfigurationVariableScopeRequestMessage::write,
-                ConfigurationVariableScopeRequestMessage::read);
+                ConfigurationVariableScopeRequestMessage.STREAM_CODEC);
         for (boolean granted : new boolean[]{true, false}) {
             roundTrip(new ConfigurationVariableScopeReplyMessage(
                             MODEL, CONTEXT, 128L, SCOPE, granted),
-                    ConfigurationVariableScopeReplyMessage::write,
-                    ConfigurationVariableScopeReplyMessage::read);
+                    ConfigurationVariableScopeReplyMessage.STREAM_CODEC);
         }
     }
 
@@ -66,39 +62,32 @@ class ConfigurationVariableMessagesTest {
         String longestModel = "あ".repeat(ConfigurationVariableScopeRequestMessage.MAX_MODEL_ID);
         roundTrip(new ConfigurationVariableUpdateMessage(
                         longestModel, CONTEXT, SCOPE, Long.MAX_VALUE, Long.MAX_VALUE, Map.of()),
-                ConfigurationVariableUpdateMessage::write,
-                ConfigurationVariableUpdateMessage::read);
+                ConfigurationVariableUpdateMessage.STREAM_CODEC);
         roundTrip(new ConfigurationVariableSnapshotMessage(
                         PLAYER, longestModel, SCOPE, CONTEXT, Long.MAX_VALUE, Long.MAX_VALUE, Map.of()),
-                ConfigurationVariableSnapshotMessage::write,
-                ConfigurationVariableSnapshotMessage::read);
+                ConfigurationVariableSnapshotMessage.STREAM_CODEC);
         roundTrip(new ConfigurationVariableScopeRequestMessage(longestModel, CONTEXT, Long.MAX_VALUE),
-                ConfigurationVariableScopeRequestMessage::write,
-                ConfigurationVariableScopeRequestMessage::read);
+                ConfigurationVariableScopeRequestMessage.STREAM_CODEC);
         roundTrip(new ConfigurationVariableScopeReplyMessage(
                         longestModel, CONTEXT, Long.MAX_VALUE, SCOPE, true),
-                ConfigurationVariableScopeReplyMessage::write,
-                ConfigurationVariableScopeReplyMessage::read);
+                ConfigurationVariableScopeReplyMessage.STREAM_CODEC);
     }
 
     @Test
     void unselectedSnapshotsCanCarryNoClientContextAndZeroAcknowledgements() {
         roundTrip(new ConfigurationVariableSnapshotMessage(
                         PLAYER, "", SCOPE, NO_CONTEXT, 0L, 0L, Map.of()),
-                ConfigurationVariableSnapshotMessage::write,
-                ConfigurationVariableSnapshotMessage::read);
+                ConfigurationVariableSnapshotMessage.STREAM_CODEC);
     }
 
     @Test
     void maximumVariableCountRoundTripsAndOneMoreIsRejectedBeforeWriting() {
         Map<String, Double> maximum = variables(ConfigurationVariableValues.MAX_VARIABLES);
         roundTrip(new ConfigurationVariableUpdateMessage(MODEL, CONTEXT, SCOPE, 1L, 1L, maximum),
-                ConfigurationVariableUpdateMessage::write,
-                ConfigurationVariableUpdateMessage::read);
+                ConfigurationVariableUpdateMessage.STREAM_CODEC);
         roundTrip(new ConfigurationVariableSnapshotMessage(
                         PLAYER, MODEL, SCOPE, CONTEXT, 1L, 1L, maximum),
-                ConfigurationVariableSnapshotMessage::write,
-                ConfigurationVariableSnapshotMessage::read);
+                ConfigurationVariableSnapshotMessage.STREAM_CODEC);
 
         Map<String, Double> oversized = variables(ConfigurationVariableValues.MAX_VARIABLES + 1);
         assertThrows(IllegalArgumentException.class,
@@ -147,7 +136,7 @@ class ConfigurationVariableMessagesTest {
                     ConfigurationVariableValues.write(buffer, variables(count));
                     assertThrows(IllegalArgumentException.class, () -> readValuesMessage(snapshot, buffer));
                     // Reject the format itself; never start treating old entries as new identity fields.
-                    assertEquals(countPosition + FriendlyByteBuf.getVarIntSize(count), buffer.readerIndex());
+                    assertEquals(countPosition + VarInt.getByteSize(count), buffer.readerIndex());
                 } finally {
                     buffer.release();
                 }
@@ -239,12 +228,10 @@ class ConfigurationVariableMessagesTest {
     void valueNamesAtTheWireLengthBoundaryRoundTrip() {
         Map<String, Double> values = Map.of("v." + "x".repeat(254), 0.0D);
         roundTrip(new ConfigurationVariableUpdateMessage(MODEL, CONTEXT, SCOPE, 1L, 1L, values),
-                ConfigurationVariableUpdateMessage::write,
-                ConfigurationVariableUpdateMessage::read);
+                ConfigurationVariableUpdateMessage.STREAM_CODEC);
         roundTrip(new ConfigurationVariableSnapshotMessage(
                         PLAYER, MODEL, SCOPE, CONTEXT, 1L, 1L, values),
-                ConfigurationVariableSnapshotMessage::write,
-                ConfigurationVariableSnapshotMessage::read);
+                ConfigurationVariableSnapshotMessage.STREAM_CODEC);
     }
 
     @Test
@@ -360,43 +347,37 @@ class ConfigurationVariableMessagesTest {
     void everyTruncatedPrefixOfEveryMessageIsRejected() {
         assertAllTruncationsRejected(new ConfigurationVariableUpdateMessage(
                         MODEL, CONTEXT, SCOPE, 128L, 129L, Map.of("v.eye", 0.0D)),
-                ConfigurationVariableUpdateMessage::write,
-                ConfigurationVariableUpdateMessage::read);
+                ConfigurationVariableUpdateMessage.STREAM_CODEC);
         assertAllTruncationsRejected(new ConfigurationVariableSnapshotMessage(
                         PLAYER, MODEL, SCOPE, CONTEXT, 128L, 129L, Map.of("v.eye", 0.0D)),
-                ConfigurationVariableSnapshotMessage::write,
-                ConfigurationVariableSnapshotMessage::read);
+                ConfigurationVariableSnapshotMessage.STREAM_CODEC);
         assertAllTruncationsRejected(new ConfigurationVariableScopeRequestMessage(MODEL, CONTEXT, 128L),
-                ConfigurationVariableScopeRequestMessage::write,
-                ConfigurationVariableScopeRequestMessage::read);
+                ConfigurationVariableScopeRequestMessage.STREAM_CODEC);
         assertAllTruncationsRejected(new ConfigurationVariableScopeReplyMessage(
                         MODEL, CONTEXT, 128L, SCOPE, false),
-                ConfigurationVariableScopeReplyMessage::write,
-                ConfigurationVariableScopeReplyMessage::read);
+                ConfigurationVariableScopeReplyMessage.STREAM_CODEC);
     }
 
-    private static <T> void roundTrip(T expected, BiConsumer<T, FriendlyByteBuf> writer,
-                                      Function<FriendlyByteBuf, T> reader) {
+    private static <T> void roundTrip(T expected, StreamCodec<FriendlyByteBuf, T> codec) {
         FriendlyByteBuf buffer = buffer();
         try {
-            writer.accept(expected, buffer);
-            assertEquals(expected, reader.apply(buffer));
+            codec.encode(buffer, expected);
+            assertEquals(expected, codec.decode(buffer));
             assertEquals(0, buffer.readableBytes());
         } finally {
             buffer.release();
         }
     }
 
-    private static <T> void assertAllTruncationsRejected(T message, BiConsumer<T, FriendlyByteBuf> writer,
-                                                         Function<FriendlyByteBuf, T> reader) {
+    private static <T> void assertAllTruncationsRejected(T message, StreamCodec<FriendlyByteBuf, T> codec) {
         FriendlyByteBuf full = buffer();
         try {
-            writer.accept(message, full);
+            codec.encode(full, message);
             for (int length = 0; length < full.writerIndex(); length++) {
                 FriendlyByteBuf truncated = buffer();
                 try {
                     truncated.writeBytes(full, 0, length);
-                    assertThrows(RuntimeException.class, () -> reader.apply(truncated),
+                    assertThrows(RuntimeException.class, () -> codec.decode(truncated),
                             "Accepted truncated message with " + length + " bytes");
                 } finally {
                     truncated.release();

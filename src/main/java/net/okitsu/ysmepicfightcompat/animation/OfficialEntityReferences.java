@@ -29,7 +29,7 @@ final class OfficialEntityReferences {
         return new WeakEntityReference<>(owner,
                 target -> available(target, world),
                 target -> new EntityReferenceEnvironment(EntityAnimationEnvironment.referenceView(
-                        target, Minecraft.getInstance().getFrameTime())));
+                        target, Minecraft.getInstance().getTimer().getGameTimeDeltaPartialTick(false))));
     }
 
     private static boolean available(Player target, WeakReference<ClientLevel> world) {

@@ -1,10 +1,12 @@
 package net.okitsu.ysmepicfightcompat.integration.configured;
 
+import net.okitsu.ysmepicfightcompat.config.ConfigTestSupport;
+
 import com.electronwill.nightconfig.core.CommentedConfig;
 import com.electronwill.nightconfig.core.Config;
 import com.electronwill.nightconfig.core.UnmodifiableConfig;
-import com.mrcrayfish.configured.impl.forge.ForgeConfig;
-import net.minecraftforge.common.ForgeConfigSpec;
+import com.mrcrayfish.configured.impl.neoforge.NeoForgeConfig;
+import net.neoforged.neoforge.common.ModConfigSpec;
 import org.junit.jupiter.api.Test;
 
 import java.lang.reflect.Constructor;
@@ -143,7 +145,7 @@ class ConfiguredOptionalSettingsTest {
     }
 
     private static Fixture fixture() {
-        ForgeConfigSpec.Builder builder = new ForgeConfigSpec.Builder();
+        ModConfigSpec.Builder builder = new ModConfigSpec.Builder();
         builder.push("common").push("animations");
         builder.define("useYsmParCoolAnimations", true);
         builder.define("useYsmSwemAnimations", true);
@@ -171,10 +173,10 @@ class ConfiguredOptionalSettingsTest {
         builder.pop(2);
         builder.push("other").define("useYsmSwemAnimations", true);
         builder.pop();
-        ForgeConfigSpec spec = builder.build();
+        ModConfigSpec spec = builder.build();
         CommentedConfig data = CommentedConfig.inMemory();
         spec.correct(data);
-        spec.acceptConfig(data);
+        ConfigTestSupport.bind(spec, data);
         return new Fixture(spec, data);
     }
 
@@ -184,19 +186,19 @@ class ConfiguredOptionalSettingsTest {
         return config;
     }
 
-    private record Fixture(ForgeConfigSpec spec, CommentedConfig data) {
+    private record Fixture(ModConfigSpec spec, CommentedConfig data) {
     }
 
     /** Read Configured's actual protected record type; no Minecraft client is constructed. */
-    private abstract static class ForgeValues extends ForgeConfig {
-        private ForgeValues(ForgeConfigSpec spec) {
-            super(null, spec);
+    private abstract static class ForgeValues extends NeoForgeConfig {
+        private ForgeValues() {
+            super(null);
         }
 
-        private static List<?> entries(ForgeConfigSpec spec) {
+        private static List<?> entries(ModConfigSpec spec) {
             try {
                 Constructor<ForgeValueEntry> constructor = ForgeValueEntry.class.getDeclaredConstructor(
-                        ForgeConfigSpec.ConfigValue.class, ForgeConfigSpec.ValueSpec.class);
+                        ModConfigSpec.ConfigValue.class, ModConfigSpec.ValueSpec.class);
                 constructor.setAccessible(true);
                 List<ForgeValueEntry> entries = new ArrayList<>();
                 collectEntries(spec.getValues(), spec, constructor, entries);
@@ -207,13 +209,13 @@ class ConfiguredOptionalSettingsTest {
         }
 
         /** Avoid ForgeConfigHelper, whose static reflection requires a running ModLauncher. */
-        private static void collectEntries(UnmodifiableConfig values, ForgeConfigSpec spec,
+        private static void collectEntries(UnmodifiableConfig values, ModConfigSpec spec,
                                            Constructor<ForgeValueEntry> constructor,
                                            List<ForgeValueEntry> entries)
                 throws ReflectiveOperationException {
             for (Object candidate : values.valueMap().values()) {
-                if (candidate instanceof ForgeConfigSpec.ConfigValue<?> value) {
-                    entries.add(constructor.newInstance(value, spec.getRaw(value.getPath())));
+                if (candidate instanceof ModConfigSpec.ConfigValue<?> value) {
+                    entries.add(constructor.newInstance(value, spec.getSpec().getRaw(value.getPath())));
                 } else if (candidate instanceof UnmodifiableConfig nested) {
                     collectEntries(nested, spec, constructor, entries);
                 }
@@ -224,7 +226,7 @@ class ConfiguredOptionalSettingsTest {
             return ((ForgeValueEntry) entry).value().getPath();
         }
 
-        /** Mirrors ForgeConfig.restoreDefaults's copy/patch/putAll/cache-clear sequence. */
+        /** Mirrors NeoForgeConfig.restoreDefaults's copy/patch/putAll/cache-clear sequence. */
         private static void restoreDefaults(CommentedConfig data, List<?> entries) {
             CommentedConfig copy = CommentedConfig.copy(data);
             for (Object entry : entries) {
@@ -237,7 +239,7 @@ class ConfiguredOptionalSettingsTest {
             }
         }
 
-        /** Mirrors ForgeConfig.isChanged against the same filtered Forge-value list. */
+        /** Mirrors NeoForgeConfig.isChanged against the same filtered Forge-value list. */
         private static boolean isChanged(List<?> entries) {
             return entries.stream().map(ForgeValueEntry.class::cast).anyMatch(entry ->
                     !Objects.equals(entry.value().get(), entry.spec().getDefault()));

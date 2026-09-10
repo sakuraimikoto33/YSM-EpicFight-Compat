@@ -1,9 +1,11 @@
 package net.okitsu.ysmepicfightcompat.integration.configured;
 
+import net.okitsu.ysmepicfightcompat.config.ConfigTestSupport;
+
 import com.electronwill.nightconfig.core.CommentedConfig;
 import com.google.gson.JsonParser;
-import com.mrcrayfish.configured.impl.forge.ForgeValue;
-import net.minecraftforge.common.ForgeConfigSpec;
+import com.mrcrayfish.configured.impl.neoforge.NeoForgeValue;
+import net.neoforged.neoforge.common.ModConfigSpec;
 import net.okitsu.ysmepicfightcompat.config.ClientPreferences;
 import org.junit.jupiter.api.Test;
 import org.objectweb.asm.AnnotationVisitor;
@@ -120,7 +122,7 @@ class ConfiguredAnimationRateSliderTest {
 
     @Test
     void holderValidationIsRespectedBeforeNotifyingTheScreen() {
-        ForgeValue<Integer> holder = foreignValue(true);
+        NeoForgeValue<Integer> holder = foreignValue(true);
         AtomicInteger changes = new AtomicInteger();
         ConfiguredAnimationRateSlider.applySliderValue(holder, 1, changes::incrementAndGet);
         assertEquals(60, holder.get().intValue());
@@ -181,6 +183,46 @@ class ConfiguredAnimationRateSliderTest {
     }
 
     @Test
+    void configMixinsMatchNeoForgesInstanceCollectionAndResultBearingUpdate() throws IOException {
+        String configMixin = "net/okitsu/ysmepicfightcompat/mixin/ConfiguredForgeConfigMixin";
+        String rules = "net/okitsu/ysmepicfightcompat/integration/configured/ConfiguredHeldItemRules";
+        Shape dependency = read(CONFIGURED + "impl/neoforge/NeoForgeConfig");
+        Shape mixin = read(configMixin);
+        assertEquals(List.of("com.mrcrayfish.configured.impl.neoforge.NeoForgeConfig"),
+                mixin.annotations.get("Lorg/spongepowered/asm/mixin/Mixin;").get("targets"));
+        Method collection = dependency.method("getAllConfigValues");
+        Method filter = mixin.method("ysmEpicFightCompat$preserveUnavailableSettings");
+        assertFalse((collection.access & Opcodes.ACC_STATIC) != 0);
+        assertFalse((filter.access & Opcodes.ACC_STATIC) != 0);
+        assertEquals(List.of(collection.name + collection.descriptor),
+                filter.annotations.get("Lorg/spongepowered/asm/mixin/injection/Inject;").get("method"));
+        assertEquals("(Lnet/neoforged/fml/config/ModConfig;"
+                        + "Lorg/spongepowered/asm/mixin/injection/callback/CallbackInfoReturnable;)V",
+                filter.descriptor);
+        Method update = dependency.method("update");
+        assertEquals("(L" + CONFIGURED + "api/IConfigEntry;)L" + CONFIGURED + "api/ActionResult;",
+                update.descriptor);
+        for (String action : List.of("prepareSave", "finishSave")) {
+            Method handler = mixin.methods.stream().filter(method -> method.hasCall(rules, action))
+                    .findFirst().orElseThrow();
+            assertEquals("(Ljava/lang/Object;Lorg/spongepowered/asm/mixin/injection/callback/CallbackInfoReturnable;)V",
+                    handler.descriptor);
+            assertEquals(List.of("update"),
+                    handler.annotations.get("Lorg/spongepowered/asm/mixin/injection/Inject;").get("method"));
+        }
+        Method finish = mixin.method("ysmEpicFightCompat$finishHeldItemRuleSave");
+        assertTrue(finish.hasCall("org/spongepowered/asm/mixin/injection/callback/CallbackInfoReturnable",
+                "getReturnValue"));
+        Shape folder = read("net/okitsu/ysmepicfightcompat/mixin/ConfiguredForgeFolderEntryMixin");
+        assertEquals(List.of("com.mrcrayfish.configured.impl.neoforge.NeoForgeFolderEntry"),
+                folder.annotations.get("Lorg/spongepowered/asm/mixin/Mixin;").get("targets"));
+        Method children = read(CONFIGURED + "impl/neoforge/NeoForgeFolderEntry").method("getChildren");
+        assertEquals(List.of(children.name + children.descriptor),
+                folder.method("ysmEpicFightCompat$embedDynamicRules").annotations
+                        .get("Lorg/spongepowered/asm/mixin/injection/Inject;").get("method"));
+    }
+
+    @Test
     void resetAndValueChangesRetainConfiguredsOriginalHolderAndSaveFlow() throws IOException {
         Shape row = read(SLIDER + "$RateItem");
         assertEquals(CONFIGURED + "client/screen/ConfigScreen$ConfigItem", row.parent);
@@ -192,31 +234,31 @@ class ConfiguredAnimationRateSliderTest {
                 < apply.call(CONFIGURED + "api/IConfigValue", "set"));
         assertTrue(apply.call(CONFIGURED + "api/IConfigValue", "set")
                 < apply.call("java/lang/Runnable", "run"));
-        assertFalse(apply.hasCall("net/minecraftforge/common/ForgeConfigSpec$ConfigValue", "set"));
+        assertFalse(apply.hasCall("net/neoforged/neoforge/common/ModConfigSpec$ConfigValue", "set"));
     }
 
-    private static ForgeValue<Integer> foreignValue(boolean onlySixty) {
-        ForgeConfigSpec.Builder builder = new ForgeConfigSpec.Builder();
+    private static NeoForgeValue<Integer> foreignValue(boolean onlySixty) {
+        ModConfigSpec.Builder builder = new ModConfigSpec.Builder();
         builder.push("client");
-        ForgeConfigSpec.ConfigValue<Integer> value = builder.define("animationEvaluationRateLimitHz", 60,
+        ModConfigSpec.ConfigValue<Integer> value = builder.define("animationEvaluationRateLimitHz", 60,
                 candidate -> candidate instanceof Integer rate && (!onlySixty || rate == 60));
         builder.pop();
-        ForgeConfigSpec spec = builder.build();
-        spec.setConfig(CommentedConfig.inMemory());
-        return new ForgeValue<>(value, spec.getRaw(RATE_PATH));
+        ModConfigSpec spec = builder.build();
+        ConfigTestSupport.bind(spec, CommentedConfig.inMemory());
+        return new NeoForgeValue<>(value, spec.getSpec().getRaw(RATE_PATH));
     }
 
     private static final class RateFixture implements AutoCloseable {
         private final CommentedConfig data = CommentedConfig.inMemory();
-        private final ForgeValue<Integer> holder;
+        private final NeoForgeValue<Integer> holder;
 
         private RateFixture() {
-            ClientPreferences.CLIENT_SPEC.setConfig(data);
-            holder = new ForgeValue<>(ClientPreferences.ANIMATION_EVALUATION_RATE_LIMIT_HZ,
-                    ClientPreferences.CLIENT_SPEC.getRaw(RATE_PATH));
+            ConfigTestSupport.bind(ClientPreferences.CLIENT_SPEC, data);
+            holder = new NeoForgeValue<>(ClientPreferences.ANIMATION_EVALUATION_RATE_LIMIT_HZ,
+                    ClientPreferences.CLIENT_SPEC.getSpec().getRaw(RATE_PATH));
         }
 
-        @Override public void close() { ClientPreferences.CLIENT_SPEC.setConfig(null); }
+        @Override public void close() { ConfigTestSupport.clear(ClientPreferences.CLIENT_SPEC); }
     }
 
     private static Shape read(String owner) throws IOException {

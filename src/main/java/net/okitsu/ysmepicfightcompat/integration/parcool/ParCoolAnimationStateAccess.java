@@ -18,18 +18,18 @@ import java.util.WeakHashMap;
 /**
  * Optional, read-only view of ParCool's native client animator, including remote players.
  *
- * <p>The public capability getters and removal predicate are preferred. ParCool has no
+ * <p>The public attachment getters and removal predicate are preferred. ParCool has no
  * public animator getter or directional getters; the few named members below are from
- * its open-source 1.20.1 implementation, not official-YSM internals:
- * https://github.com/alRex-U/ParCool/tree/1.20.1/src/main/java/com/alrex/parcool
- * No animator methods that update the pose, tick, capability, or event options are called.
+ * its public 1.21.1 NeoForge implementation, not official-YSM internals:
+ * https://github.com/alRex-U/ParCool
+ * No animator methods that update the pose, tick, attachment, or event options are called.
  */
 public final class ParCoolAnimationStateAccess {
     public record Snapshot(String clipName, double elapsedSeconds, long generation) {
     }
 
-    private static final String ANIMATION = "com.alrex.parcool.common.capability.Animation";
-    private static final String PARKOUR = "com.alrex.parcool.common.capability.Parkourability";
+    private static final String ANIMATION = "com.alrex.parcool.common.attachment.client.Animation";
+    private static final String PARKOUR = "com.alrex.parcool.common.attachment.common.Parkourability";
     private static final String ANIMATOR = "com.alrex.parcool.client.animation.Animator";
     private static final String ACTION_PACKAGE = "com.alrex.parcool.common.action.impl.";
     private static final Map<Object, Generation> GENERATIONS = new WeakHashMap<>();
@@ -155,7 +155,7 @@ public final class ParCoolAnimationStateAccess {
             this.actionGet = actionGet;
         }
 
-        /** Also used by fixtures whose public capability shapes match the optional API. */
+        /** Also used by fixtures whose public attachment shapes match the optional API. */
         static RuntimeAccess discover(Class<?> animation, Class<?> parkour,
                                       Class<?> animator, Class<?> player)
                 throws ReflectiveOperationException {
@@ -166,7 +166,7 @@ public final class ParCoolAnimationStateAccess {
                     || getAnimation.getReturnType() != animation
                     || !Modifier.isStatic(getParkour.getModifiers())
                     || getParkour.getReturnType() != parkour) {
-                throw new NoSuchMethodException("ParCool capability getter shape");
+                throw new NoSuchMethodException("ParCool attachment getter shape");
             }
             Method tick = animator.getDeclaredMethod("getTick");
             if (tick.getReturnType() != int.class || Modifier.isStatic(tick.getModifiers())

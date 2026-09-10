@@ -2,18 +2,32 @@ package net.okitsu.ysmepicfightcompat.network.message;
 
 import net.minecraft.network.FriendlyByteBuf;
 import net.minecraft.server.level.ServerPlayer;
-import net.minecraftforge.network.NetworkEvent;
+import net.minecraft.network.codec.StreamCodec;
+import net.minecraft.network.protocol.PacketFlow;
+import net.minecraft.network.protocol.common.custom.CustomPacketPayload;
+import net.minecraft.resources.ResourceLocation;
+import net.neoforged.neoforge.network.handling.IPayloadContext;
+import net.okitsu.ysmepicfightcompat.CompatMod;
 import net.okitsu.ysmepicfightcompat.animation.ModAnimationType;
 import net.okitsu.ysmepicfightcompat.animation.MovementAnimationType;
 import net.okitsu.ysmepicfightcompat.network.MovementAnimationDisplayState;
 import net.okitsu.ysmepicfightcompat.network.MovementAnimationPolicy;
 import net.okitsu.ysmepicfightcompat.network.MovementAnimationPreferenceBroadcaster;
 
-import java.util.function.Supplier;
 
 /** Client-to-server update containing only the sender's current resolved movement state. */
 public record MovementAnimationPreferenceUpdateMessage(
-        MovementAnimationDisplayState state) {
+        MovementAnimationDisplayState state) implements CustomPacketPayload {
+    public static final Type<MovementAnimationPreferenceUpdateMessage> TYPE = new Type<>(
+            ResourceLocation.fromNamespaceAndPath(CompatMod.MOD_ID, "movement_animation_preference_update"));
+    public static final StreamCodec<FriendlyByteBuf, MovementAnimationPreferenceUpdateMessage> STREAM_CODEC =
+            StreamCodec.of((output, message) -> write(message, output), MovementAnimationPreferenceUpdateMessage::read);
+
+    @Override
+    public Type<MovementAnimationPreferenceUpdateMessage> type() {
+        return TYPE;
+    }
+
     public MovementAnimationPreferenceUpdateMessage {
         if (state == null) {
             throw new IllegalArgumentException("Missing movement-animation state");
@@ -30,14 +44,12 @@ public record MovementAnimationPreferenceUpdateMessage(
     }
 
     public static void receive(MovementAnimationPreferenceUpdateMessage message,
-                               Supplier<NetworkEvent.Context> suppliedContext) {
-        NetworkEvent.Context context = suppliedContext.get();
-        ServerPlayer sender = context.getSender();
-        if (sender != null) {
+                               IPayloadContext context) {
+        if (context.flow() == PacketFlow.SERVERBOUND
+                && context.player() instanceof ServerPlayer sender) {
             context.enqueueWork(() -> MovementAnimationPreferenceBroadcaster.accept(
                     sender, message.state()));
         }
-        context.setPacketHandled(true);
     }
 
     static void writeState(MovementAnimationDisplayState state, FriendlyByteBuf output) {

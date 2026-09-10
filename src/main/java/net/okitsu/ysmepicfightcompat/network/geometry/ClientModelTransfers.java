@@ -260,7 +260,7 @@ public final class ClientModelTransfers {
         if (source == null || !SESSION.isCurrent(ticket)) {
             return;
         }
-        CompatNetwork.CHANNEL.sendToServer(new ModelRequestMessage(
+        CompatNetwork.toServer(new ModelRequestMessage(
                 modelId, source.entityId(), source.entityUuid(), knownPayloadDigest));
     }
 

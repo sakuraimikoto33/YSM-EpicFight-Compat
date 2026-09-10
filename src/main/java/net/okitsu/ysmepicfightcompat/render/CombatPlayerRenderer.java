@@ -21,8 +21,8 @@ import net.minecraft.world.entity.player.PlayerModelPart;
 import net.minecraft.util.Mth;
 import net.minecraft.world.level.block.HorizontalDirectionalBlock;
 import net.minecraft.world.level.block.state.BlockState;
-import net.minecraftforge.api.distmarker.Dist;
-import net.minecraftforge.api.distmarker.OnlyIn;
+import net.neoforged.api.distmarker.Dist;
+import net.neoforged.api.distmarker.OnlyIn;
 import net.okitsu.ysmepicfightcompat.animation.MovementAnimationType;
 import net.okitsu.ysmepicfightcompat.mesh.CombatMeshCache;
 import net.okitsu.ysmepicfightcompat.mesh.CompatHumanoidMesh;
@@ -69,7 +69,7 @@ public final class CombatPlayerRenderer extends PHumanoidRenderer<
             AbstractClientPlayerPatch<AbstractClientPlayer> patch) {
         AssetAccessor<HumanoidMesh> converted = CombatMeshResolver.forPlayer(patch.getOriginal());
         AssetAccessor<HumanoidMesh> selected = selectMeshProvider(
-                converted, patch.getOriginal().getModelName());
+                converted, patch.getOriginal().getSkin().model().id());
         HumanoidMesh mesh = selected.get();
         if (mesh instanceof CompatHumanoidMesh compat) {
             RenderFrameContext.bindMesh(patch.getOriginal(), false, compat);

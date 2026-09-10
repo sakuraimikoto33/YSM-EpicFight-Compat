@@ -1,5 +1,7 @@
 package net.okitsu.ysmepicfightcompat.integration.configured;
 
+import net.okitsu.ysmepicfightcompat.config.ConfigTestSupport;
+
 import com.electronwill.nightconfig.core.CommentedConfig;
 import com.electronwill.nightconfig.core.Config;
 import com.electronwill.nightconfig.core.UnmodifiableConfig;
@@ -7,9 +9,9 @@ import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import com.mrcrayfish.configured.api.IConfigEntry;
 import com.mrcrayfish.configured.api.IConfigValue;
-import com.mrcrayfish.configured.impl.forge.ForgeFolderEntry;
+import com.mrcrayfish.configured.impl.neoforge.NeoForgeFolderEntry;
 import net.minecraft.network.chat.Component;
-import net.minecraftforge.common.ForgeConfigSpec;
+import net.neoforged.neoforge.common.ModConfigSpec;
 import net.okitsu.ysmepicfightcompat.config.ClientPreferences;
 import org.junit.jupiter.api.Test;
 
@@ -40,29 +42,29 @@ class ConfiguredClientTreeTest {
 
     @Test
     void configuredUsesTheActualForgeCategoriesAndTheirLocalizedMetadata() throws IOException {
-        ForgeConfigSpec spec = ClientPreferences.CLIENT_SPEC;
+        ModConfigSpec spec = ClientPreferences.CLIENT_SPEC;
         // Root and common contain only categories; do not load the client root's scalar values.
-        IConfigEntry root = new ForgeFolderEntry(spec.getValues(), spec);
+        IConfigEntry root = new NeoForgeFolderEntry(spec.getValues(), spec);
         assertEquals(Set.of("client", "common"),
                 Set.copyOf(root.getChildren().stream().map(IConfigEntry::getEntryName).toList()));
-        assertInstanceOf(ForgeFolderEntry.class, child(root, "client"));
+        assertInstanceOf(NeoForgeFolderEntry.class, child(root, "client"));
         UnmodifiableConfig clientValues = spec.getValues().getRaw(List.of("client"));
         assertEquals(Set.of("cache", "suppressBattleModeOverlay", "animationEvaluationRateLimitHz",
                         "epicFightCompatibilityWarningShown"),
                 clientValues.valueMap().keySet());
-        assertInstanceOf(ForgeConfigSpec.ConfigValue.class, clientValues.getRaw("suppressBattleModeOverlay"));
+        assertInstanceOf(ModConfigSpec.ConfigValue.class, clientValues.getRaw("suppressBattleModeOverlay"));
         assertSame(ClientPreferences.ANIMATION_EVALUATION_RATE_LIMIT_HZ,
                 clientValues.getRaw("animationEvaluationRateLimitHz"));
-        assertInstanceOf(ForgeConfigSpec.ConfigValue.class, clientValues.getRaw("epicFightCompatibilityWarningShown"));
-        ForgeConfigSpec.ValueSpec animationRate = assertInstanceOf(ForgeConfigSpec.ValueSpec.class,
-                spec.getRaw(List.of("client", "animationEvaluationRateLimitHz")));
+        assertInstanceOf(ModConfigSpec.ConfigValue.class, clientValues.getRaw("epicFightCompatibilityWarningShown"));
+        ModConfigSpec.ValueSpec animationRate = assertInstanceOf(ModConfigSpec.ValueSpec.class,
+                spec.getSpec().getRaw(List.of("client", "animationEvaluationRateLimitHz")));
         assertEquals("config.ysm_epicfight_compat.animation_evaluation_rate_limit_hz",
                 animationRate.getTranslationKey());
         List<IConfigEntry> categories = child(root, "common").getChildren();
         assertEquals(Set.of("models", "animations"),
                 Set.copyOf(categories.stream().map(IConfigEntry::getEntryName).toList()));
         for (IConfigEntry category : categories) {
-            assertInstanceOf(ForgeFolderEntry.class, category);
+            assertInstanceOf(NeoForgeFolderEntry.class, category);
             assertEquals("config.ysm_epicfight_compat.common." + category.getEntryName(),
                     category.getTranslationKey());
         }
@@ -101,7 +103,7 @@ class ConfiguredClientTreeTest {
         Fixture fixture = fixture();
         for (List<String> parent : List.of(ANIMATION_RULES, MODEL_RULES)) {
             IConfigEntry category = entry(fixture.root(), parent);
-            assertInstanceOf(ForgeFolderEntry.class, category);
+            assertInstanceOf(NeoForgeFolderEntry.class, category);
             List<IConfigEntry> placeholders = category.getChildren();
             assertEquals(Set.copyOf(parent.equals(ANIMATION_RULES) ? ANIMATION_KEYS : MODEL_KEYS),
                     Set.copyOf(placeholders.stream().map(ConfiguredClientTreeTest::name).toList()));
@@ -215,7 +217,7 @@ class ConfiguredClientTreeTest {
     }
 
     private static Fixture fixture() {
-        ForgeConfigSpec.Builder builder = new ForgeConfigSpec.Builder();
+        ModConfigSpec.Builder builder = new ModConfigSpec.Builder();
         builder.push("common").push("models").push("exclusions");
         MODEL_KEYS.forEach(key -> builder.define(key, Config::inMemory,
                 value -> value instanceof UnmodifiableConfig));
@@ -228,11 +230,11 @@ class ConfiguredClientTreeTest {
         ANIMATION_KEYS.forEach(key -> builder.define(key, Config::inMemory,
                 value -> value instanceof UnmodifiableConfig));
         builder.pop(3);
-        ForgeConfigSpec spec = builder.build();
+        ModConfigSpec spec = builder.build();
         CommentedConfig data = CommentedConfig.inMemory();
         spec.correct(data);
-        spec.acceptConfig(data);
-        return new Fixture(new ForgeFolderEntry(spec.getValues(), spec), data);
+        ConfigTestSupport.bind(spec, data);
+        return new Fixture(new NeoForgeFolderEntry(spec.getValues(), spec), data);
     }
 
     private static IConfigEntry entry(IConfigEntry root, List<String> path) {

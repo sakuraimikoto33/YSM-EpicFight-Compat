@@ -1,14 +1,28 @@
 package net.okitsu.ysmepicfightcompat.network.message;
 
 import net.minecraft.network.FriendlyByteBuf;
-import net.minecraftforge.network.NetworkEvent;
+import net.minecraft.network.codec.StreamCodec;
+import net.minecraft.network.protocol.PacketFlow;
+import net.minecraft.network.protocol.common.custom.CustomPacketPayload;
+import net.minecraft.resources.ResourceLocation;
+import net.neoforged.neoforge.network.handling.IPayloadContext;
+import net.okitsu.ysmepicfightcompat.CompatMod;
 import net.okitsu.ysmepicfightcompat.animation.ClientShieldBlockState;
 
 import java.util.UUID;
-import java.util.function.Supplier;
 
 /** A server-observed successful shield block for one exact entity identity. */
-public record ShieldBlockMessage(int entityId, UUID entityUuid) {
+public record ShieldBlockMessage(int entityId, UUID entityUuid) implements CustomPacketPayload {
+    public static final Type<ShieldBlockMessage> TYPE = new Type<>(
+            ResourceLocation.fromNamespaceAndPath(CompatMod.MOD_ID, "shield_block"));
+    public static final StreamCodec<FriendlyByteBuf, ShieldBlockMessage> STREAM_CODEC =
+            StreamCodec.of((output, message) -> write(message, output), ShieldBlockMessage::read);
+
+    @Override
+    public Type<ShieldBlockMessage> type() {
+        return TYPE;
+    }
+
     public ShieldBlockMessage {
         if (entityId < 0 || entityUuid == null) {
             throw new IllegalArgumentException("Invalid shield block identity");
@@ -29,11 +43,9 @@ public record ShieldBlockMessage(int entityId, UUID entityUuid) {
     }
 
     public static void receive(ShieldBlockMessage message,
-            Supplier<NetworkEvent.Context> suppliedContext) {
-        NetworkEvent.Context context = suppliedContext.get();
-        if (context.getDirection().getReceptionSide().isClient()) {
+            IPayloadContext context) {
+        if (context.flow() == PacketFlow.CLIENTBOUND) {
             context.enqueueWork(() -> ClientShieldBlockState.receive(message));
         }
-        context.setPacketHandled(true);
     }
 }

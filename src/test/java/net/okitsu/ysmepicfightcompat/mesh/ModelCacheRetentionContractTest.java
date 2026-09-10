@@ -32,7 +32,7 @@ class ModelCacheRetentionContractTest {
         assertTrue(observe >= 0 && observe < query && query < maintain);
         assertEquals(1, tick.calls.stream().filter(call -> call.equals(
                 CACHE + "#maintainModelCache")).count());
-        assertTrue(tick.fields.contains("net/minecraftforge/event/TickEvent$Phase#END"));
+        assertEquals("(Lnet/neoforged/neoforge/client/event/ClientTickEvent$Post;)V", tick.descriptor);
     }
 
     @Test
@@ -141,7 +141,7 @@ class ModelCacheRetentionContractTest {
                 @Override
                 public MethodVisitor visitMethod(int access, String name, String descriptor,
                                                  String signature, String[] exceptions) {
-                    Code code = new Code(name);
+                    Code code = new Code(name, descriptor);
                     methods.add(code);
                     return new MethodVisitor(Opcodes.ASM9) {
                         @Override
@@ -178,13 +178,15 @@ class ModelCacheRetentionContractTest {
 
     private static final class Code {
         private final String name;
+        private final String descriptor;
         private final List<String> calls = new ArrayList<>();
         private final List<String> fields = new ArrayList<>();
         private final List<String> lambdas = new ArrayList<>();
         private final List<Integer> opcodes = new ArrayList<>();
 
-        private Code(String name) {
+        private Code(String name, String descriptor) {
             this.name = name;
+            this.descriptor = descriptor;
         }
     }
 }

@@ -2,11 +2,11 @@ package net.okitsu.ysmepicfightcompat.network;
 
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerPlayer;
-import net.minecraftforge.event.TickEvent;
-import net.minecraftforge.event.entity.player.PlayerEvent;
-import net.minecraftforge.event.server.ServerStoppedEvent;
-import net.minecraftforge.eventbus.api.SubscribeEvent;
-import net.minecraftforge.fml.common.Mod;
+import net.neoforged.neoforge.event.tick.ServerTickEvent;
+import net.neoforged.neoforge.event.entity.player.PlayerEvent;
+import net.neoforged.neoforge.event.server.ServerStoppedEvent;
+import net.neoforged.bus.api.SubscribeEvent;
+import net.neoforged.fml.common.EventBusSubscriber;
 import net.okitsu.ysmepicfightcompat.CompatMod;
 import net.okitsu.ysmepicfightcompat.network.geometry.ServerModelTransfers;
 import net.okitsu.ysmepicfightcompat.network.message.SelectionUpdateMessage;
@@ -16,7 +16,7 @@ import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 
 /** Mirrors official YSM selections to compatibility clients that render Epic Fight meshes. */
-@Mod.EventBusSubscriber(modid = CompatMod.MOD_ID, bus = Mod.EventBusSubscriber.Bus.FORGE)
+@EventBusSubscriber(modid = CompatMod.MOD_ID, bus = EventBusSubscriber.Bus.GAME)
 public final class SelectionBroadcaster {
     private static final int POLL_INTERVAL = 20;
     private static final Map<UUID, Snapshot> LAST_SENT = new ConcurrentHashMap<>();
@@ -94,10 +94,7 @@ public final class SelectionBroadcaster {
     }
 
     @SubscribeEvent
-    public static void serverTick(TickEvent.ServerTickEvent event) {
-        if (event.phase != TickEvent.Phase.END) {
-            return;
-        }
+    public static void serverTick(ServerTickEvent.Post event) {
         MinecraftServer server = event.getServer();
         if (server == null) {
             return;

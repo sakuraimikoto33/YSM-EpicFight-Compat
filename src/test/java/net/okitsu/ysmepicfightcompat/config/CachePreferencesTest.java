@@ -4,7 +4,7 @@ import com.electronwill.nightconfig.core.Config;
 import com.electronwill.nightconfig.core.CommentedConfig;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
-import net.minecraftforge.common.ForgeConfigSpec;
+import net.neoforged.neoforge.common.ModConfigSpec;
 import net.okitsu.ysmepicfightcompat.animation.ModAnimationType;
 import org.junit.jupiter.api.Test;
 
@@ -27,13 +27,13 @@ class CachePreferencesTest {
         List<String> path = List.of("client", "cache", "clientModelMemoryCacheTargetCount");
         assertEquals(path, ClientPreferences.CLIENT_MODEL_MEMORY_CACHE_TARGET_COUNT.getPath());
         assertEquals(64, ClientPreferences.CLIENT_MODEL_MEMORY_CACHE_TARGET_COUNT.getDefault().intValue());
-        ForgeConfigSpec.ValueSpec value =
-                (ForgeConfigSpec.ValueSpec) ClientPreferences.CLIENT_SPEC.getRaw(path);
+        ModConfigSpec.ValueSpec value =
+                (ModConfigSpec.ValueSpec) ClientPreferences.CLIENT_SPEC.getSpec().getRaw(path);
         assertEquals("config.ysm_epicfight_compat.client_model_memory_cache_target_count",
                 value.getTranslationKey());
         assertTrue(value.getComment().startsWith("Target number"));
         assertTrue(value.getComment().contains("may exceed this target"));
-        assertNull(ClientPreferences.CLIENT_SPEC.getRaw(List.of("client", "clientModelMemoryCacheSize")));
+        assertNull(ClientPreferences.CLIENT_SPEC.getSpec().getRaw(List.of("client", "clientModelMemoryCacheSize")));
     }
 
     @Test
@@ -71,57 +71,57 @@ class CachePreferencesTest {
     void exposesNamedIndependentCacheLimits() {
         assertEquals("ysm_epicfight_compat/ysm_epicfight_compat-client.toml",
                 ClientPreferences.CONFIG_FILE);
-        assertTrue(ClientPreferences.CLIENT_SPEC.getRaw(List.of(
-                "client", "cache", "clientModelMemoryCacheTargetCount")) instanceof ForgeConfigSpec.ValueSpec);
-        assertTrue(ClientPreferences.CLIENT_SPEC.getRaw(List.of(
-                "client", "cache", "clientModelDiskCacheMiB")) instanceof ForgeConfigSpec.ValueSpec);
-        assertTrue(ClientPreferences.CLIENT_SPEC.getRaw(List.of(
-                "client", "cache", "remoteModelDiskCacheMiB")) instanceof ForgeConfigSpec.ValueSpec);
-        assertTrue(ClientPreferences.CLIENT_SPEC.getRaw(List.of(
+        assertTrue(ClientPreferences.CLIENT_SPEC.getSpec().getRaw(List.of(
+                "client", "cache", "clientModelMemoryCacheTargetCount")) instanceof ModConfigSpec.ValueSpec);
+        assertTrue(ClientPreferences.CLIENT_SPEC.getSpec().getRaw(List.of(
+                "client", "cache", "clientModelDiskCacheMiB")) instanceof ModConfigSpec.ValueSpec);
+        assertTrue(ClientPreferences.CLIENT_SPEC.getSpec().getRaw(List.of(
+                "client", "cache", "remoteModelDiskCacheMiB")) instanceof ModConfigSpec.ValueSpec);
+        assertTrue(ClientPreferences.CLIENT_SPEC.getSpec().getRaw(List.of(
                 "common", "models", "useYsmHeldItemModels"))
-                instanceof ForgeConfigSpec.ValueSpec);
-        assertTrue(ClientPreferences.CLIENT_SPEC.getRaw(List.of(
+                instanceof ModConfigSpec.ValueSpec);
+        assertTrue(ClientPreferences.CLIENT_SPEC.getSpec().getRaw(List.of(
                 "common", "models", "exclusions", "heldItemModelExclusions"))
-                instanceof ForgeConfigSpec.ValueSpec);
-        assertTrue(ClientPreferences.CLIENT_SPEC.getRaw(List.of(
+                instanceof ModConfigSpec.ValueSpec);
+        assertTrue(ClientPreferences.CLIENT_SPEC.getSpec().getRaw(List.of(
                 "common", "models", "useYsmProjectileModels"))
-                instanceof ForgeConfigSpec.ValueSpec);
-        assertTrue(ClientPreferences.CLIENT_SPEC.getRaw(List.of(
+                instanceof ModConfigSpec.ValueSpec);
+        assertTrue(ClientPreferences.CLIENT_SPEC.getSpec().getRaw(List.of(
                 "common", "models", "exclusions", "projectileModelExclusions"))
-                instanceof ForgeConfigSpec.ValueSpec);
-        assertTrue(ClientPreferences.CLIENT_SPEC.getRaw(List.of(
+                instanceof ModConfigSpec.ValueSpec);
+        assertTrue(ClientPreferences.CLIENT_SPEC.getSpec().getRaw(List.of(
                 "common", "models", "useYsmVehicleModels"))
-                instanceof ForgeConfigSpec.ValueSpec);
-        assertTrue(ClientPreferences.CLIENT_SPEC.getRaw(List.of(
+                instanceof ModConfigSpec.ValueSpec);
+        assertTrue(ClientPreferences.CLIENT_SPEC.getSpec().getRaw(List.of(
                 "common", "models", "exclusions", "vehicleModelExclusions"))
-                instanceof ForgeConfigSpec.ValueSpec);
-        assertTrue(ClientPreferences.CLIENT_SPEC.getRaw(List.of(
+                instanceof ModConfigSpec.ValueSpec);
+        assertTrue(ClientPreferences.CLIENT_SPEC.getSpec().getRaw(List.of(
                 "common", "animations", "useYsmHeldItemSwitchAnimations"))
-                instanceof ForgeConfigSpec.ValueSpec);
-        assertTrue(ClientPreferences.CLIENT_SPEC.getRaw(List.of(
+                instanceof ModConfigSpec.ValueSpec);
+        assertTrue(ClientPreferences.CLIENT_SPEC.getSpec().getRaw(List.of(
                 "common", "animations", "exclusions", "heldItemSwitchAnimationExclusions"))
-                instanceof ForgeConfigSpec.ValueSpec);
-        assertTrue(ClientPreferences.CLIENT_SPEC.getRaw(List.of(
+                instanceof ModConfigSpec.ValueSpec);
+        assertTrue(ClientPreferences.CLIENT_SPEC.getSpec().getRaw(List.of(
                 "common", "animations", "useYsmMovementAnimations"))
-                instanceof ForgeConfigSpec.ValueSpec);
-        assertTrue(ClientPreferences.CLIENT_SPEC.getRaw(List.of(
+                instanceof ModConfigSpec.ValueSpec);
+        assertTrue(ClientPreferences.CLIENT_SPEC.getSpec().getRaw(List.of(
                 "common", "animations", "useNaturalLadderAnimations"))
-                instanceof ForgeConfigSpec.ValueSpec);
-        assertTrue(ClientPreferences.CLIENT_SPEC.getRaw(List.of(
+                instanceof ModConfigSpec.ValueSpec);
+        assertTrue(ClientPreferences.CLIENT_SPEC.getSpec().getRaw(List.of(
                 "common", "animations", "exclusions", "movementAnimationExclusions"))
-                instanceof ForgeConfigSpec.ValueSpec);
-        assertTrue(ClientPreferences.CLIENT_SPEC.getRaw(List.of(
+                instanceof ModConfigSpec.ValueSpec);
+        assertTrue(ClientPreferences.CLIENT_SPEC.getSpec().getRaw(List.of(
                 "common", "animations", "useYsmParCoolAnimations"))
-                instanceof ForgeConfigSpec.ValueSpec);
-        assertTrue(ClientPreferences.CLIENT_SPEC.getRaw(List.of(
+                instanceof ModConfigSpec.ValueSpec);
+        assertTrue(ClientPreferences.CLIENT_SPEC.getSpec().getRaw(List.of(
                 "common", "animations", "useYsmSwemAnimations"))
-                instanceof ForgeConfigSpec.ValueSpec);
-        assertTrue(ClientPreferences.CLIENT_SPEC.getRaw(List.of(
+                instanceof ModConfigSpec.ValueSpec);
+        assertTrue(ClientPreferences.CLIENT_SPEC.getSpec().getRaw(List.of(
                 "common", "animations", "exclusions", "parcoolAnimationExclusions"))
-                instanceof ForgeConfigSpec.ValueSpec);
-        assertTrue(ClientPreferences.CLIENT_SPEC.getRaw(List.of(
+                instanceof ModConfigSpec.ValueSpec);
+        assertTrue(ClientPreferences.CLIENT_SPEC.getSpec().getRaw(List.of(
                 "common", "animations", "exclusions", "swemAnimationExclusions"))
-                instanceof ForgeConfigSpec.ValueSpec);
+                instanceof ModConfigSpec.ValueSpec);
         assertTrue(ClientPreferences.USE_YSM_MOVEMENT_ANIMATIONS
                 .getDefault());
         assertTrue(ClientPreferences.USE_NATURAL_LADDER_ANIMATIONS
@@ -136,10 +136,10 @@ class CachePreferencesTest {
         assertTrue(ClientPreferences.USE_YSM_VEHICLE_MODELS.getDefault());
         assertEquals("ysm_epicfight_compat/ysm_epicfight_compat-common.toml",
                 ServerPreferences.CONFIG_FILE);
-        assertTrue(ServerPreferences.COMMON_SPEC.getRaw(List.of(
-                "server", "cache", "serverModelDiskCacheEnabled")) instanceof ForgeConfigSpec.ValueSpec);
-        assertTrue(ServerPreferences.COMMON_SPEC.getRaw(List.of(
-                "server", "cache", "serverModelDiskCacheMiB")) instanceof ForgeConfigSpec.ValueSpec);
+        assertTrue(ServerPreferences.COMMON_SPEC.getSpec().getRaw(List.of(
+                "server", "cache", "serverModelDiskCacheEnabled")) instanceof ModConfigSpec.ValueSpec);
+        assertTrue(ServerPreferences.COMMON_SPEC.getSpec().getRaw(List.of(
+                "server", "cache", "serverModelDiskCacheMiB")) instanceof ModConfigSpec.ValueSpec);
     }
 
     @Test
@@ -235,10 +235,10 @@ class CachePreferencesTest {
 
     @Test
     void modAnimationExclusionTablesValidateOnlyTheirOwnShortNames() {
-        ForgeConfigSpec.ValueSpec parcool = (ForgeConfigSpec.ValueSpec)
-                ClientPreferences.CLIENT_SPEC.getRaw(List.of("common", "animations", "exclusions", "parcoolAnimationExclusions"));
-        ForgeConfigSpec.ValueSpec swem = (ForgeConfigSpec.ValueSpec)
-                ClientPreferences.CLIENT_SPEC.getRaw(List.of("common", "animations", "exclusions", "swemAnimationExclusions"));
+        ModConfigSpec.ValueSpec parcool = (ModConfigSpec.ValueSpec)
+                ClientPreferences.CLIENT_SPEC.getSpec().getRaw(List.of("common", "animations", "exclusions", "parcoolAnimationExclusions"));
+        ModConfigSpec.ValueSpec swem = (ModConfigSpec.ValueSpec)
+                ClientPreferences.CLIENT_SPEC.getSpec().getRaw(List.of("common", "animations", "exclusions", "swemAnimationExclusions"));
         Config rules = Config.inMemory();
         assertTrue(parcool.test(rules));
         assertTrue(swem.test(rules));
@@ -265,16 +265,16 @@ class CachePreferencesTest {
         if (ClientPreferences.isOptionalAnimationAvailable(family)) {
             assertCommentTail(ClientPreferences.CLIENT_SPEC, path, expectedTail);
         } else {
-            ForgeConfigSpec.ValueSpec value =
-                    (ForgeConfigSpec.ValueSpec) ClientPreferences.CLIENT_SPEC.getRaw(path);
+            ModConfigSpec.ValueSpec value =
+                    (ModConfigSpec.ValueSpec) ClientPreferences.CLIENT_SPEC.getSpec().getRaw(path);
             assertNull(value.getComment(), () -> "Orphan comment for absent mod: " + path);
         }
     }
 
     private static void assertCommentTail(
-            ForgeConfigSpec spec, List<String> path, String... expectedTail) {
-        ForgeConfigSpec.ValueSpec value =
-                (ForgeConfigSpec.ValueSpec) spec.getRaw(path);
+            ModConfigSpec spec, List<String> path, String... expectedTail) {
+        ModConfigSpec.ValueSpec value =
+                (ModConfigSpec.ValueSpec) spec.getSpec().getRaw(path);
         String[] lines = value.getComment().split("\\R");
         assertTrue(lines.length > expectedTail.length,
                 () -> "Missing description for " + path);
@@ -286,9 +286,9 @@ class CachePreferencesTest {
     }
 
     private static void assertNumericRange(
-            ForgeConfigSpec spec, List<String> path, int minimum, int maximum) {
-        ForgeConfigSpec.ValueSpec value =
-                (ForgeConfigSpec.ValueSpec) spec.getRaw(path);
+            ModConfigSpec spec, List<String> path, int minimum, int maximum) {
+        ModConfigSpec.ValueSpec value =
+                (ModConfigSpec.ValueSpec) spec.getSpec().getRaw(path);
         assertTrue(value.test(minimum), () -> "Minimum rejected for " + path);
         assertTrue(value.test(maximum), () -> "Maximum rejected for " + path);
         assertFalse(value.test(minimum - 1),

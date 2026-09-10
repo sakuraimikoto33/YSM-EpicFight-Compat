@@ -1,19 +1,33 @@
 package net.okitsu.ysmepicfightcompat.network.message;
 
 import net.minecraft.network.FriendlyByteBuf;
-import net.minecraftforge.network.NetworkEvent;
+import net.minecraft.network.codec.StreamCodec;
+import net.minecraft.network.protocol.PacketFlow;
+import net.minecraft.network.protocol.common.custom.CustomPacketPayload;
+import net.minecraft.resources.ResourceLocation;
+import net.neoforged.neoforge.network.handling.IPayloadContext;
+import net.okitsu.ysmepicfightcompat.CompatMod;
 import net.okitsu.ysmepicfightcompat.animation.OfficialConfigurationVariables;
 import net.okitsu.ysmepicfightcompat.network.ConfigurationVariableValues;
 
 import java.util.Map;
 import java.util.UUID;
-import java.util.function.Supplier;
 
 /** Server-authoritative session snapshot for one player's ordinary configuration values. */
 public record ConfigurationVariableSnapshotMessage(UUID playerId, String modelId,
                                                    UUID serverScope, UUID clientContext,
                                                    long revision, long throughSequence,
-                                                   Map<String, Double> values) {
+                                                   Map<String, Double> values) implements CustomPacketPayload {
+    public static final Type<ConfigurationVariableSnapshotMessage> TYPE = new Type<>(
+            ResourceLocation.fromNamespaceAndPath(CompatMod.MOD_ID, "configuration_variable_snapshot"));
+    public static final StreamCodec<FriendlyByteBuf, ConfigurationVariableSnapshotMessage> STREAM_CODEC =
+            StreamCodec.of((output, message) -> write(message, output), ConfigurationVariableSnapshotMessage::read);
+
+    @Override
+    public Type<ConfigurationVariableSnapshotMessage> type() {
+        return TYPE;
+    }
+
     private static final int MAX_MODEL_ID_LENGTH = 4096;
 
     public ConfigurationVariableSnapshotMessage {
@@ -46,13 +60,11 @@ public record ConfigurationVariableSnapshotMessage(UUID playerId, String modelId
     }
 
     public static void receive(ConfigurationVariableSnapshotMessage message,
-                               Supplier<NetworkEvent.Context> suppliedContext) {
-        NetworkEvent.Context context = suppliedContext.get();
-        if (context.getDirection().getReceptionSide().isClient()) {
-            var connection = context.getNetworkManager();
+                               IPayloadContext context) {
+        if (context.flow() == PacketFlow.CLIENTBOUND) {
+            var connection = context.connection();
             context.enqueueWork(() -> OfficialConfigurationVariables.acceptSnapshot(
                     connection, message));
         }
-        context.setPacketHandled(true);
     }
 }

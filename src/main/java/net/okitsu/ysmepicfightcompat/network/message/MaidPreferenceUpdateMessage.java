@@ -2,12 +2,16 @@ package net.okitsu.ysmepicfightcompat.network.message;
 
 import net.minecraft.network.FriendlyByteBuf;
 import net.minecraft.server.level.ServerPlayer;
-import net.minecraftforge.network.NetworkEvent;
+import net.minecraft.network.codec.StreamCodec;
+import net.minecraft.network.protocol.PacketFlow;
+import net.minecraft.network.protocol.common.custom.CustomPacketPayload;
+import net.minecraft.resources.ResourceLocation;
+import net.neoforged.neoforge.network.handling.IPayloadContext;
+import net.okitsu.ysmepicfightcompat.CompatMod;
 import net.okitsu.ysmepicfightcompat.network.HeldItemModelDisplayState;
 import net.okitsu.ysmepicfightcompat.network.MaidPreferenceBroadcaster;
 
 import java.util.UUID;
-import java.util.function.Supplier;
 
 /** Owner-to-server response containing decisions, never the owner's local rules. */
 public record MaidPreferenceUpdateMessage(
@@ -16,7 +20,17 @@ public record MaidPreferenceUpdateMessage(
         UUID entityUuid,
         UUID policyEpoch,
         long revision,
-        HeldItemModelDisplayState heldItems) {
+        HeldItemModelDisplayState heldItems) implements CustomPacketPayload {
+    public static final Type<MaidPreferenceUpdateMessage> TYPE = new Type<>(
+            ResourceLocation.fromNamespaceAndPath(CompatMod.MOD_ID, "maid_preference_update"));
+    public static final StreamCodec<FriendlyByteBuf, MaidPreferenceUpdateMessage> STREAM_CODEC =
+            StreamCodec.of((output, message) -> write(message, output), MaidPreferenceUpdateMessage::read);
+
+    @Override
+    public Type<MaidPreferenceUpdateMessage> type() {
+        return TYPE;
+    }
+
     public MaidPreferenceUpdateMessage {
         if (queryId == null || entityId < 0 || entityUuid == null
                 || policyEpoch == null || revision <= 0L
@@ -54,12 +68,10 @@ public record MaidPreferenceUpdateMessage(
     }
 
     public static void receive(MaidPreferenceUpdateMessage message,
-                               Supplier<NetworkEvent.Context> suppliedContext) {
-        NetworkEvent.Context context = suppliedContext.get();
-        ServerPlayer sender = context.getSender();
-        if (sender != null && context.getDirection().getReceptionSide().isServer()) {
+                               IPayloadContext context) {
+        if (context.flow() == PacketFlow.SERVERBOUND
+                && context.player() instanceof ServerPlayer sender) {
             context.enqueueWork(() -> MaidPreferenceBroadcaster.accept(sender, message));
         }
-        context.setPacketHandled(true);
     }
 }

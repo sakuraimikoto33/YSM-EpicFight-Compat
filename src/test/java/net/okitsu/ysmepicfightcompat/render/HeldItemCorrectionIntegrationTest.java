@@ -397,7 +397,13 @@ class HeldItemCorrectionIntegrationTest {
 
     private static final class TestPatch extends LivingEntityPatch<LivingEntity> {
         private TestPatch(Armature armature) {
+            super(null);
             this.armature = armature;
+        }
+
+        @Override
+        public boolean isFakeEntity() {
+            return true;
         }
 
         @Override

@@ -60,6 +60,65 @@ class CompatHumanoidMeshTest {
     }
 
     @Test
+    void nonpersistentComputeCapsEachSubmeshAt256VisibilityBits() {
+        for (boolean irisCompute : new boolean[]{false, true}) {
+            assertTrue(CompatHumanoidMesh.withinComputeCapacity(
+                    500, 256, 256, false, irisCompute));
+            for (int[] parts : new int[][]{{257, 0}, {0, 257}, {256, 257}, {257, 256}}) {
+                boolean capacity = CompatHumanoidMesh.withinComputeCapacity(
+                        500, parts[0], parts[1], false, irisCompute);
+                assertFalse(capacity);
+                assertFalse(CompatHumanoidMesh.usesComputeSkinning(true, true, capacity));
+            }
+        }
+    }
+
+    @Test
+    void largeVanillaMeshesFollowLivePersistentMappingChangesWithoutLosingGpuState() {
+        for (boolean persistentMapping : new boolean[]{true, false, true}) {
+            boolean capacity = CompatHumanoidMesh.withinComputeCapacity(
+                    557, 443, 300, persistentMapping, false);
+            if (persistentMapping) {
+                assertTrue(CompatHumanoidMesh.usesComputeSkinning(true, true, capacity));
+            } else {
+                assertFalse(CompatHumanoidMesh.usesComputeSkinning(true, true, capacity));
+            }
+        }
+    }
+
+    @Test
+    void irisPersistentComputeStillBindsOnly256VisibilityBits() {
+        assertTrue(CompatHumanoidMesh.withinComputeCapacity(500, 256, 256, true, true));
+        for (int[] parts : new int[][]{{257, 0}, {0, 257}, {256, 257}, {257, 256}}) {
+            boolean capacity = CompatHumanoidMesh.withinComputeCapacity(
+                    500, parts[0], parts[1], true, true);
+            assertFalse(capacity);
+            assertFalse(CompatHumanoidMesh.usesComputeSkinning(true, true, capacity));
+        }
+    }
+
+    @Test
+    void persistentMappingStillRespectsTheSharedPosePalette() {
+        assertTrue(CompatHumanoidMesh.withinComputeCapacity(557, 443, 0, true, false));
+        assertFalse(CompatHumanoidMesh.withinComputeCapacity(558, 443, 0, true, false));
+        assertFalse(CompatHumanoidMesh.withinComputeCapacity(558, 0, 443, true, false));
+        for (boolean persistentMapping : new boolean[]{true, false}) {
+            assertFalse(CompatHumanoidMesh.withinComputeCapacity(
+                    Integer.MAX_VALUE, 1, 0, persistentMapping, false));
+            assertFalse(CompatHumanoidMesh.withinComputeCapacity(
+                    1, Integer.MAX_VALUE, 0, persistentMapping, false));
+            assertFalse(CompatHumanoidMesh.withinComputeCapacity(
+                    1, 0, Integer.MAX_VALUE, persistentMapping, false));
+            assertFalse(CompatHumanoidMesh.withinComputeCapacity(
+                    -1, 0, 0, persistentMapping, false));
+            assertFalse(CompatHumanoidMesh.withinComputeCapacity(
+                    0, -1, 0, persistentMapping, false));
+            assertFalse(CompatHumanoidMesh.withinComputeCapacity(
+                    0, 0, -1, persistentMapping, false));
+        }
+    }
+
+    @Test
     void firstPersonRebasesOnlyACustomFullBodyBowOrItsEndingSource() {
         assertTrue(CompatHumanoidMesh.usesFirstPersonPoseTransform(true, true, false));
         assertTrue(CompatHumanoidMesh.usesFirstPersonPoseTransform(true, false, true));

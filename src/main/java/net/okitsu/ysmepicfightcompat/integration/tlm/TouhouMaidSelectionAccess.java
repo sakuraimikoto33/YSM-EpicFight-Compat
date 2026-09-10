@@ -3,8 +3,8 @@ package net.okitsu.ysmepicfightcompat.integration.tlm;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.OwnableEntity;
-import net.minecraftforge.fml.ModList;
-import net.minecraftforge.registries.ForgeRegistries;
+import net.neoforged.fml.ModList;
+import net.minecraft.core.registries.BuiltInRegistries;
 
 import javax.annotation.Nullable;
 import java.lang.invoke.MethodHandle;
@@ -60,7 +60,7 @@ public final class TouhouMaidSelectionAccess {
     public static boolean isSupportedMaid(@Nullable Object source) {
         return source instanceof Entity entity
                 && isSupportedEntityType(
-                ForgeRegistries.ENTITY_TYPES.getKey(entity.getType()));
+                BuiltInRegistries.ENTITY_TYPE.getKey(entity.getType()));
     }
 
     /** Returns TLM's synchronized vanilla owner UUID, including across dimensions. */

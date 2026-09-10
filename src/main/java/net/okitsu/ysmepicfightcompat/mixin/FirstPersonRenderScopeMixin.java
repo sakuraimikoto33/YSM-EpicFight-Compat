@@ -20,14 +20,14 @@ import yesman.epicfight.client.world.capabilites.entitypatch.player.LocalPlayerP
 import java.util.Map;
 
 /** Gives Epic Fight's first-person render a nested and exception-safe compat scope. */
-@Mixin(value = RenderEngine.Events.class, remap = false)
+@Mixin(value = RenderEngine.class, remap = false)
 public abstract class FirstPersonRenderScopeMixin {
     private static final Map<String, Boolean> DEFAULT_ARMS = Map.of(
             "leftArm", true, "leftSleeve", true,
             "rightArm", true, "rightSleeve", true);
 
     @Redirect(
-            method = "renderHand(Lnet/minecraftforge/client/event/RenderHandEvent;)V",
+            method = "epicfight$renderHand(Lnet/neoforged/neoforge/client/event/RenderHandEvent;)V",
             at = @At(
                     value = "INVOKE",
                     target = "Lyesman/epicfight/client/renderer/FirstPersonRenderer;render(Lnet/minecraft/client/player/LocalPlayer;Lyesman/epicfight/client/world/capabilites/entitypatch/player/LocalPlayerPatch;Lnet/minecraft/client/renderer/entity/LivingEntityRenderer;Lnet/minecraft/client/renderer/MultiBufferSource;Lcom/mojang/blaze3d/vertex/PoseStack;IF)V",
@@ -35,7 +35,7 @@ public abstract class FirstPersonRenderScopeMixin {
             ),
             remap = false
     )
-    private static void ysmCompat$renderScoped(
+    private void ysmCompat$renderScoped(
             FirstPersonRenderer renderer, LocalPlayer player, LocalPlayerPatch patch,
             LivingEntityRenderer<LocalPlayer, PlayerModel<LocalPlayer>> entityRenderer,
             MultiBufferSource buffers, PoseStack matrices, int light, float partialTick) {
@@ -45,13 +45,12 @@ public abstract class FirstPersonRenderScopeMixin {
         boolean showUnlisted = settings != null && settings.visibilityOthers();
         float modelYaw = patch.getAccurateYRot(partialTick);
         // CAMERA/null POVs omit the outer look rotations needed by a canonical
-        // full-body YSM pose. Capture the incoming hand transform before EF resets
-        // the stack; only the eventual YSM-owned skin will consume this correction.
+        // full-body YSM pose. EF retains the incoming hand framing; only the
+        // eventual YSM-owned skin will consume this root correction.
         var fullBodyTransform = FirstPersonPoseTransform.forCameraRelativePose(
                 settings == null || settings.rootTransformation() == RootTransformation.CAMERA,
                 matrices.last().pose(), player.getViewXRot(partialTick),
-                player.getYRot(), modelYaw, player.getStandingEyeHeight(
-                        Pose.STANDING, player.getDimensions(Pose.STANDING)));
+                player.getYRot(), modelYaw, player.getEyeHeight(Pose.STANDING));
         RenderFrameContext.Frame scope = RenderFrameContext.pushFirstPerson(
                 player, visibleParts, showUnlisted,
                 modelYaw, EpicFightPoseOwnership.actionOwnsPose(player, patch),

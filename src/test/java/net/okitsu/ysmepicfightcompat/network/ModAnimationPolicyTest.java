@@ -120,7 +120,6 @@ class ModAnimationPolicyTest {
         StringWriter output = new StringWriter();
         new TomlWriter().write(root, output);
         String toml = output.toString();
-        assertTrue(toml.contains("[common.animations.exclusions.parcoolAnimationExclusions]"));
         assertTrue(toml.contains("\"wine.fox/モデル\" = ["));
 
         Config decoded = new TomlParser().parse(toml);

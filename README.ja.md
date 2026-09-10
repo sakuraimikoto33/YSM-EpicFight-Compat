@@ -6,16 +6,15 @@
 
 ## 必要環境
 
-- Minecraft 1.20.1
-- Forge 47.4.10 以降
-- [Yes Steve Model](https://modrinth.com/mod/yes-steve-model) 2.6.0 以降（Forge 1.20.1版）
-- [Epic Fight](https://modrinth.com/mod/epic-fight) 20.14.17 以降（Forge 1.20.1版）
+- Minecraft 1.21.1
+- NeoForge 21.1.235 以降
+- [Yes Steve Model](https://modrinth.com/mod/yes-steve-model) 2.6.0 以降（NeoForge 1.21.1版）
+- [Epic Fight](https://modrinth.com/mod/epic-fight) 21.17.3.1以上、21.18未満（NeoForge 1.21.1版）
 - [YSM Mapping API](https://github.com/sakuraimikoto33/YSM-Mapping-API) 0.1.7 以降
 
-メイド任意連携には次の両方が必要です。
+1.21.1移植版は、戦闘描画、IrisのPBRとリソース再読込、Configured、ParCool、Epic ParCool、SWEM、統合サーバーを用いた2クライアント間の同期を実機で確認しています。専用サーバーの起動は未検証です。EpicFight：TouhouLittleMaidはこの環境に未対応のため、将来の移植用に任意連携コードを保持しています。
 
-- [Touhou Little Maid](https://modrinth.com/mod/touhou-little-maid) 1.5.x
-- [EpicFight_TouhouLittleMaid](https://modrinth.com/mod/epicfight_touhoulittlemaid) 1.1.x～1.3.x
+YSM 2.6.5とIris 1.8.12では、通常のYSM描画でリソース再読込後にPBRが崩れる問題が残っています。当ModとEpic Fightを含まない構成でも再現します。当Modは戦闘描画のPBRを復旧し、通常描画は引き続き公式YSMが担当します。
 
 ## 機能
 

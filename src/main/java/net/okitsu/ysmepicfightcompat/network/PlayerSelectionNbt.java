@@ -2,10 +2,10 @@ package net.okitsu.ysmepicfightcompat.network;
 
 import net.minecraft.nbt.CompoundTag;
 import net.minecraft.world.entity.player.Player;
+import net.neoforged.neoforge.attachment.AttachmentHolder;
 
-/** Reads the stable serialized contract of official YSM's player capability. */
+/** Reads the stable serialized contract of official YSM's player attachment. */
 public final class PlayerSelectionNbt {
-    private static final String FORGE_CAPS = "ForgeCaps";
     private static final String YSM_SELECTION = "yes_steve_model:model_id";
 
     public record Selection(String modelId, String textureName) {
@@ -26,14 +26,15 @@ public final class PlayerSelectionNbt {
     }
 
     static Selection parse(CompoundTag root) {
-        if (root == null || !root.contains(FORGE_CAPS, CompoundTag.TAG_COMPOUND)) {
+        if (root == null || !root.contains(
+                AttachmentHolder.ATTACHMENTS_NBT_KEY, CompoundTag.TAG_COMPOUND)) {
             return null;
         }
-        CompoundTag capabilities = root.getCompound(FORGE_CAPS);
-        if (!capabilities.contains(YSM_SELECTION, CompoundTag.TAG_COMPOUND)) {
+        CompoundTag attachments = root.getCompound(AttachmentHolder.ATTACHMENTS_NBT_KEY);
+        if (!attachments.contains(YSM_SELECTION, CompoundTag.TAG_COMPOUND)) {
             return null;
         }
-        CompoundTag selected = capabilities.getCompound(YSM_SELECTION);
+        CompoundTag selected = attachments.getCompound(YSM_SELECTION);
         if (selected.getBoolean("disabled")
                 || !selected.contains("model_id", CompoundTag.TAG_STRING)
                 || !selected.contains("select_texture", CompoundTag.TAG_STRING)) {

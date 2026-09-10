@@ -3,7 +3,7 @@ package net.okitsu.ysmepicfightcompat.integration.configured;
 import com.mrcrayfish.configured.api.IConfigEntry;
 import com.mrcrayfish.configured.api.IConfigValue;
 import com.mrcrayfish.configured.client.screen.ConfigScreen;
-import com.mrcrayfish.configured.impl.forge.ForgeValue;
+import com.mrcrayfish.configured.impl.neoforge.NeoForgeValue;
 import net.minecraft.ChatFormatting;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.Font;
@@ -38,7 +38,7 @@ public final class ConfiguredAnimationRateSlider {
     }
 
     static boolean isRateValue(Object value) {
-        return value instanceof ForgeValue<?> forge
+        return value instanceof NeoForgeValue<?> forge
                 && forge.configValue == ClientPreferences.ANIMATION_EVALUATION_RATE_LIMIT_HZ;
     }
 

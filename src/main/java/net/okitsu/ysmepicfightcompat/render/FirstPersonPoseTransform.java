@@ -14,12 +14,12 @@ public final class FirstPersonPoseTransform {
     }
 
     /**
-     * Epic Fight's camera-relative root supplies {@code T(-eye) * incoming}, while
-     * its world-facing root supplies {@code Rx(pitch) * Ry(view-model) * T(-eye)}.
+     * Epic Fight 21's camera-relative root supplies {@code incoming * T(-eye)}, while
+     * its world-facing root supplies {@code incoming * Rx(pitch) * Ry(view-model) * T(-eye)}.
      * Left-multiplying an authored skin by this correction bridges those bases
      * without rotating the native first-person pose or changing its provider.
-     * The incoming hand transform is removed because the world-facing root does
-     * not use it. Renderer framing outside that root remains untouched.
+     * Both roots retain the incoming hand transform and any camera animation
+     * before their root transforms, so that shared framing remains untouched.
      *
      * @param eyeHeight the same eye translation used by the renderer, in blocks
      */
@@ -42,7 +42,7 @@ public final class FirstPersonPoseTransform {
         }
         // Subtract in double precision so two finite input yaws cannot overflow.
         float relativeYaw = (float) Mth.wrapDegrees((double) viewYaw - modelYaw);
-        Matrix4f correction = new Matrix4f(incoming).invert()
+        Matrix4f correction = new Matrix4f()
                 .translate(0.0F, eyeHeight, 0.0F)
                 .rotateX((float) Math.toRadians(Mth.wrapDegrees(viewPitch)))
                 .rotateY((float) Math.toRadians(relativeYaw))

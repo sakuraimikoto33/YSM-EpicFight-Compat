@@ -3,7 +3,7 @@ package net.okitsu.ysmepicfightcompat.assets;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
-import net.minecraftforge.fml.ModList;
+import net.neoforged.fml.ModList;
 import net.okitsu.ysmepicfightcompat.animation.AnimationClip;
 import net.okitsu.ysmepicfightcompat.animation.BedrockAnimationParser;
 

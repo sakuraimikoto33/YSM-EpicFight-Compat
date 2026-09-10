@@ -2,7 +2,12 @@ package net.okitsu.ysmepicfightcompat.network.message;
 
 import net.minecraft.network.FriendlyByteBuf;
 import net.minecraft.server.level.ServerPlayer;
-import net.minecraftforge.network.NetworkEvent;
+import net.minecraft.network.codec.StreamCodec;
+import net.minecraft.network.protocol.PacketFlow;
+import net.minecraft.network.protocol.common.custom.CustomPacketPayload;
+import net.minecraft.resources.ResourceLocation;
+import net.neoforged.neoforge.network.handling.IPayloadContext;
+import net.okitsu.ysmepicfightcompat.CompatMod;
 import net.okitsu.ysmepicfightcompat.network.CompatNetwork;
 import net.okitsu.ysmepicfightcompat.cache.ModelDiskCache;
 import net.okitsu.ysmepicfightcompat.network.geometry.ServerModelTransfers;
@@ -10,7 +15,6 @@ import net.okitsu.ysmepicfightcompat.network.geometry.ServerModelTransfers;
 import java.util.Arrays;
 import java.nio.charset.StandardCharsets;
 import java.util.UUID;
-import java.util.function.Supplier;
 
 /**
  * Client request for the server model selected by one entity the recipient is tracking.
@@ -19,7 +23,17 @@ import java.util.function.Supplier;
  * prove that the requesting client is allowed to receive that model.</p>
  */
 public record ModelRequestMessage(String modelId, int sourceEntityId,
-                                  UUID sourceEntityUuid, byte[] knownPayloadDigest) {
+                                  UUID sourceEntityUuid, byte[] knownPayloadDigest) implements CustomPacketPayload {
+    public static final Type<ModelRequestMessage> TYPE = new Type<>(
+            ResourceLocation.fromNamespaceAndPath(CompatMod.MOD_ID, "model_request"));
+    public static final StreamCodec<FriendlyByteBuf, ModelRequestMessage> STREAM_CODEC =
+            StreamCodec.of((output, message) -> write(message, output), ModelRequestMessage::read);
+
+    @Override
+    public Type<ModelRequestMessage> type() {
+        return TYPE;
+    }
+
     public static final int MAX_MODEL_ID_BYTES = 4096;
 
     public ModelRequestMessage {
@@ -62,15 +76,13 @@ public record ModelRequestMessage(String modelId, int sourceEntityId,
     }
 
     public static void receive(ModelRequestMessage message,
-                               Supplier<NetworkEvent.Context> suppliedContext) {
-        NetworkEvent.Context context = suppliedContext.get();
-        ServerPlayer sender = context.getSender();
-        if (sender != null && context.getDirection().getReceptionSide().isServer()
+                               IPayloadContext context) {
+        if (context.flow() == PacketFlow.SERVERBOUND
+                && context.player() instanceof ServerPlayer sender
                 && CompatNetwork.isConnected(sender)) {
             context.enqueueWork(() -> ServerModelTransfers.request(sender, message.modelId(),
                     message.sourceEntityId(), message.sourceEntityUuid(),
                     message.knownPayloadDigest()));
         }
-        context.setPacketHandled(true);
     }
 }

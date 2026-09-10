@@ -34,9 +34,8 @@ class CombatTextureUploadContractTest {
         Map<String, MethodCode> events = readMethods(EVENTS);
         MethodCode frame = events.get("renderFrame");
         assertNotNull(frame);
-        assertEquals("(Lnet/minecraftforge/event/TickEvent$RenderTickEvent;)V", frame.descriptor);
-        assertTrue(frame.annotations.contains("Lnet/minecraftforge/eventbus/api/SubscribeEvent;"));
-        assertTrue(frame.fields.contains("net/minecraftforge/event/TickEvent$Phase#START"));
+        assertEquals("(Lnet/neoforged/neoforge/client/event/RenderFrameEvent$Pre;)V", frame.descriptor);
+        assertTrue(frame.annotations.contains("Lnet/neoforged/bus/api/SubscribeEvent;"));
         assertEquals(1, frame.calls.stream()
                 .filter(call -> call.equals(CACHE + "#uploadReadyTextures")).count());
         for (var entry : events.entrySet()) {

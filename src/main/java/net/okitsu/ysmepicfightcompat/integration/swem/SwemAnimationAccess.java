@@ -18,7 +18,7 @@ import java.util.WeakHashMap;
 /**
  * Read-only optional access to SWEM's native rider animation, including remote players.
  *
- * <p>SWEM 1.20.1-1.6.6 selects a PlayerAnimator animation in its {@code swem:animations}
+ * <p>SWEM 1.21.1 selects a PlayerAnimator animation in its {@code swem:animations}
  * associated layer for direct player passengers. Its public rider-animation metadata
  * supplies the names below. PlayerAnimator's public getters provide the active clip
  * and native playback tick; no horse controller is advanced or modified here.
@@ -30,7 +30,7 @@ public final class SwemAnimationAccess {
     }
 
     private static final String HORSE_CLASS =
-            "com.alaharranhonor.swem.forge.entities.horse.SWEMHorseEntity";
+            "com.alaharranhonor.swem.entity.horse.LegacySwemHorse";
     private static final String CLIENT_PLAYER_CLASS =
             "net.minecraft.client.player.AbstractClientPlayer";
     private static final String ANIMATION_API_CLASS =

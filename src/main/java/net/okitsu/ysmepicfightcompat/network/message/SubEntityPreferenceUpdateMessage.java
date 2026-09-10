@@ -2,12 +2,16 @@ package net.okitsu.ysmepicfightcompat.network.message;
 
 import net.minecraft.network.FriendlyByteBuf;
 import net.minecraft.server.level.ServerPlayer;
-import net.minecraftforge.network.NetworkEvent;
+import net.minecraft.network.codec.StreamCodec;
+import net.minecraft.network.protocol.PacketFlow;
+import net.minecraft.network.protocol.common.custom.CustomPacketPayload;
+import net.minecraft.resources.ResourceLocation;
+import net.neoforged.neoforge.network.handling.IPayloadContext;
+import net.okitsu.ysmepicfightcompat.CompatMod;
 import net.okitsu.ysmepicfightcompat.network.SubEntityModelKind;
 import net.okitsu.ysmepicfightcompat.network.SubEntityPreferenceBroadcaster;
 
 import java.util.UUID;
-import java.util.function.Supplier;
 
 /** Owner-to-server response containing one result, never the owner's local rules. */
 public record SubEntityPreferenceUpdateMessage(
@@ -18,7 +22,17 @@ public record SubEntityPreferenceUpdateMessage(
         UUID policyEpoch,
         long revision,
         SubEntityModelKind kind,
-        boolean ysm) {
+        boolean ysm) implements CustomPacketPayload {
+    public static final Type<SubEntityPreferenceUpdateMessage> TYPE = new Type<>(
+            ResourceLocation.fromNamespaceAndPath(CompatMod.MOD_ID, "sub_entity_preference_update"));
+    public static final StreamCodec<FriendlyByteBuf, SubEntityPreferenceUpdateMessage> STREAM_CODEC =
+            StreamCodec.of((output, message) -> write(message, output), SubEntityPreferenceUpdateMessage::read);
+
+    @Override
+    public Type<SubEntityPreferenceUpdateMessage> type() {
+        return TYPE;
+    }
+
     public SubEntityPreferenceUpdateMessage {
         if (queryId == null || entityId < 0 || entityUuid == null
                 || ownerUuid == null || policyEpoch == null || revision <= 0L
@@ -48,12 +62,10 @@ public record SubEntityPreferenceUpdateMessage(
     }
 
     public static void receive(SubEntityPreferenceUpdateMessage message,
-                               Supplier<NetworkEvent.Context> suppliedContext) {
-        NetworkEvent.Context context = suppliedContext.get();
-        ServerPlayer sender = context.getSender();
-        if (sender != null && context.getDirection().getReceptionSide().isServer()) {
+                               IPayloadContext context) {
+        if (context.flow() == PacketFlow.SERVERBOUND
+                && context.player() instanceof ServerPlayer sender) {
             context.enqueueWork(() -> SubEntityPreferenceBroadcaster.accept(sender, message));
         }
-        context.setPacketHandled(true);
     }
 }

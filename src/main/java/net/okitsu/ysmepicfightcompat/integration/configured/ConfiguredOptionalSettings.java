@@ -2,8 +2,7 @@ package net.okitsu.ysmepicfightcompat.integration.configured;
 
 import com.mrcrayfish.configured.api.IConfigEntry;
 import com.mrcrayfish.configured.api.IConfigValue;
-import com.mrcrayfish.configured.impl.forge.ForgeConfig;
-import net.minecraftforge.common.ForgeConfigSpec;
+import com.mrcrayfish.configured.impl.neoforge.NeoForgeConfig;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -65,10 +64,10 @@ public final class ConfiguredOptionalSettings {
         return true;
     }
 
-    /** Access Configured's protected record without constructing a ForgeConfig. */
-    private abstract static class ForgeValueEntryAccess extends ForgeConfig {
-        private ForgeValueEntryAccess(ForgeConfigSpec spec) {
-            super(null, spec);
+    /** Access Configured's protected record without constructing a NeoForgeConfig. */
+    private abstract static class ForgeValueEntryAccess extends NeoForgeConfig {
+        private ForgeValueEntryAccess() {
+            super(null);
         }
 
         private static boolean isVisible(Object entry, boolean parCoolAvailable,

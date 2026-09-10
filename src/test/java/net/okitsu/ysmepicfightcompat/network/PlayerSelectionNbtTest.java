@@ -27,10 +27,10 @@ class PlayerSelectionNbtTest {
         selected.putString("model_id", modelId);
         selected.putString("select_texture", texture);
         selected.putBoolean("disabled", disabled);
-        CompoundTag capabilities = new CompoundTag();
-        capabilities.put("yes_steve_model:model_id", selected);
+        CompoundTag attachments = new CompoundTag();
+        attachments.put("yes_steve_model:model_id", selected);
         CompoundTag root = new CompoundTag();
-        root.put("ForgeCaps", capabilities);
+        root.put("neoforge:attachments", attachments);
         return root;
     }
 }

@@ -1,5 +1,6 @@
 package net.okitsu.ysmepicfightcompat.integration.configured;
 
+import com.mrcrayfish.configured.api.ActionResult;
 import com.mrcrayfish.configured.api.IConfigEntry;
 import com.mrcrayfish.configured.api.IConfigValue;
 import com.mrcrayfish.configured.api.ValueEntry;
@@ -91,7 +92,7 @@ public final class ConfiguredHeldItemRules {
 
     /**
      * Writes the dynamic values before Configured gathers its changed-value set.
-     * RuleValue remains changed until {@link #finishSave(Object)}, which lets
+     * RuleValue remains changed until {@link #finishSave(Object, Object)}, which lets
      * Configured run its normal Forge reload notification path.
      */
     public static void prepareSave(Object entry) {
@@ -99,9 +100,11 @@ public final class ConfiguredHeldItemRules {
                 .forEach(RulesFolder::prepareSave);
     }
 
-    /** Called after Configured has completed its normal Forge-config update. */
-    public static void finishSave(Object entry) {
-        findRulesFolders(entry).forEach(RulesFolder::markSaved);
+    /** Retains pending edits when Configured reports that its update failed. */
+    public static void finishSave(Object entry, Object result) {
+        if (result instanceof ActionResult action && action.asBoolean()) {
+            findRulesFolders(entry).forEach(RulesFolder::markSaved);
+        }
     }
 
     private static List<RulesFolder> findRulesFolders(Object entry) {

@@ -1,9 +1,9 @@
 package net.okitsu.ysmepicfightcompat.config;
 
 import com.electronwill.nightconfig.core.Config;
-import net.minecraftforge.common.ForgeConfigSpec;
-import net.minecraftforge.fml.ModLoadingContext;
-import net.minecraftforge.fml.config.ModConfig;
+import net.neoforged.neoforge.common.ModConfigSpec;
+import net.neoforged.fml.ModContainer;
+import net.neoforged.fml.config.ModConfig;
 import net.okitsu.ysmepicfightcompat.animation.ModAnimationType;
 import net.okitsu.ysmepicfightcompat.network.EntityModelPolicy;
 import net.okitsu.ysmepicfightcompat.network.HeldItemModelPolicy;
@@ -20,47 +20,47 @@ public final class ClientPreferences {
     public static final int MAX_ANIMATION_EVALUATION_RATE_HZ = 240;
     public static final String CONFIG_FILE =
             "ysm_epicfight_compat/ysm_epicfight_compat-client.toml";
-    public static final ForgeConfigSpec CLIENT_SPEC;
-    public static final ForgeConfigSpec.ConfigValue<Integer>
+    public static final ModConfigSpec CLIENT_SPEC;
+    public static final ModConfigSpec.ConfigValue<Integer>
             CLIENT_MODEL_MEMORY_CACHE_TARGET_COUNT;
-    public static final ForgeConfigSpec.ConfigValue<Integer>
+    public static final ModConfigSpec.ConfigValue<Integer>
             CLIENT_MODEL_DISK_CACHE_MIB;
-    public static final ForgeConfigSpec.ConfigValue<Integer>
+    public static final ModConfigSpec.ConfigValue<Integer>
             REMOTE_MODEL_DISK_CACHE_MIB;
-    public static final ForgeConfigSpec.BooleanValue SUPPRESS_BATTLE_MODE_OVERLAY;
-    public static final ForgeConfigSpec.ConfigValue<Integer>
+    public static final ModConfigSpec.BooleanValue SUPPRESS_BATTLE_MODE_OVERLAY;
+    public static final ModConfigSpec.ConfigValue<Integer>
             ANIMATION_EVALUATION_RATE_LIMIT_HZ;
-    public static final ForgeConfigSpec.BooleanValue USE_YSM_HELD_ITEM_MODELS;
-    public static final ForgeConfigSpec.ConfigValue<Config>
+    public static final ModConfigSpec.BooleanValue USE_YSM_HELD_ITEM_MODELS;
+    public static final ModConfigSpec.ConfigValue<Config>
             HELD_ITEM_MODEL_EXCLUSIONS;
-    public static final ForgeConfigSpec.BooleanValue USE_YSM_PROJECTILE_MODELS;
-    public static final ForgeConfigSpec.ConfigValue<Config>
+    public static final ModConfigSpec.BooleanValue USE_YSM_PROJECTILE_MODELS;
+    public static final ModConfigSpec.ConfigValue<Config>
             PROJECTILE_MODEL_EXCLUSIONS;
-    public static final ForgeConfigSpec.BooleanValue USE_YSM_VEHICLE_MODELS;
-    public static final ForgeConfigSpec.ConfigValue<Config>
+    public static final ModConfigSpec.BooleanValue USE_YSM_VEHICLE_MODELS;
+    public static final ModConfigSpec.ConfigValue<Config>
             VEHICLE_MODEL_EXCLUSIONS;
-    public static final ForgeConfigSpec.BooleanValue
+    public static final ModConfigSpec.BooleanValue
             USE_YSM_HELD_ITEM_SWITCH_ANIMATIONS;
-    public static final ForgeConfigSpec.ConfigValue<Config>
+    public static final ModConfigSpec.ConfigValue<Config>
             HELD_ITEM_SWITCH_ANIMATION_EXCLUSIONS;
-    public static final ForgeConfigSpec.BooleanValue
+    public static final ModConfigSpec.BooleanValue
             USE_YSM_MOVEMENT_ANIMATIONS;
-    public static final ForgeConfigSpec.BooleanValue
+    public static final ModConfigSpec.BooleanValue
             USE_NATURAL_LADDER_ANIMATIONS;
-    public static final ForgeConfigSpec.ConfigValue<Config>
+    public static final ModConfigSpec.ConfigValue<Config>
             MOVEMENT_ANIMATION_EXCLUSIONS;
-    public static final ForgeConfigSpec.ConfigValue<Boolean>
+    public static final ModConfigSpec.ConfigValue<Boolean>
             USE_YSM_PARCOOL_ANIMATIONS;
-    public static final ForgeConfigSpec.ConfigValue<Config>
+    public static final ModConfigSpec.ConfigValue<Config>
             PARCOOL_ANIMATION_EXCLUSIONS;
-    public static final ForgeConfigSpec.ConfigValue<Boolean>
+    public static final ModConfigSpec.ConfigValue<Boolean>
             USE_YSM_SWEM_ANIMATIONS;
-    public static final ForgeConfigSpec.ConfigValue<Config>
+    public static final ModConfigSpec.ConfigValue<Config>
             SWEM_ANIMATION_EXCLUSIONS;
-    public static final ForgeConfigSpec.BooleanValue YSM_WARNING_ACKNOWLEDGED;
+    public static final ModConfigSpec.BooleanValue YSM_WARNING_ACKNOWLEDGED;
 
     static {
-        ForgeConfigSpec.Builder config = new ForgeConfigSpec.Builder();
+        ModConfigSpec.Builder config = new ModConfigSpec.Builder();
         boolean parCoolAvailable = isOptionalAnimationAvailable(ModAnimationType.PARCOOL);
         boolean swemAvailable = isOptionalAnimationAvailable(ModAnimationType.SWEM);
         config.comment("Client preferences.")
@@ -287,9 +287,8 @@ public final class ClientPreferences {
                 && integer >= minimum && integer <= maximum;
     }
 
-    @SuppressWarnings("removal")
-    public static void register() {
-        ModLoadingContext.get().registerConfig(ModConfig.Type.CLIENT, CLIENT_SPEC, CONFIG_FILE);
+    public static void register(ModContainer container) {
+        container.registerConfig(ModConfig.Type.CLIENT, CLIENT_SPEC, CONFIG_FILE);
     }
 
     public static boolean suppressBattleModeOverlay() {

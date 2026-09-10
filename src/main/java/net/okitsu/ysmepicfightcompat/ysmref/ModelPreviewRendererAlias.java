@@ -11,7 +11,7 @@ final class ModelPreviewRendererAlias {
     }
 
     public static void renderPlayerOverlay(GuiGraphics graphics, LocalPlayer player,
-                                           double x, double y, float scale, float yawOffset,
+                                           float x, float y, float scale, float yawOffset,
                                            int depth, float partialTick) {
         throw new UnsupportedOperationException("YSM Mapping API source alias");
     }

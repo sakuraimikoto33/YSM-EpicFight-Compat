@@ -68,6 +68,7 @@ public final class CombatMeshCache {
             new ConcurrentHashMap<>();
     private static final Map<String, ResourceLocation> FALLBACK_LOCATIONS = new ConcurrentHashMap<>();
     private static final Set<String> UPLOADED = ConcurrentHashMap.newKeySet();
+    private static final Set<String> PBR_RECOVERY_LOCATIONS = ConcurrentHashMap.newKeySet();
     private static final FrameUploadQueue<String, TextureUpload> TEXTURE_UPLOADS =
             new FrameUploadQueue<>(8, 128L * 1024 * 1024, upload -> upload.image().close());
     private static final Map<String, Integer> RELEASE_AFTER_TICKS = new ConcurrentHashMap<>();
@@ -278,13 +279,29 @@ public final class CombatMeshCache {
 
     public static ResourceLocation texture(String modelId, String textureName) {
         ensure(modelId);
+        ResourceLocation exact = FALLBACK_LOCATIONS.get(modelId + '#'
+                + (textureName == null ? "" : textureName));
         ResourceLocation official = OfficialTextureResolver.resolve(modelId, textureName);
         if (official != null) {
+            FallbackTexture source = exact == null ? null : FALLBACK_TEXTURES.get(exact.toString());
+            ModelBundle.PbrTextures pbr = source == null ? null : source.pbr();
+            if (pbr != null && !pbr.isEmpty()) {
+                var textures = Minecraft.getInstance().getTextureManager();
+                if (OculusPbrBridge.hasInvalidCompanion(textures.getTexture(official, null),
+                        pbr.normal() != null, pbr.specular() != null)) {
+                    PBR_RECOVERY_LOCATIONS.add(exact.toString());
+                    requestTextureUpload(exact);
+                    // Keep the current base until the selected replacement has actually uploaded.
+                    return isUploadedPbrTexture(exact, textures.getTexture(exact, null))
+                            ? exact : official;
+                }
+            }
+            if (exact != null) {
+                PBR_RECOVERY_LOCATIONS.remove(exact.toString());
+            }
             releaseUploadedFallbacks(modelId);
             return official;
         }
-        ResourceLocation exact = FALLBACK_LOCATIONS.get(modelId + '#'
-                + (textureName == null ? "" : textureName));
         if (exact != null) {
             return exact;
         }
@@ -292,6 +309,11 @@ public final class CombatMeshCache {
         return FALLBACK_LOCATIONS.entrySet().stream()
                 .filter(entry -> entry.getKey().startsWith(prefix))
                 .map(Map.Entry::getValue).findFirst().orElse(null);
+    }
+
+    static boolean isUploadedPbrTexture(ResourceLocation location, AbstractTexture registered) {
+        return location != null && UPLOADED.contains(location.toString())
+                && registered instanceof CompatPbrTexture texture && texture.getPixels() != null;
     }
 
     public static synchronized void requestTextureUpload(ResourceLocation location) {
@@ -466,6 +488,7 @@ public final class CombatMeshCache {
         PENDING_MODELS.clear();
         FAILED_STAMPS.clear();
         FALLBACK_TEXTURES.clear();
+        PBR_RECOVERY_LOCATIONS.clear();
         FALLBACK_LOCATIONS.clear();
         UPLOADED.clear();
         TEXTURE_UPLOADS.clear();
@@ -683,6 +706,7 @@ public final class CombatMeshCache {
         });
         for (ResourceLocation location : locations) {
             String key = location.toString();
+            PBR_RECOVERY_LOCATIONS.remove(key);
             FALLBACK_TEXTURES.remove(key);
             TEXTURE_UPLOADS.cancel(key);
             if (UPLOADED.remove(key)) {
@@ -698,6 +722,9 @@ public final class CombatMeshCache {
                 .map(Map.Entry::getValue)
                 .forEach(location -> {
                     String key = location.toString();
+                    if (PBR_RECOVERY_LOCATIONS.contains(key)) {
+                        return;
+                    }
                     TEXTURE_UPLOADS.cancel(key);
                     if (UPLOADED.remove(key)) {
                         RELEASE_AFTER_TICKS.put(key, RELEASE_DELAY);

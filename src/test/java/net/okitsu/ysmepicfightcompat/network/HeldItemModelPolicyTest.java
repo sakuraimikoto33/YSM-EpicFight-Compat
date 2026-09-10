@@ -2,6 +2,7 @@ package net.okitsu.ysmepicfightcompat.network;
 
 import com.electronwill.nightconfig.core.Config;
 import com.electronwill.nightconfig.toml.TomlWriter;
+import com.electronwill.nightconfig.toml.TomlParser;
 import net.minecraft.resources.ResourceLocation;
 import org.junit.jupiter.api.Test;
 
@@ -83,8 +84,10 @@ class HeldItemModelPolicyTest {
         StringWriter output = new StringWriter();
         new TomlWriter().write(root, output);
         String toml = output.toString();
+        Config restored = new TomlParser().parse(toml);
+        assertEquals(expected, HeldItemModelPolicy.decodeConfiguration(
+                restored.get(List.of("common", "models", "exclusions", "heldItemModelExclusions"))));
 
-        assertTrue(toml.contains("[common.models.exclusions.heldItemModelExclusions]"));
         assertTrue(toml.contains("\"wine_fox/21_saint\" = ["));
         assertFalse(toml.contains("wine_fox/21_saint="));
     }

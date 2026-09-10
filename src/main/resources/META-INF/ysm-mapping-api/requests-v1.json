@@ -54,7 +54,7 @@
         "common": {
           "owner": "net/okitsu/ysmepicfightcompat/ysmref/ModelPreviewRendererAlias",
           "name": "renderPlayerOverlay",
-          "descriptor": "(Lnet/minecraft/client/gui/GuiGraphics;Lnet/minecraft/client/player/LocalPlayer;DDFFIF)V"
+          "descriptor": "(Lnet/minecraft/client/gui/GuiGraphics;Lnet/minecraft/client/player/LocalPlayer;FFFFIF)V"
         }
       }
     },

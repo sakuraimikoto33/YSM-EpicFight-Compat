@@ -1,19 +1,33 @@
 package net.okitsu.ysmepicfightcompat.network.message;
 
 import net.minecraft.network.FriendlyByteBuf;
-import net.minecraftforge.network.NetworkEvent;
+import net.minecraft.network.codec.StreamCodec;
+import net.minecraft.network.protocol.PacketFlow;
+import net.minecraft.network.protocol.common.custom.CustomPacketPayload;
+import net.minecraft.resources.ResourceLocation;
+import net.neoforged.neoforge.network.handling.IPayloadContext;
+import net.okitsu.ysmepicfightcompat.CompatMod;
 import net.okitsu.ysmepicfightcompat.network.HeldItemModelDisplayState;
 import net.okitsu.ysmepicfightcompat.network.RemoteHeldItemModelPreferences;
 
 import java.util.UUID;
-import java.util.function.Supplier;
 
 /** Server-to-client snapshot containing only one player's resolved display state. */
 public record HeldItemPreferenceSnapshotMessage(UUID playerId,
                                                 boolean mainHandYsm,
                                                 boolean offHandYsm,
                                                 boolean mainHandYsmSwitchAnimation,
-                                                boolean offHandYsmSwitchAnimation) {
+                                                boolean offHandYsmSwitchAnimation) implements CustomPacketPayload {
+    public static final Type<HeldItemPreferenceSnapshotMessage> TYPE = new Type<>(
+            ResourceLocation.fromNamespaceAndPath(CompatMod.MOD_ID, "held_item_preference_snapshot"));
+    public static final StreamCodec<FriendlyByteBuf, HeldItemPreferenceSnapshotMessage> STREAM_CODEC =
+            StreamCodec.of((output, message) -> write(message, output), HeldItemPreferenceSnapshotMessage::read);
+
+    @Override
+    public Type<HeldItemPreferenceSnapshotMessage> type() {
+        return TYPE;
+    }
+
     public HeldItemPreferenceSnapshotMessage {
         if (playerId == null) {
             throw new IllegalArgumentException("Missing player ID");
@@ -36,15 +50,13 @@ public record HeldItemPreferenceSnapshotMessage(UUID playerId,
     }
 
     public static void receive(HeldItemPreferenceSnapshotMessage message,
-                               Supplier<NetworkEvent.Context> suppliedContext) {
-        NetworkEvent.Context context = suppliedContext.get();
-        if (context.getDirection().getReceptionSide().isClient()) {
+                               IPayloadContext context) {
+        if (context.flow() == PacketFlow.CLIENTBOUND) {
             context.enqueueWork(() -> RemoteHeldItemModelPreferences.accept(
                     message.playerId(), new HeldItemModelDisplayState(
                             message.mainHandYsm(), message.offHandYsm(),
                             message.mainHandYsmSwitchAnimation(),
                             message.offHandYsmSwitchAnimation())));
         }
-        context.setPacketHandled(true);
     }
 }

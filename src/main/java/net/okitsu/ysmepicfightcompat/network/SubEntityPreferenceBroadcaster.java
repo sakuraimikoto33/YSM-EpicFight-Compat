@@ -16,14 +16,14 @@ import net.minecraft.world.item.CrossbowItem;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
 import net.minecraft.world.item.TridentItem;
-import net.minecraftforge.event.TickEvent;
-import net.minecraftforge.event.entity.EntityJoinLevelEvent;
-import net.minecraftforge.event.entity.EntityLeaveLevelEvent;
-import net.minecraftforge.event.entity.EntityMountEvent;
-import net.minecraftforge.event.entity.player.PlayerEvent;
-import net.minecraftforge.event.server.ServerStoppedEvent;
-import net.minecraftforge.eventbus.api.SubscribeEvent;
-import net.minecraftforge.fml.common.Mod;
+import net.neoforged.neoforge.event.tick.ServerTickEvent;
+import net.neoforged.neoforge.event.entity.EntityJoinLevelEvent;
+import net.neoforged.neoforge.event.entity.EntityLeaveLevelEvent;
+import net.neoforged.neoforge.event.entity.EntityMountEvent;
+import net.neoforged.neoforge.event.entity.player.PlayerEvent;
+import net.neoforged.neoforge.event.server.ServerStoppedEvent;
+import net.neoforged.bus.api.SubscribeEvent;
+import net.neoforged.fml.common.EventBusSubscriber;
 import net.okitsu.ysmepicfightcompat.CompatMod;
 import net.okitsu.ysmepicfightcompat.network.message.SubEntityPreferenceQueryMessage;
 import net.okitsu.ysmepicfightcompat.network.message.SubEntityPreferenceSnapshotMessage;
@@ -40,7 +40,7 @@ import java.util.UUID;
 import java.util.concurrent.atomic.AtomicLong;
 
 /** Server state machine for owner-resolved projectile, hook, and vehicle display. */
-@Mod.EventBusSubscriber(modid = CompatMod.MOD_ID, bus = Mod.EventBusSubscriber.Bus.FORGE)
+@EventBusSubscriber(modid = CompatMod.MOD_ID, bus = EventBusSubscriber.Bus.GAME)
 public final class SubEntityPreferenceBroadcaster {
     static final int MAX_ENTRIES = 4096;
     static final int MAX_OWNER_DECISIONS = 256;
@@ -239,10 +239,7 @@ public final class SubEntityPreferenceBroadcaster {
     }
 
     @SubscribeEvent
-    public static void serverTick(TickEvent.ServerTickEvent event) {
-        if (event.phase != TickEvent.Phase.END) {
-            return;
-        }
+    public static void serverTick(ServerTickEvent.Post event) {
         MinecraftServer server = event.getServer();
         long tick = server.getTickCount();
         for (Map.Entry<UUID, OwnerSession> owner : OWNERS.entrySet()) {

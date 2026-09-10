@@ -16,7 +16,7 @@ import yesman.epicfight.world.capabilities.entitypatch.LivingEntityPatch;
 /** Selects the converted model transform used by Epic Fight's ordinary item renderer. */
 public final class HeldItemPoseResolver {
     // Official YSM's item layer uses T(0, -1/16, -0.1) * Rx(-90), whereas
-    // Epic Fight 20.14's standard Tool correction uses T(0, 0, -0.13) * Rx(-90).
+    // Epic Fight 21.17's standard Tool correction uses T(0, 0, -0.13) * Rx(-90).
     // Convert between those attachment origins before the item-specific transform.
     private static final OpenMatrix4f YSM_ITEM_ORIGIN_ADJUSTMENT = new OpenMatrix4f()
             .translate(0.0F, -1.0F / 16.0F, 0.13F - 0.1F).unmodifiable();

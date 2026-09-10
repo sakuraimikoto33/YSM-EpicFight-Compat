@@ -2,7 +2,11 @@ package net.okitsu.ysmepicfightcompat.network.message;
 
 import net.minecraft.network.FriendlyByteBuf;
 import net.minecraft.resources.ResourceLocation;
-import net.minecraftforge.network.NetworkEvent;
+import net.minecraft.network.codec.StreamCodec;
+import net.minecraft.network.protocol.PacketFlow;
+import net.minecraft.network.protocol.common.custom.CustomPacketPayload;
+import net.neoforged.neoforge.network.handling.IPayloadContext;
+import net.okitsu.ysmepicfightcompat.CompatMod;
 import net.okitsu.ysmepicfightcompat.animation.MovementAnimationType;
 import net.okitsu.ysmepicfightcompat.network.HeldItemModelDisplayState;
 import net.okitsu.ysmepicfightcompat.network.MaidPreferenceDisplayState;
@@ -10,10 +14,19 @@ import net.okitsu.ysmepicfightcompat.network.MovementAnimationPolicy;
 import net.okitsu.ysmepicfightcompat.network.RemoteMaidPreferences;
 
 import java.util.UUID;
-import java.util.function.Supplier;
 
 /** Server-authoritative maid inputs paired with owner-resolved cosmetic decisions. */
-public record MaidPreferenceSnapshotMessage(MaidPreferenceDisplayState state) {
+public record MaidPreferenceSnapshotMessage(MaidPreferenceDisplayState state) implements CustomPacketPayload {
+    public static final Type<MaidPreferenceSnapshotMessage> TYPE = new Type<>(
+            ResourceLocation.fromNamespaceAndPath(CompatMod.MOD_ID, "maid_preference_snapshot"));
+    public static final StreamCodec<FriendlyByteBuf, MaidPreferenceSnapshotMessage> STREAM_CODEC =
+            StreamCodec.of((output, message) -> write(message, output), MaidPreferenceSnapshotMessage::read);
+
+    @Override
+    public Type<MaidPreferenceSnapshotMessage> type() {
+        return TYPE;
+    }
+
     public MaidPreferenceSnapshotMessage {
         if (state == null) {
             throw new IllegalArgumentException("Missing maid preference snapshot");
@@ -63,11 +76,9 @@ public record MaidPreferenceSnapshotMessage(MaidPreferenceDisplayState state) {
     }
 
     public static void receive(MaidPreferenceSnapshotMessage message,
-                               Supplier<NetworkEvent.Context> suppliedContext) {
-        NetworkEvent.Context context = suppliedContext.get();
-        if (context.getDirection().getReceptionSide().isClient()) {
+                               IPayloadContext context) {
+        if (context.flow() == PacketFlow.CLIENTBOUND) {
             context.enqueueWork(() -> RemoteMaidPreferences.accept(message.state()));
         }
-        context.setPacketHandled(true);
     }
 }

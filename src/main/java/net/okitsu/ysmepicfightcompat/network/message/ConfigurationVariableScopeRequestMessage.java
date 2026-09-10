@@ -1,15 +1,30 @@
 package net.okitsu.ysmepicfightcompat.network.message;
 
 import net.minecraft.network.FriendlyByteBuf;
-import net.minecraftforge.network.NetworkEvent;
+import net.minecraft.network.codec.StreamCodec;
+import net.minecraft.network.protocol.PacketFlow;
+import net.minecraft.network.protocol.common.custom.CustomPacketPayload;
+import net.minecraft.resources.ResourceLocation;
+import net.minecraft.server.level.ServerPlayer;
+import net.neoforged.neoforge.network.handling.IPayloadContext;
+import net.okitsu.ysmepicfightcompat.CompatMod;
 import net.okitsu.ysmepicfightcompat.network.ConfigurationVariableBroadcaster;
 
 import java.util.UUID;
-import java.util.function.Supplier;
 
 /** Establishes acknowledgement identity without copying or resetting ordinary values. */
 public record ConfigurationVariableScopeRequestMessage(String modelId, UUID clientContext,
-                                                        long requestOrder) {
+                                                        long requestOrder) implements CustomPacketPayload {
+    public static final Type<ConfigurationVariableScopeRequestMessage> TYPE = new Type<>(
+            ResourceLocation.fromNamespaceAndPath(CompatMod.MOD_ID, "configuration_variable_scope_request"));
+    public static final StreamCodec<FriendlyByteBuf, ConfigurationVariableScopeRequestMessage> STREAM_CODEC =
+            StreamCodec.of((output, message) -> write(message, output), ConfigurationVariableScopeRequestMessage::read);
+
+    @Override
+    public Type<ConfigurationVariableScopeRequestMessage> type() {
+        return TYPE;
+    }
+
     static final int MAX_MODEL_ID = 4096;
 
     public ConfigurationVariableScopeRequestMessage {
@@ -35,12 +50,10 @@ public record ConfigurationVariableScopeRequestMessage(String modelId, UUID clie
     }
 
     public static void receive(ConfigurationVariableScopeRequestMessage message,
-                               Supplier<NetworkEvent.Context> suppliedContext) {
-        NetworkEvent.Context context = suppliedContext.get();
-        var sender = context.getSender();
-        if (sender != null && context.getDirection().getReceptionSide().isServer()) {
+                               IPayloadContext context) {
+        if (context.flow() == PacketFlow.SERVERBOUND
+                && context.player() instanceof ServerPlayer sender) {
             context.enqueueWork(() -> ConfigurationVariableBroadcaster.requestScope(sender, message));
         }
-        context.setPacketHandled(true);
     }
 }

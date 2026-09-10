@@ -28,6 +28,7 @@ import yesman.epicfight.api.utils.math.OpenMatrix4f;
 import yesman.epicfight.client.mesh.HumanoidMesh;
 import yesman.epicfight.client.renderer.EpicFightRenderTypes;
 import yesman.epicfight.client.renderer.shader.compute.ComputeShaderSetup;
+import yesman.epicfight.client.renderer.shader.compute.loader.ComputeShaderProvider;
 import yesman.epicfight.config.ClientConfig;
 import yesman.epicfight.main.EpicFightSharedConstants;
 
@@ -42,6 +43,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 
 /** Shared in-memory Epic Fight mesh for one official YSM model. */
 public final class CompatHumanoidMesh extends HumanoidMesh {
+    private static final int FIXED_COMPUTE_PART_CAPACITY = 8 * Integer.SIZE;
     private static final Field COMPUTE_SETUP = locateComputeSetup();
     private static final AtomicBoolean CPU_FALLBACK_LOGGED = new AtomicBoolean();
     private static final AtomicBoolean COMPUTE_CAPACITY_LOGGED = new AtomicBoolean();
@@ -219,7 +221,7 @@ public final class CompatHumanoidMesh extends HumanoidMesh {
             frame = null;
         }
         float partialTick = frame == null ? 0.0F
-                : Minecraft.getInstance().getFrameTime();
+                : Minecraft.getInstance().getTimer().getGameTimeDeltaPartialTick(false);
         ParallelAnimationProgram.Frame animationFrame = frame == null
                 || parallelAnimations.isEmpty() ? null
                 : parallelAnimations.sample(frame.entity(),
@@ -384,18 +386,23 @@ public final class CompatHumanoidMesh extends HumanoidMesh {
                 snapshot.restoreParts();
             }
         }
-        // Vanilla and Iris compute skinning share a fixed pose+part palette in
-        // Epic Fight 20.14.x. Test the actual composed pose count, not guessed
-        // joint headroom or a 256-part visibility limit (flags are variable-size).
-        boolean computeCapacity = poses != null && withinComputePoseCapacity(
-                poses.length, basePartCount, glowPartCount);
+        // Epic Fight 21.17 shares a fixed pose+part palette across Vanilla and
+        // Iris. Nonpersistent uploads have only eight visibility words, and
+        // Iris binds only those eight words even with persistent mapping.
+        boolean persistentMapping = ClientConfig.activatePersistentBuffer
+                && ComputeShaderProvider.supportPersistentMapping();
+        boolean irisCompute = ComputeShaderProvider.irisLoaded();
+        boolean computeCapacity = poses != null && withinComputeCapacity(
+                poses.length, basePartCount, glowPartCount, persistentMapping, irisCompute);
         if (ClientConfig.activateComputeShader && !computeCapacity
                 && COMPUTE_CAPACITY_LOGGED.compareAndSet(false, true)) {
             CompatMod.LOG.warn(
-                    "YSM-EF Compat: compute palette capacity exceeded for {} "
-                            + "(poses={}, base parts={}, glow parts={}, capacity={}); using CPU skinning",
+                    "YSM-EF Compat: compute capacity exceeded for {} "
+                            + "(poses={}, base parts={}, glow parts={}, pose capacity={}, "
+                            + "persistent mapping={}, Iris compute={}); using CPU skinning",
                     modelId, poses == null ? -1 : poses.length,
-                    basePartCount, glowPartCount, EpicFightSharedConstants.MAX_JOINTS);
+                    basePartCount, glowPartCount, EpicFightSharedConstants.MAX_JOINTS,
+                    persistentMapping, irisCompute);
         }
         boolean restoreScale = meshScale != 1.0F;
         if (restoreScale) {
@@ -549,6 +556,14 @@ public final class CompatHumanoidMesh extends HumanoidMesh {
                 && baseParts >= 0 && glowParts >= 0
                 && baseParts <= EpicFightSharedConstants.MAX_JOINTS - poseCount
                 && glowParts <= EpicFightSharedConstants.MAX_JOINTS - poseCount;
+    }
+
+    static boolean withinComputeCapacity(int poseCount, int baseParts, int glowParts,
+                                         boolean persistentMapping, boolean irisCompute) {
+        return withinComputePoseCapacity(poseCount, baseParts, glowParts)
+                && (persistentMapping && !irisCompute
+                || baseParts <= FIXED_COMPUTE_PART_CAPACITY
+                && glowParts <= FIXED_COMPUTE_PART_CAPACITY);
     }
 
     /** Keeps Epic Fight's action matrices unless YSM owns the complete displayed pose. */

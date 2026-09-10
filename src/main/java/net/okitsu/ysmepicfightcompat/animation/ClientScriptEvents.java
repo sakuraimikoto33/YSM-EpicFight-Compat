@@ -98,7 +98,7 @@ public final class ClientScriptEvents {
                 || entity.level() != client.level || entity.isRemoved()
                 || client.getConnection() == null
                 || !client.getConnection().getConnection().isConnected()
-                || !CompatNetwork.CHANNEL.isRemotePresent(client.getConnection().getConnection())
+                || !client.getConnection().hasChannel(ScriptSyncRequestMessage.TYPE)
                 || !MolangScriptRuntime.validSync(arguments)) {
             return;
         }
@@ -110,7 +110,7 @@ public final class ClientScriptEvents {
             return;
         }
         // Do not echo locally: the sender receives the same authenticated server snapshot.
-        CompatNetwork.CHANNEL.sendToServer(new ScriptSyncRequestMessage(modelId, arguments));
+        CompatNetwork.toServer(new ScriptSyncRequestMessage(modelId, arguments));
     }
 
     private static void flushPending() {

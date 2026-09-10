@@ -175,9 +175,9 @@ class ConfigurationSelectionSyncContractTest {
         for (String type : List.of("ConfigurationVariableSnapshotMessage",
                 "ConfigurationVariableScopeReplyMessage")) {
             MethodCode receive = method(read(ROOT + "network/message/" + type), "receive");
-            assertTrue(only(receive.calls("net/minecraftforge/network/NetworkEvent$Context",
-                    "getNetworkManager")) < only(receive.calls(
-                    "net/minecraftforge/network/NetworkEvent$Context", "enqueueWork")), type);
+            assertTrue(only(receive.calls("net/neoforged/neoforge/network/handling/IPayloadContext",
+                    "connection")) < only(receive.calls(
+                    "net/neoforged/neoforge/network/handling/IPayloadContext", "enqueueWork")), type);
         }
     }
 

@@ -1,8 +1,10 @@
 package net.okitsu.ysmepicfightcompat.integration.oculus;
 
+import com.mojang.blaze3d.systems.RenderSystem;
 import net.minecraft.client.renderer.texture.AbstractTexture;
 import net.minecraft.client.renderer.texture.DynamicTexture;
 import net.okitsu.ysmepicfightcompat.CompatMod;
+import org.lwjgl.opengl.GL11;
 
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
@@ -10,17 +12,81 @@ import java.lang.reflect.Proxy;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.function.IntPredicate;
 
 /** Optional LabPBR loader integration without a hard Oculus/Iris dependency. */
 public final class OculusPbrBridge {
     private static final List<String> API_ROOTS = List.of(
+            "net.irisshaders.iris.pbr.loader",
             "net.irisshaders.iris.texture.pbr.loader",
             "net.coderbot.iris.texture.pbr.loader");
     private static final List<Object> LOADERS = new ArrayList<>();
     private static final AtomicBoolean LOAD_WARNING = new AtomicBoolean();
     private static RegistrationState state = RegistrationState.UNKNOWN;
+    private static HolderAccess holderAccess;
+    private static boolean holderAccessResolved;
+
+    record HolderAccess(Object manager, Method getHolder, Method normal, Method specular) {
+        boolean hasInvalidCompanion(int textureId, boolean checkNormal, boolean checkSpecular,
+                                    IntPredicate textureExists) throws ReflectiveOperationException {
+            Object defaults = getHolder.invoke(manager, -1);
+            Object holder = getHolder.invoke(manager, textureId);
+            if (holder == null || defaults == null || holder == defaults) {
+                return false;
+            }
+            return checkNormal && isInvalidCompanion(
+                    normal.invoke(holder), normal.invoke(defaults), textureExists)
+                    || checkSpecular && isInvalidCompanion(
+                    specular.invoke(holder), specular.invoke(defaults), textureExists);
+        }
+    }
 
     private OculusPbrBridge() {
+    }
+
+    /** Observes existing Iris companions without loading, binding, reading, or replacing them. */
+    public static boolean hasInvalidCompanion(
+            AbstractTexture baseTexture, boolean checkNormal, boolean checkSpecular) {
+        if (baseTexture == null || !(checkNormal || checkSpecular)
+                || !RenderSystem.isOnRenderThread()) {
+            return false;
+        }
+        HolderAccess access = holderAccess();
+        if (access == null) {
+            return false;
+        }
+        try {
+            return access.hasInvalidCompanion(
+                    baseTexture.getId(), checkNormal, checkSpecular, GL11::glIsTexture);
+        } catch (ReflectiveOperationException | RuntimeException | LinkageError ignored) {
+            return false;
+        }
+    }
+
+    static boolean isInvalidCompanion(
+            Object companion, Object defaultCompanion, IntPredicate textureExists) {
+        return companion != defaultCompanion && companion instanceof AbstractTexture texture
+                && !textureExists.test(texture.getId());
+    }
+
+    private static synchronized HolderAccess holderAccess() {
+        if (holderAccessResolved) {
+            return holderAccess;
+        }
+        holderAccessResolved = true;
+        try {
+            ClassLoader loader = OculusPbrBridge.class.getClassLoader();
+            Class<?> manager = Class.forName(
+                    "net.irisshaders.iris.pbr.texture.PBRTextureManager", true, loader);
+            Class<?> holder = Class.forName(
+                    "net.irisshaders.iris.pbr.texture.PBRTextureHolder", false, loader);
+            holderAccess = new HolderAccess(manager.getField("INSTANCE").get(null),
+                    manager.getMethod("getHolder", int.class),
+                    holder.getMethod("normalTexture"), holder.getMethod("specularTexture"));
+        } catch (ReflectiveOperationException | RuntimeException | LinkageError ignored) {
+            // Iris is optional. Missing or changed public APIs retain official rendering.
+        }
+        return holderAccess;
     }
 
     /** Registers an exact-class loader once and reports whether PBR upload is available. */
