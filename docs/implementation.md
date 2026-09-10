@@ -128,7 +128,9 @@ Ordinary items stay in Epic Fight's item layer. Independently configurable YSM i
 
 `HandLocatorSelection` supports authored-form mouth, paw, or tail Tool attachments in third person. Exactly one visible, non-collapsed candidate is required; ambiguous/invalid candidates do not override the item, and an entirely hidden candidate set suppresses it. Logical-hand mapping and per-item scopes prevent a two-handed renderer from moving the other hand's attachment.
 
-Armor and head-equipment layers are suppressed for converted player meshes. `ConvertedElytraLayer` renders elytra at one unambiguous usable `ElytraLocator`; otherwise it stays hidden. Capes, arrows, bee stingers, and ordinary held items use Epic Fight's patched layers. Their attachments follow the displayed skeleton on non-action frames and YSM-owned full-body actions; Epic Fight-owned actions retain Epic Fight attachments except for the scoped authored-form Tool path.
+During Epic Fight actions, each item draw receives Tool positions aligned with the displayed hands while retaining the Tool's animation rotation, scale, and independent motion. The same temporary pose view serves renderers that use the layer's pose argument and those that read the armature again, including skinned addon weapons. This view ends with the item draw, preserves non-Tool joints, and keeps authored-form attachments as the first choice.
+
+Armor and head-equipment layers are suppressed for converted player meshes. `ConvertedElytraLayer` renders elytra at one unambiguous usable `ElytraLocator`; otherwise it stays hidden. Capes, arrows, bee stingers, and ordinary held items use Epic Fight's patched layers. Their attachments follow the displayed skeleton on non-action frames and YSM-owned full-body actions; Epic Fight-owned actions retain Epic Fight attachments outside the scoped held-item Tool paths.
 
 First person uses the converted mesh's part visibility and suppresses its biped armor pass. Epic Fight's default mesh retains its ordinary equipment layers whenever conversion fallback is active.
 
