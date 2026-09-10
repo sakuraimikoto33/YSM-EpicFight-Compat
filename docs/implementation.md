@@ -16,7 +16,11 @@ YSM's obfuscated members are accessed through semantic YSM-Mapping-API contracts
 
 `LocalModelRepository` resolves models from official YSM's catalogs. Supported inputs are manifest folders containing `ysm.json`, flat folders containing `main.json`, `arm.json`, and PNG textures, and `.ysm` packages. Folder Bedrock JSON and in-memory package decoding converge on `ModelBundle`.
 
+Legacy `YSGP` V2 packages use `V2PackageDecoder` to validate the envelope checksum and decode bounded named assets in memory. Their geometry, scales, animations, and player textures follow the same rules as flat folders; missing animations still inherit the official defaults. The format follows the [official legacy reader](https://github.com/YesSteveModel/LgeacyYSM/blob/1.20.1-forge/src/main/java/com/elfmcys/yesstevemodel/util/YesModelUtils.java). V3 envelopes retain `V3PackageDecoder` and `V3BinaryPackageParser`. Both paths use the existing parsed-model cache and `GeometryTransferCodec` transfer. V2 cache digests include decoded asset names and contents, independent of entry order and randomized encryption material.
+
 A bundle retains geometry, model scale, animations, controllers, Molang function sources, declared textures, and the `merge_multiline_expr`, `all_cutout`, and `render_layers_first` properties. Base textures can include LabPBR normal and specular companions.
+
+JSON box UVs retain geometrically nonzero faces even when a subpixel cube dimension rounds down to a zero-width or zero-height texture rectangle. Such a face samples a texture point or row; it does not hide the cube. Explicit per-face zero `uv_size` still omits that authored face. Folder and V2 source digests invalidate caches made before this correction; V3 fingerprints and transfer semantics are unchanged.
 
 Model functions are read from `files.function_path` (default `functions`) or package function entries. `ModelFunctionAssets` checks canonical names and UTF-8 source with limits of 4,096 functions, 1 MiB per source, and 16 MiB total.
 
@@ -162,7 +166,7 @@ For supported owned maids, the server separately requests the owner's held-item/
 
 A client missing a selected model can request it from the dedicated server for an online player or supported synchronized maid. `ServerModelTransfers` checks source entity ID/UUID, tracking relation, and current selection both before work and before delivery. Parsing/encoding happens outside the server tick, with bounded requests, pending work, and recipient data volume.
 
-`GeometryTransferCodec` sends compressed geometry, scale/render properties, animation/controller data, Molang functions, sound/particle references, and declared base/PBR textures. It does not send the original package or model-local audio bytes. Compatibility network and serialized transfer versions are `1`.
+`GeometryTransferCodec` sends compressed geometry, scale/render properties, animation/controller data, Molang functions, sound/particle references, and declared base/PBR textures. It does not send the original package or model-local audio bytes.
 
 The client checks chunk counts, concurrent assemblies, sizes, timeouts, SHA-256, and expanded payload limits before accepting a bundle. Infinite source animation-duration declarations are encoded as zero; effective duration can come from retained keys, while network decoding rejects non-finite values.
 
