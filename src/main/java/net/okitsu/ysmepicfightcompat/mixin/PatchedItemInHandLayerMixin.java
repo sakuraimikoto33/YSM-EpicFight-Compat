@@ -14,7 +14,7 @@ import yesman.epicfight.client.renderer.patched.item.RenderItemBase;
 import yesman.epicfight.client.renderer.patched.layer.PatchedItemInHandLayer;
 import yesman.epicfight.world.capabilities.entitypatch.LivingEntityPatch;
 
-/** Suppresses Epic Fight's duplicate item only when the active YSM model supplies the prop. */
+/** Selects the displayed hand pose and suppresses items replaced by the active YSM model. */
 @Mixin(value = PatchedItemInHandLayer.class, remap = false)
 public abstract class PatchedItemInHandLayerMixin {
     @Redirect(
@@ -35,9 +35,9 @@ public abstract class PatchedItemInHandLayerMixin {
         if (RenderFrameContext.suppressesHeldItem(entity, hand)) {
             return;
         }
-        try (RenderFrameContext.FormHeldItemDraw form = RenderFrameContext.openFormHeldItem(
+        try (RenderFrameContext.HeldItemDraw item = RenderFrameContext.openHeldItem(
                 entity, hand, patch.getArmature(), poses)) {
-            renderer.renderItemInHand(stack, patch, hand, form == null ? poses : form.poses(),
+            renderer.renderItemInHand(stack, patch, hand, item == null ? poses : item.poses(),
                     buffers, matrices, light, partialTick);
         }
     }

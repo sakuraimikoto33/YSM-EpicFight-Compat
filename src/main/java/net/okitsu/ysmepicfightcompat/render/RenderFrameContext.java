@@ -40,6 +40,7 @@ public final class RenderFrameContext {
         private OpenMatrix4f leftAuthoredItemPose;
         private OpenMatrix4f elytraLocatorPose;
         private OpenMatrix4f[] attachmentPoses;
+        private OpenMatrix4f[] heldItemPoses;
         private boolean suppressRightHeldItem;
         private boolean suppressLeftHeldItem;
         private boolean mainHandItemSwitchUsesOffArmTool;
@@ -294,6 +295,7 @@ public final class RenderFrameContext {
         frame.elytraLocatorPose = finite(elytraLocatorPose)
                 ? new OpenMatrix4f(elytraLocatorPose) : null;
         frame.attachmentPoses = copyMatrices(attachmentPoses, inputPoses.length);
+        frame.heldItemPoses = null;
         frame.suppressRightHeldItem = suppressRightHeldItem;
         frame.suppressLeftHeldItem = suppressLeftHeldItem;
         frame.mainHandItemSwitchUsesOffArmTool =
@@ -305,6 +307,21 @@ public final class RenderFrameContext {
         frame.formOffHandPose = null;
         frame.hideFormMainHand = false;
         frame.hideFormOffHand = false;
+    }
+
+    /**
+     * Publishes action-time Tool compensation separately from the general layer
+     * skeleton. Armor and other layers must keep their existing action-pose reads.
+     */
+    public static void publishHeldItemPoses(
+            LivingEntity entity, CompatHumanoidMesh mesh, OpenMatrix4f[] inputPoses,
+            @Nullable OpenMatrix4f[] heldItemPoses) {
+        Frame frame = current();
+        if (frame != null && frame.entity == entity && frame.mesh == mesh
+                && frame.epicFightActionActive && frame.attachmentPoses == null
+                && inputPoses != null && sameBodyPoseSource(frame.inputPoses, inputPoses)) {
+            frame.heldItemPoses = copyMatrices(heldItemPoses, inputPoses.length);
+        }
     }
 
     public static Frame pushThirdPerson(LivingEntity entity,
@@ -350,8 +367,24 @@ public final class RenderFrameContext {
         return finite(copy) ? copy : null;
     }
 
+    /** One item's pose arguments and armature re-reads share the same temporary view. */
+    public interface HeldItemDraw extends AutoCloseable {
+        OpenMatrix4f[] poses();
+
+        @Override
+        void close();
+    }
+
+    private record ArmatureHeldItemDraw(OpenMatrix4f[] poses,
+                                        AttachmentArmatureScope scope) implements HeldItemDraw {
+        @Override
+        public void close() {
+            scope.close();
+        }
+    }
+
     /** A per-item, read-only view: a main-hand bow may request the off-hand Tool internally. */
-    public static final class FormHeldItemDraw implements AutoCloseable {
+    public static final class FormHeldItemDraw implements HeldItemDraw {
         private final Frame frame;
         private final OpenMatrix4f[] poses;
         private final AttachmentArmatureScope armatureScope;
@@ -380,6 +413,38 @@ public final class RenderFrameContext {
                 }
             }
         }
+    }
+
+    /**
+     * Forms retain priority. Otherwise apply action-time Tool compensation only
+     * around the selected item renderer, including renderers that re-read its
+     * armature instead of consuming the layer's pose argument.
+     */
+    @Nullable
+    public static HeldItemDraw openHeldItem(
+            LivingEntity entity, InteractionHand hand, Armature armature,
+            OpenMatrix4f[] requestedPoses) {
+        FormHeldItemDraw form = openFormHeldItem(entity, hand, armature, requestedPoses);
+        if (form != null) {
+            return form;
+        }
+        Frame frame = current();
+        if (frame == null || frame.entity != entity || frame.mesh == null
+                || hand == null || frame.heldItemPoses == null
+                || !sameBodyPoseSource(frame.inputPoses, requestedPoses)
+                || AttachmentArmatureScope.isDisplayedPoseArray(armature, requestedPoses)) {
+            return null;
+        }
+        OpenMatrix4f[] copy = copyMatrices(frame.heldItemPoses, requestedPoses.length);
+        if (copy == null) {
+            return null;
+        }
+        AttachmentArmatureScope scope = AttachmentArmatureScope.open(armature, requestedPoses, copy);
+        if (!AttachmentArmatureScope.isDisplayedPoseArray(armature, copy)) {
+            scope.close();
+            return null;
+        }
+        return new ArmatureHeldItemDraw(copy, scope);
     }
 
     @Nullable
@@ -663,6 +728,7 @@ public final class RenderFrameContext {
         frame.leftAuthoredItemPose = null;
         frame.elytraLocatorPose = null;
         frame.attachmentPoses = null;
+        frame.heldItemPoses = null;
         frame.suppressRightHeldItem = false;
         frame.suppressLeftHeldItem = false;
         frame.mainHandItemSwitchUsesOffArmTool = false;

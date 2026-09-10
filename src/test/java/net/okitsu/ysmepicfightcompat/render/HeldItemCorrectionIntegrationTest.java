@@ -6,6 +6,7 @@ import net.minecraft.world.entity.LivingEntity;
 import net.okitsu.ysmepicfightcompat.animation.DefaultPoseProgram;
 import net.okitsu.ysmepicfightcompat.geometry.GeometryDocument;
 import net.okitsu.ysmepicfightcompat.mesh.AuxiliaryBoneLayout;
+import net.okitsu.ysmepicfightcompat.mesh.AuxiliaryPoseMatrices;
 import net.okitsu.ysmepicfightcompat.mesh.CompatHumanoidMesh;
 import net.okitsu.ysmepicfightcompat.mesh.HumanoidRig;
 import org.joml.Matrix4f;
@@ -34,6 +35,7 @@ import java.util.Set;
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -162,6 +164,159 @@ class HeldItemCorrectionIntegrationTest {
             retargeted.m32 = fist.z + body[tool].m32 - body[hand].m32;
             assertCorrection(patch, body, tool, retargeted, true);
         }
+    }
+
+    @Test
+    void customActionRenderersReceiveTheSameGripWithoutChangingOtherLayers() {
+        Armature armature = armature();
+        TestPatch patch = new TestPatch(armature);
+        CompatHumanoidMesh mesh = mesh();
+        RenderFrameContext.pushThirdPerson(null, null, true);
+        assertTrue(RenderFrameContext.bindMesh(null, false, mesh));
+        OpenMatrix4f[] body = poses();
+        Vector3f right = new Vector3f(2, 3, 4);
+        Vector3f left = new Vector3f(-2, 3, 4);
+        publish(mesh, body, right, left, null, null, null);
+
+        OpenMatrix4f[] oldCorrections = new OpenMatrix4f[body.length];
+        for (int tool : new int[]{HumanoidRig.RIGHT_TOOL, HumanoidRig.LEFT_TOOL}) {
+            oldCorrections[tool] = new OpenMatrix4f(HeldItemPoseResolver.resolveCorrection(
+                    patch, body, itemCorrection(), body[tool]));
+        }
+        OpenMatrix4f[] items = itemPoses(armature, body, right, left);
+        OpenMatrix4f[] expectedTools = {new OpenMatrix4f(items[HumanoidRig.RIGHT_TOOL]),
+                new OpenMatrix4f(items[HumanoidRig.LEFT_TOOL])};
+        RenderFrameContext.publishHeldItemPoses(null, mesh, body, items);
+        items[HumanoidRig.RIGHT_TOOL].m30 = 999;
+
+        assertSame(body, RenderFrameContext.resolvePatchedLayerPoses(body));
+        try (var layer = RenderFrameContext.openAttachmentScope(null, armature, body)) {
+            assertFalse(AttachmentArmatureScope.suppressPoseWrite(armature),
+                    "An ordinary action layer must keep its original armature behavior");
+            try (var item = RenderFrameContext.openHeldItem(
+                    null, InteractionHand.MAIN_HAND, armature, body.clone())) {
+                assertNotNull(item);
+                assertTrue(AttachmentArmatureScope.suppressPoseWrite(armature));
+                assertFalse(RenderFrameContext.formHeldItemActive(null),
+                        "Action compensation must not force sheathed items onto Tool joints");
+                assertSame(body, RenderFrameContext.resolvePatchedLayerPoses(body));
+                OpenMatrix4f[] reread = AttachmentArmatureScope.resolvePoseMatrices(
+                        armature, body, false);
+                OpenMatrix4f[] skin = AttachmentArmatureScope.resolvePoseMatrices(
+                        armature, body, true);
+                for (int index = 0; index < 2; index++) {
+                    int tool = index == 0 ? HumanoidRig.RIGHT_TOOL : HumanoidRig.LEFT_TOOL;
+                    for (OpenMatrix4f[] requested : new OpenMatrix4f[][]{
+                            item.poses(), item.poses().clone(), reread, reread.clone()}) {
+                        assertMatrixEquals(expectedTools[index], requested[tool]);
+                        assertTrue(AttachmentArmatureScope.isDisplayedPoseArray(
+                                armature, requested));
+                        assertMatrixEquals(oldCorrections[tool],
+                                HeldItemPoseResolver.resolveCorrection(
+                                        patch, requested, itemCorrection(), requested[tool]));
+                    }
+                    assertMatrixEquals(new OpenMatrix4f(expectedTools[index])
+                            .mulBack(armature.searchJointById(tool).getToOrigin()), skin[tool]);
+                }
+                for (int joint = 0; joint < body.length; joint++) {
+                    if (joint != HumanoidRig.RIGHT_TOOL && joint != HumanoidRig.LEFT_TOOL) {
+                        assertMatrixEquals(body[joint], item.poses()[joint]);
+                    }
+                }
+                assertCorrection(patch, item.poses(), HumanoidRig.CHEST,
+                        body[HumanoidRig.CHEST], false);
+                assertNull(RenderFrameContext.openHeldItem(
+                        null, InteractionHand.MAIN_HAND, armature, item.poses()),
+                        "A nested consumer of the same displayed array keeps the existing scope");
+                assertTrue(AttachmentArmatureScope.isDisplayedPoseArray(armature, item.poses()));
+            }
+            assertFalse(AttachmentArmatureScope.suppressPoseWrite(armature));
+        }
+        assertSame(body, AttachmentArmatureScope.resolvePoseMatrices(armature, body, false));
+        for (int joint = 0; joint < body.length; joint++) {
+            assertMatrixEquals(poses()[joint], body[joint]);
+        }
+    }
+
+    @Test
+    void actionItemViewsAreCopiedPerDrawAndExpireWithTheBodyPublication() {
+        Armature armature = armature();
+        CompatHumanoidMesh mesh = mesh();
+        RenderFrameContext.pushThirdPerson(null, null, true);
+        assertTrue(RenderFrameContext.bindMesh(null, false, mesh));
+        OpenMatrix4f[] body = poses();
+        Vector3f right = new Vector3f(2, 3, 4);
+        Vector3f left = new Vector3f(-2, 3, 4);
+        publish(mesh, body, right, left, null, null, null);
+        OpenMatrix4f[] items = itemPoses(armature, body, right, left);
+        RenderFrameContext.publishHeldItemPoses(null, mesh, body, items);
+
+        assertNull(RenderFrameContext.openHeldItem(
+                null, InteractionHand.MAIN_HAND, armature, poses()));
+        assertNull(RenderFrameContext.openHeldItem(
+                null, InteractionHand.MAIN_HAND, null, body));
+        for (InteractionHand hand : InteractionHand.values()) {
+            try (var item = RenderFrameContext.openHeldItem(null, hand, armature, body)) {
+                assertNotNull(item);
+                assertMatrixEquals(items[HumanoidRig.RIGHT_TOOL],
+                        item.poses()[HumanoidRig.RIGHT_TOOL]);
+                item.poses()[HumanoidRig.RIGHT_TOOL].m30 = 999;
+                assertMatrixEquals(items[HumanoidRig.RIGHT_TOOL],
+                        AttachmentArmatureScope.resolvePoseMatrices(
+                                armature, body, false)[HumanoidRig.RIGHT_TOOL]);
+            }
+        }
+
+        // A later body draw can reuse the input array but no longer supply this view.
+        publish(mesh, body, right, left, null, null, null);
+        assertNull(RenderFrameContext.openHeldItem(
+                null, InteractionHand.MAIN_HAND, armature, body));
+        RenderFrameContext.publishHeldItemPoses(null, mesh, body, items);
+        RenderFrameContext.Frame nested = RenderFrameContext.pushThirdPerson(null, null, true);
+        try {
+            assertNull(RenderFrameContext.openHeldItem(
+                    null, InteractionHand.MAIN_HAND, armature, body));
+        } finally {
+            RenderFrameContext.pop(nested);
+        }
+        assertFalse(RenderFrameContext.bindMesh(null, false, mesh()));
+        assertNull(RenderFrameContext.openHeldItem(
+                null, InteractionHand.MAIN_HAND, armature, body));
+    }
+
+    @Test
+    void formsAndExistingBodyProjectionsRetainPriorityOverActionItemViews() {
+        Armature armature = armature();
+        CompatHumanoidMesh mesh = mesh();
+        RenderFrameContext.pushThirdPerson(null, null, true);
+        assertTrue(RenderFrameContext.bindMesh(null, false, mesh));
+        OpenMatrix4f[] body = poses();
+        Vector3f right = new Vector3f(2, 3, 4);
+        Vector3f left = new Vector3f(-2, 3, 4);
+        OpenMatrix4f[] items = itemPoses(armature, body, right, left);
+        publish(mesh, body, right, left, null, null, projectedPoses());
+        RenderFrameContext.publishHeldItemPoses(null, mesh, body, items);
+        OpenMatrix4f[] displayed = RenderFrameContext.resolvePatchedLayerPoses(body);
+        try (var layer = RenderFrameContext.openAttachmentScope(null, armature, body)) {
+            assertNull(RenderFrameContext.openHeldItem(
+                    null, InteractionHand.MAIN_HAND, armature, displayed));
+            assertTrue(AttachmentArmatureScope.isDisplayedPoseArray(armature, displayed));
+        }
+
+        publish(mesh, body, right, left, null, null, null);
+        RenderFrameContext.publishHeldItemPoses(null, mesh, body, items);
+        OpenMatrix4f form = new OpenMatrix4f().translate(10, 20, 30).rotateDeg(45, Vec3f.Y_AXIS);
+        RenderFrameContext.publishFormHeldItemPoints(null, mesh, HumanoidArm.RIGHT,
+                form, null, false, false, 1);
+        try (var item = RenderFrameContext.openHeldItem(
+                null, InteractionHand.MAIN_HAND, armature, body)) {
+            assertNotNull(item);
+            assertTrue(RenderFrameContext.formHeldItemActive(null));
+            assertMatrixEquals(form, item.poses()[HumanoidRig.RIGHT_TOOL]);
+            assertMatrixEquals(form, item.poses()[HumanoidRig.LEFT_TOOL]);
+        }
+        assertFalse(RenderFrameContext.formHeldItemActive(null));
+        assertFalse(AttachmentArmatureScope.suppressPoseWrite(armature));
     }
 
     @Test
@@ -294,7 +449,7 @@ class HeldItemCorrectionIntegrationTest {
                 null, displayed, false, false, false, false, Set.of());
     }
 
-    private static CompatHumanoidMesh mesh() {
+    private static GeometryDocument geometry() {
         GeometryDocument geometry = new GeometryDocument();
         for (String side : new String[]{"Right", "Left"}) {
             GeometryDocument.Bone hand = new GeometryDocument.Bone(side + "Hand");
@@ -305,6 +460,17 @@ class HeldItemCorrectionIntegrationTest {
             geometry.add(locator);
         }
         geometry.linkHierarchy();
+        return geometry;
+    }
+
+    private static OpenMatrix4f[] itemPoses(Armature armature, OpenMatrix4f[] body,
+                                           Vector3f right, Vector3f left) {
+        return new AuxiliaryPoseMatrices(AuxiliaryBoneLayout.create(geometry()))
+                .heldItemAttachmentPoses(armature, body, right, left, null, null, 1);
+    }
+
+    private static CompatHumanoidMesh mesh() {
+        GeometryDocument geometry = geometry();
         Map<String, Number[]> arrays = new LinkedHashMap<>();
         for (String key : new String[]{"positions", "normals", "uvs",
                 "weights", "vcounts", "vindices"}) {

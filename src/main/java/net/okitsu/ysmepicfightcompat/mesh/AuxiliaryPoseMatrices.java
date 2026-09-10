@@ -235,6 +235,52 @@ public final class AuxiliaryPoseMatrices {
                 heldItemReferencePoint, heldItemHandPoint, heldItemToolPoint);
     }
 
+    /**
+     * Keeps action-time body joints intact while giving custom item renderers the
+     * same Tool placement as the ordinary item correction. This world-pose view
+     * belongs only to a held-item draw; it is not a replacement gameplay pose.
+     */
+    @Nullable
+    public OpenMatrix4f[] heldItemAttachmentPoses(
+            @Nullable Armature armature, @Nullable OpenMatrix4f[] originalPoses,
+            @Nullable Vector3f rightFist, @Nullable Vector3f leftFist,
+            @Nullable OpenMatrix4f rightAuthoredItemPose,
+            @Nullable OpenMatrix4f leftAuthoredItemPose, float translationScale) {
+        if (armature == null || originalPoses == null
+                || originalPoses.length < HumanoidRig.EPIC_JOINT_COUNT
+                || !prepareArmature(armature)) {
+            return null;
+        }
+        OpenMatrix4f[] result = new OpenMatrix4f[originalPoses.length];
+        for (int joint = 0; joint < result.length; joint++) {
+            if (originalPoses[joint] == null || !finite(originalPoses[joint])) {
+                return null;
+            }
+            result[joint] = new OpenMatrix4f(originalPoses[joint]);
+        }
+        float safeScale = Float.isFinite(translationScale)
+                && translationScale > 1.0E-7F ? translationScale : 1.0F;
+        for (int tool : new int[]{HumanoidRig.RIGHT_TOOL, HumanoidRig.LEFT_TOOL}) {
+            OpenMatrix4f authored = tool == HumanoidRig.RIGHT_TOOL
+                    ? rightAuthoredItemPose : leftAuthoredItemPose;
+            OpenMatrix4f corrected = authored != null && finite(authored) ? authored
+                    : heldItemPose(armature, originalPoses, tool,
+                    tool == HumanoidRig.RIGHT_TOOL ? rightFist : leftFist);
+            // heldItemPose reuses one scratch matrix for both hands. Copy it before
+            // resolving the other hand, and never mutate a published locator.
+            if (corrected != null) {
+                result[tool].load(corrected);
+            }
+            result[tool].m30 *= safeScale;
+            result[tool].m31 *= safeScale;
+            result[tool].m32 *= safeScale;
+            if (!finite(result[tool])) {
+                return null;
+            }
+        }
+        return result;
+    }
+
     /** Resolves the authored fist point through the exact final skin used for model drawing. */
     @Nullable
     public Vector3f displayedFist(@Nullable OpenMatrix4f[] complete, int joint) {
