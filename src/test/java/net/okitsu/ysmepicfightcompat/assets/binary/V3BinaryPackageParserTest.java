@@ -15,14 +15,14 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
-class BinaryPackageParserTest {
+class V3BinaryPackageParserTest {
     @Test
     void retainsRenderPropertyCombinationsAcrossPackageVersionBoundaries() {
         for (int format : List.of(3, 4, 5, 9, 10, 14, 15, 16, 25, 26, 31, 32)) {
             for (int flags = 0; flags < 4; flags++) {
                 boolean cutout = (flags & 1) != 0;
                 boolean layersFirst = (flags & 2) != 0;
-                ModelBundle model = BinaryPackageParser.parse("render-properties",
+                ModelBundle model = V3BinaryPackageParser.parse("render-properties",
                         renderPropertyPackage(format, cutout ? 1 : 0,
                                 layersFirst ? 1 : 0, false));
                 String context = "format=" + format + ", flags=" + flags;
@@ -37,7 +37,7 @@ class BinaryPackageParserTest {
     @Test
     void unrelatedPackagePropertiesDoNotEnableRenderFlags() {
         for (int format : List.of(4, 5, 14, 15, 16, 31, 32)) {
-            ModelBundle model = BinaryPackageParser.parse("unrelated-properties",
+            ModelBundle model = V3BinaryPackageParser.parse("unrelated-properties",
                     renderPropertyPackage(format, 0, 0, true));
             assertFalse(model.allCutout(), "format=" + format);
             assertFalse(model.renderLayersFirst(), "format=" + format);
@@ -47,9 +47,9 @@ class BinaryPackageParserTest {
 
     @Test
     void rejectsNonBooleanRenderProperties() {
-        assertThrows(IllegalStateException.class, () -> BinaryPackageParser.parse(
+        assertThrows(IllegalStateException.class, () -> V3BinaryPackageParser.parse(
                 "invalid-cutout", renderPropertyPackage(32, 2, 0, false)));
-        assertThrows(IllegalStateException.class, () -> BinaryPackageParser.parse(
+        assertThrows(IllegalStateException.class, () -> V3BinaryPackageParser.parse(
                 "invalid-layers-first", renderPropertyPackage(32, 0, 2, false)));
     }
 
@@ -141,7 +141,7 @@ class BinaryPackageParserTest {
 
     @Test
     void mergesModernTimelineOnlyAfterReadingThePackageProperties() {
-        ModelBundle model = BinaryPackageParser.parse("multiline", multilinePackage(32, true));
+        ModelBundle model = V3BinaryPackageParser.parse("multiline", multilinePackage(32, true));
         assertTrue(model.mergeMultilineExpressions());
         var timeline = model.animations().get("parallel0").timeline();
         assertEquals(List.of("v.enabled ? {\nv.result=7; // comment\n};"),
@@ -156,7 +156,7 @@ class BinaryPackageParserTest {
     @Test
     void keepsIndependentStatementsWhenPackageSettingIsFalseOrAbsent() {
         for (int format : List.of(28, 31, 32)) {
-            ModelBundle model = BinaryPackageParser.parse("independent",
+            ModelBundle model = V3BinaryPackageParser.parse("independent",
                     multilinePackage(format, false));
             assertFalse(model.mergeMultilineExpressions());
             assertEquals(List.of("v.enabled ? {", "v.result=7; // comment", "};"),
@@ -168,7 +168,7 @@ class BinaryPackageParserTest {
     void laterFirstPersonClipsDoNotReplacePlayerMultilineTimelines() {
         for (int format : List.of(28, 31, 32)) {
             for (boolean merge : List.of(false, true)) {
-                ModelBundle model = BinaryPackageParser.parse("duplicate-clips",
+                ModelBundle model = V3BinaryPackageParser.parse("duplicate-clips",
                         multilinePackage(format, merge, true));
                 var timeline = model.animations().get("parallel0").timeline();
                 assertEquals(3, timeline.size(), "Player timeline must survive later empty clips");
@@ -251,21 +251,21 @@ class BinaryPackageParserTest {
         writeBlob(output, "v.ready=1;\n// 雪".getBytes(StandardCharsets.UTF_8));
         writeModernFunctionTail(output);
 
-        ModelBundle bundle = BinaryPackageParser.parse("functions", output.toByteArray());
+        ModelBundle bundle = V3BinaryPackageParser.parse("functions", output.toByteArray());
         assertEquals(java.util.Map.of("sum", "return args[0] + args[1];",
                         "初期化@player_init", "v.ready=1;\n// 雪"), bundle.functions());
     }
 
     @Test
     void rejectsModernFunctionCountAndLengthBeforeReadingBodies() {
-        assertThrows(IllegalStateException.class, () -> BinaryPackageParser.parse(
+        assertThrows(IllegalStateException.class, () -> V3BinaryPackageParser.parse(
                 "function-count", functionHeader(ModelFunctionAssets.MAX_FUNCTIONS + 1).toByteArray()));
         ByteArrayOutputStream output = functionHeader(1);
         writeText(output, "sum");
         writeText(output, "a".repeat(64));
         writeVarUInt(output, ModelFunctionAssets.MAX_SOURCE_BYTES + 1);
         assertThrows(IllegalStateException.class,
-                () -> BinaryPackageParser.parse("function-size", output.toByteArray()));
+                () -> V3BinaryPackageParser.parse("function-size", output.toByteArray()));
     }
 
     @Test
@@ -277,14 +277,14 @@ class BinaryPackageParserTest {
             writeBlob(duplicate, "return 1;".getBytes(StandardCharsets.UTF_8));
         }
         assertThrows(IllegalStateException.class,
-                () -> BinaryPackageParser.parse("duplicate", duplicate.toByteArray()));
+                () -> V3BinaryPackageParser.parse("duplicate", duplicate.toByteArray()));
 
         ByteArrayOutputStream malformed = functionHeader(1);
         writeText(malformed, "sum");
         writeText(malformed, "a".repeat(64));
         writeBlob(malformed, new byte[]{(byte) 0xC3, 0x28});
         assertThrows(IllegalArgumentException.class,
-                () -> BinaryPackageParser.parse("invalid-source", malformed.toByteArray()));
+                () -> V3BinaryPackageParser.parse("invalid-source", malformed.toByteArray()));
     }
 
     private static ByteArrayOutputStream functionHeader(int count) {
@@ -314,14 +314,14 @@ class BinaryPackageParserTest {
     void rejectsCountsBeyondTheSafetyLimit() {
         byte[] payload = {16, 0, 0, 0, (byte) 0xC1, (byte) 0x84, 0x3D};
         assertThrows(IllegalStateException.class,
-                () -> BinaryPackageParser.parse("oversized", payload));
+                () -> V3BinaryPackageParser.parse("oversized", payload));
     }
 
     @Test
     void rejectsTextThatRunsPastThePayload() {
         byte[] payload = {16, 0, 0, 0, 1, 16};
         assertThrows(IllegalStateException.class,
-                () -> BinaryPackageParser.parse("truncated", payload));
+                () -> V3BinaryPackageParser.parse("truncated", payload));
     }
 
     @Test
@@ -330,7 +330,7 @@ class BinaryPackageParserTest {
                 (byte) 0x80, (byte) 0x80, (byte) 0x80,
                 (byte) 0x80, (byte) 0x80, 0};
         assertThrows(IllegalStateException.class,
-                () -> BinaryPackageParser.parse("varint", payload));
+                () -> V3BinaryPackageParser.parse("varint", payload));
     }
 
     @Test
@@ -389,7 +389,7 @@ class BinaryPackageParserTest {
         writeVarUInt(output, 0); // Texture lookup.
         writeEmptyProperties(output);
 
-        ModelBundle model = BinaryPackageParser.parse("controller", output.toByteArray());
+        ModelBundle model = V3BinaryPackageParser.parse("controller", output.toByteArray());
         AnimationController controller = model.animationControllers().get("player.parallel_4");
         AnimationController.State idle = controller.states().get("idle");
 
@@ -441,7 +441,7 @@ class BinaryPackageParserTest {
         writeVarUInt(output, 0); // Texture lookup.
         writeEmptyProperties(output);
 
-        ModelBundle model = BinaryPackageParser.parse("pbr", output.toByteArray());
+        ModelBundle model = V3BinaryPackageParser.parse("pbr", output.toByteArray());
         ModelBundle.PbrTextures pbr = model.pbrTextures().get("skin");
 
         assertArrayEquals(new byte[]{1, 2, 3, 4}, model.textures().get("skin"));
@@ -483,7 +483,7 @@ class BinaryPackageParserTest {
         writeEmptyGeometry(output);
         writeModernEmptyProperties(output);
 
-        ModelBundle model = BinaryPackageParser.parse("modern-pbr", output.toByteArray());
+        ModelBundle model = V3BinaryPackageParser.parse("modern-pbr", output.toByteArray());
         ModelBundle.PbrTextures pbr = model.pbrTextures().get("skin");
 
         assertArrayEquals(new byte[]{4, 5}, pbr.normal().bytes());

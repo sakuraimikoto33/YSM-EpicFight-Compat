@@ -229,13 +229,16 @@ public final class BedrockGeometryParser {
         double z = Math.floor(size[2]);
         double u = uv[0];
         double v = uv[1];
+        // Box UVs can collapse to a texel row, column or point when an authored cube
+        // is smaller than one pixel. Those geometrically valid faces still render;
+        // only an explicitly zero-sized per-face UV disables an authored face.
         return switch (side) {
-            case WEST -> rectangle(u + z + x, v + z, z, y);
-            case EAST -> rectangle(u, v + z, z, y);
-            case NORTH -> rectangle(u + z, v + z, x, y);
-            case SOUTH -> rectangle(u + z + x + z, v + z, x, y);
-            case UP -> rectangle(u + z, v, x, z);
-            case DOWN -> rectangle(u + z + x, v + z, x, -z);
+            case WEST -> new double[]{u + z + x, v + z, z, y};
+            case EAST -> new double[]{u, v + z, z, y};
+            case NORTH -> new double[]{u + z, v + z, x, y};
+            case SOUTH -> new double[]{u + z + x + z, v + z, x, y};
+            case UP -> new double[]{u + z, v, x, z};
+            case DOWN -> new double[]{u + z + x, v + z, x, -z};
         };
     }
 

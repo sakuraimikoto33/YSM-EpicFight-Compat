@@ -163,6 +163,58 @@ class BedrockGeometryParserTest {
         }
     }
 
+    @ParameterizedTest
+    @ValueSource(strings = {"[3,0.7,0.5]", "[0.2,7,0.2]", "[7,0.2,0.2]", "[0.2,0.2,0.2]"})
+    void subpixelBoxUvsKeepGeometricallyValidFaces(String size) {
+        for (String boneName : List.of("detail", "ysmGlow_detail")) {
+            for (boolean allCutout : new boolean[]{false, true}) {
+                List<GeometryDocument.Face> faces = faces(
+                        cube(boneName, size, "[16,24]", "", ""), boneName, allCutout);
+                assertEquals(6, faces.size());
+                for (GeometryDocument.Face face : faces) {
+                    assertTrue(winding(face).lengthSquared() > 0.0F);
+                }
+                assertEquals(new Vector3f(-1, 0, 0), faces.get(0).normal());
+                assertEquals(new Vector3f(1, 0, 0), faces.get(1).normal());
+                assertEquals(new Vector3f(0, 0, -1), faces.get(2).normal());
+                assertEquals(new Vector3f(0, 0, 1), faces.get(3).normal());
+                assertEquals(new Vector3f(0, 1, 0), faces.get(4).normal());
+                assertEquals(new Vector3f(0, -1, 0), faces.get(5).normal());
+            }
+        }
+    }
+
+    @Test
+    void subpixelBoxUvsRetainTheExistingFlooredTexelRowsAndPoints() {
+        List<GeometryDocument.Face> faces = faces(
+                cube("detail", "[3,0.7,0.5]", "[16,24]", "", ""), "detail", false);
+        for (int corner = 0; corner < 4; corner++) {
+            assertArrayEquals(new float[]{19.0F / 64, 24.0F / 64},
+                    faces.get(0).textureCoordinates()[corner]);
+            assertArrayEquals(new float[]{16.0F / 64, 24.0F / 64},
+                    faces.get(1).textureCoordinates()[corner]);
+        }
+        float[] right = {19, 22, 19, 22};
+        float[] left = {16, 19, 16, 19};
+        for (int face = 2; face < 6; face++) {
+            assertArrayEquals(new float[]{right[face - 2] / 64, 24.0F / 64},
+                    faces.get(face).textureCoordinates()[0]);
+            assertArrayEquals(new float[]{left[face - 2] / 64, 24.0F / 64},
+                    faces.get(face).textureCoordinates()[1]);
+        }
+    }
+
+    @Test
+    void subpixelBoxUvsKeepFlatFaceAndZeroAreaPolicies() {
+        String plane = cube("plane", "[3,0,0.5]", "[16,24]", "", "");
+        assertEquals(1, faces(plane, "plane", false).size());
+        assertOppositeFaces(faces(plane, "plane", true));
+        for (boolean allCutout : new boolean[]{false, true}) {
+            assertTrue(faces(cube("line", "[3,0,0]", "[16,24]", "", ""),
+                    "line", allCutout).isEmpty());
+        }
+    }
+
     @Test
     void buildsTheBoneTreeAndAllSixCubeFaces() {
         GeometryDocument geometry = BedrockGeometryParser.parse("""

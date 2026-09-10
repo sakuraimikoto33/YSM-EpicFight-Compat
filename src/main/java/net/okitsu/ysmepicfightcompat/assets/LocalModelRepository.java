@@ -7,8 +7,9 @@ import net.okitsu.ysmepicfightcompat.animation.AnimationClip;
 import net.okitsu.ysmepicfightcompat.animation.AnimationController;
 import net.okitsu.ysmepicfightcompat.animation.BedrockAnimationControllerParser;
 import net.okitsu.ysmepicfightcompat.animation.BedrockAnimationParser;
-import net.okitsu.ysmepicfightcompat.assets.binary.BinaryPackageParser;
-import net.okitsu.ysmepicfightcompat.assets.binary.PackageEnvelopeDecoder;
+import net.okitsu.ysmepicfightcompat.assets.binary.V3BinaryPackageParser;
+import net.okitsu.ysmepicfightcompat.assets.binary.V2PackageDecoder;
+import net.okitsu.ysmepicfightcompat.assets.binary.V3PackageDecoder;
 import net.okitsu.ysmepicfightcompat.geometry.BedrockGeometryParser;
 
 import java.io.IOException;
@@ -34,6 +35,8 @@ public final class LocalModelRepository {
     private static final byte[] MODEL_BUNDLE_SCHEMA =
             "ysm-ef-model-bundle:pbr-materials:molang-sources:multiline-timelines-v1:first-clip-wins:render-flags-v1:culled-flat-faces-v1:unbounded-animation-duration-v1"
                     .getBytes(StandardCharsets.UTF_8);
+    private static final byte[] JSON_GEOMETRY_SCHEMA =
+            "box-uv-degenerate-faces-v1".getBytes(StandardCharsets.UTF_8);
     private static final Path DEFAULT_ROOT = Path.of("config", "yes_steve_model");
     private static final List<String> CATALOGS = List.of("builtin", "built", "custom", "auth");
     private static final long MAX_MANIFEST = 4L * 1024 * 1024;
@@ -169,10 +172,32 @@ public final class LocalModelRepository {
             digest.update(MODEL_BUNDLE_SCHEMA);
             digest.update(modelId.getBytes(StandardCharsets.UTF_8));
             if (located.archive()) {
-                byte[] decrypted = PackageEnvelopeDecoder.open(readBounded(located.path(), MAX_ARCHIVE));
-                digest.update(ByteBuffer.allocate(Long.BYTES).putLong(decrypted.length).array());
-                digest.update(decrypted);
+                byte[] envelope = readBounded(located.path(), MAX_ARCHIVE);
+                if (V2PackageDecoder.hasMagic(envelope)) {
+                    // V2 contains named assets, not the V3 binary model payload.
+                    // Fingerprint decoded content so randomized encryption material
+                    // does not invalidate otherwise identical parsed-model caches.
+                    digest.update("legacy-ysg-package-v2".getBytes(StandardCharsets.UTF_8));
+                    digest.update(JSON_GEOMETRY_SCHEMA);
+                    Map<String, byte[]> entries = V2PackageDecoder.open(envelope);
+                    for (String name : entries.keySet().stream().sorted().toList()) {
+                        byte[] encodedName = name.getBytes(StandardCharsets.UTF_8);
+                        byte[] bytes = entries.get(name);
+                        digest.update(ByteBuffer.allocate(Integer.BYTES)
+                                .putInt(encodedName.length).array());
+                        digest.update(encodedName);
+                        digest.update(ByteBuffer.allocate(Long.BYTES).putLong(bytes.length).array());
+                        digest.update(bytes);
+                    }
+                } else {
+                    byte[] decrypted = V3PackageDecoder.open(envelope);
+                    digest.update(ByteBuffer.allocate(Long.BYTES).putLong(decrypted.length).array());
+                    digest.update(decrypted);
+                }
             } else {
+                // Rebuild JSON-derived bundles that previously dropped subpixel
+                // box faces with degenerate UVs. Binary V3 payloads are unaffected.
+                digest.update(JSON_GEOMETRY_SCHEMA);
                 for (Path file : regularFiles(located.path())) {
                     byte[] bytes = readBounded(file, MAX_TEXTURE);
                     digest.update(slashPath(located.path().relativize(file)).getBytes(StandardCharsets.UTF_8));
@@ -298,29 +323,59 @@ public final class LocalModelRepository {
 
     private static ModelBundle readArchive(String modelId, Path archive) throws IOException {
         byte[] envelope = readBounded(archive, MAX_ARCHIVE);
-        return BinaryPackageParser.parse(modelId, PackageEnvelopeDecoder.open(envelope));
+        if (V2PackageDecoder.hasMagic(envelope)) {
+            Map<String, byte[]> entries = V2PackageDecoder.open(envelope);
+            return readLegacyModel(modelId, entries.keySet().stream().sorted().toList(),
+                    (name, limit) -> {
+                        byte[] bytes = entries.get(name);
+                        if (bytes == null || bytes.length > limit) {
+                            throw new IOException("Missing or oversized legacy model asset: " + name);
+                        }
+                        return bytes;
+                    });
+        }
+        return V3BinaryPackageParser.parse(modelId, V3PackageDecoder.open(envelope));
     }
 
     private static ModelBundle readLegacyDirectory(String modelId, Path directory)
             throws IOException {
-        String geometryJson = textBounded(directory.resolve("main.json"), MAX_GEOMETRY);
+        List<String> names = directRegularFiles(directory).stream()
+                .map(file -> file.getFileName().toString()).toList();
+        return readLegacyModel(modelId, names,
+                (name, limit) -> readBounded(confine(directory, name), limit));
+    }
+
+    /** Shares the flat-folder semantics without extracting package assets to disk. */
+    private static ModelBundle readLegacyModel(String modelId, List<String> names,
+                                               LegacyAssetReader reader) throws IOException {
+        String geometryJson = new String(reader.read("main.json", MAX_GEOMETRY),
+                StandardCharsets.UTF_8);
         ModelBundle bundle = new ModelBundle(modelId);
         bundle.geometry(BedrockGeometryParser.parse(geometryJson));
         readLegacyScales(geometryJson, bundle);
 
-        List<Path> files = directRegularFiles(directory);
-        for (Path file : files) {
-            String name = file.getFileName().toString();
+        for (String name : names) {
             if (name.endsWith(".animation.json")) {
-                readAnimationFile(file, bundle.animations());
-            } else if (isLegacyPlayerTexture(file)) {
-                bundle.textures().put(stem(name), readBounded(file, MAX_TEXTURE));
+                try {
+                    readAnimationSource(new String(reader.read(name, MAX_ANIMATION),
+                            StandardCharsets.UTF_8), bundle.animations(), false);
+                } catch (Exception ignored) {
+                    // Match folder loading: an invalid optional animation file does
+                    // not hide otherwise usable geometry and textures.
+                }
+            } else if (isLegacyPlayerTextureName(name)) {
+                bundle.textures().put(stem(name), reader.read(name, MAX_TEXTURE));
             }
         }
         if (!bundle.textures().isEmpty()) {
             bundle.defaultTexture(bundle.textures().keySet().iterator().next());
         }
         return bundle;
+    }
+
+    @FunctionalInterface
+    private interface LegacyAssetReader {
+        byte[] read(String name, long limit) throws IOException;
     }
 
     private static void readLegacyScales(String geometryJson, ModelBundle bundle) {
@@ -339,32 +394,33 @@ public final class LocalModelRepository {
         }
     }
 
-    private static void readAnimationFile(Path file, Map<String, AnimationClip> target) {
-        readAnimationFile(file, target, false);
-    }
-
     private static void readAnimationFile(Path file, Map<String, AnimationClip> target,
                                           boolean mergeMultiline) {
         try {
-            JsonObject root = JsonParser.parseString(textBounded(file, MAX_ANIMATION)).getAsJsonObject();
-            JsonObject animations = object(root, "animations");
-            if (animations == null) {
-                return;
-            }
-            for (Map.Entry<String, JsonElement> entry : animations.entrySet()) {
-                if (entry.getValue().isJsonObject()) {
-                    // A model can reuse an animation name in a later, specialized file
-                    // (for example fp_arm). The manifest order is the precedence order:
-                    // keep the main definition instead of replacing it with a partial one.
-                    AnimationClip clip = BedrockAnimationParser.parse(
-                            entry.getKey(), entry.getValue().getAsJsonObject());
-                    if (mergeMultiline) {
-                        clip.mergeTimelineExpressions();
-                    }
-                    target.putIfAbsent(entry.getKey(), clip);
-                }
-            }
+            readAnimationSource(textBounded(file, MAX_ANIMATION), target, mergeMultiline);
         } catch (Exception ignored) {
+        }
+    }
+
+    private static void readAnimationSource(String source, Map<String, AnimationClip> target,
+                                            boolean mergeMultiline) {
+        JsonObject root = JsonParser.parseString(source).getAsJsonObject();
+        JsonObject animations = object(root, "animations");
+        if (animations == null) {
+            return;
+        }
+        for (Map.Entry<String, JsonElement> entry : animations.entrySet()) {
+            if (entry.getValue().isJsonObject()) {
+                // A model can reuse an animation name in a later, specialized file
+                // (for example fp_arm). The manifest order is the precedence order:
+                // keep the main definition instead of replacing it with a partial one.
+                AnimationClip clip = BedrockAnimationParser.parse(
+                        entry.getKey(), entry.getValue().getAsJsonObject());
+                if (mergeMultiline) {
+                    clip.mergeTimelineExpressions();
+                }
+                target.putIfAbsent(entry.getKey(), clip);
+            }
         }
     }
 
@@ -478,8 +534,11 @@ public final class LocalModelRepository {
     }
 
     private static boolean isLegacyPlayerTexture(Path path) {
-        String name = path.getFileName().toString();
-        return name.endsWith(".png") && !name.equals("arrow.png") && regularFile(path);
+        return isLegacyPlayerTextureName(path.getFileName().toString()) && regularFile(path);
+    }
+
+    private static boolean isLegacyPlayerTextureName(String name) {
+        return name.endsWith(".png") && !name.equals("arrow.png");
     }
 
     private static boolean regularFile(Path path) {
