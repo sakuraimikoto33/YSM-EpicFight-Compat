@@ -6,6 +6,8 @@ run-server/
 *.jar
 !gradle/wrapper/gradle-wrapper.jar
 .idea/
+.eclipse/
+.vscode/
 *.iml
 out/
 logs/

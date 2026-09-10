@@ -4,6 +4,17 @@
 
 User-facing options, defaults, ranges, and exclusion syntax are listed in [README: Configuration](../README.md#configuration).
 
+## Target baselines
+
+The shared design applies to these source branches; each branch's `gradle.properties` defines its exact dependency constraints.
+
+| Branch | Loader baseline | Java | Epic Fight baseline |
+| --- | --- | --- | --- |
+| `mc/1.20.1` | Forge 47.4.10 | 17 | 20.14.17 |
+| `mc/1.21.1` | NeoForge 21.1.235 | 21 | 21.17.3.1 |
+
+Both targets require YSM-Mapping-API 0.1.7 for their Minecraft version. The 1.21.1 NeoForge baseline matches that Mapping API target. Build targets and API adaptations do not establish runtime equivalence; gameplay validation is separate for each target.
+
 ## Rendering ownership
 
 Official Yes Steve Model (YSM) owns normal player rendering. When Epic Fight's player patch enables `overrideRender()`, `CombatRenderInterceptor` routes the player through Epic Fight's patched renderer and cancels the normal pass. Epic Fight's vanilla-model debugging mode is excluded.
@@ -140,11 +151,13 @@ Geometry directly attached to case-sensitive `ysmGlow*` bones is emitted as a se
 
 `CompatHumanoidMesh` uses Epic Fight's live compute-skinning setting and available compute setup. It checks the actual composed pose count plus each base/glow submesh's part count against Epic Fight's palette capacity. Both submeshes use the same capacity decision. An unavailable or over-capacity compute path falls back to Epic Fight's triangle-based CPU skinning.
 
-The optional `OculusPbrBridge` registers a loader for `CompatPbrTexture` in Oculus through a supported Iris PBR API namespace. Normal/specular companions can be recreated after shader texture reloads. Missing APIs, loader failures, or unusable companions leave the base texture available.
+On `mc/1.21.1` with Epic Fight 21.17, the visibility buffer also limits each submesh to 256 parts when using Iris or nonpersistent uploads. Vanilla persistent mapping retains dynamically sized visibility storage, so larger models can keep GPU skinning within the pose-palette limit. The renderer checks the live setting and backend on every draw.
+
+The optional `OculusPbrBridge` registers a loader for `CompatPbrTexture` in Oculus on 1.20.1 Forge or Iris Shaders on 1.21.1 NeoForge through a supported Iris PBR API namespace. Both use the same normal/specular companion and texture-reload path. Missing APIs, loader failures, or unusable companions leave the base texture available.
 
 ## Selection and display-policy synchronization
 
-`PlayerSelectionNbt` reads official YSM's model/texture selection from serialized player capability data. The integrated-server path resolves the server player directly; `SelectionBroadcaster` supplies dedicated-server selection updates to compatible clients. This selection message carries identifiers, not model payloads.
+`PlayerSelectionNbt` reads official YSM's model/texture selection from serialized player capability/attachment data. The integrated-server path resolves the server player directly; `SelectionBroadcaster` supplies dedicated-server selection updates to compatible clients. This selection message carries identifiers, not model payloads.
 
 Player model-specific rules are resolved on the owner's client. The compatibility channels send resolved per-hand replacement/item-switch decisions and movement/mod-animation ownership, not the owner's option values or exclusion tables. Movement messages carry the semantic state; optional-mod authorization includes the exact clip family and name.
 
@@ -194,8 +207,10 @@ Resource/model reloads and session shutdown invalidate affected selection, mesh,
 | ParCool | Reads supported player native action state and clocks without advancing its animator; selects available `parcool:*` model clips. |
 | Epic ParCool | Reserves its specific Chain movement and Wall movement animations so those poses retain their own priority. |
 | SWEM | Reads the active rider-animation layer for a direct player passenger of a live SWEM horse and selects available `swem:*` clips. |
-| Oculus (Iris PBR API) | Supplies the optional fallback-texture LabPBR bridge described above. |
-| Configured | Supplies dynamic exclusion-table editors and the animation evaluation-rate slider; TOML settings also work without its screen. |
+| Oculus / Iris Shaders (Iris PBR API) | Supplies the optional fallback-texture LabPBR bridge described above: Oculus for 1.20.1 Forge, Iris for 1.21.1 NeoForge. |
+| Configured | Supplies dynamic exclusion-table editors and the animation evaluation-rate slider; TOML settings also work without its screen. Optional minimums are 2.2.3 for 1.20.1 Forge and 2.6.3 for 1.21.1 NeoForge. |
+
+EpicFight_TouhouLittleMaid has no 1.21.1 release. The 1.21.1 branch retains the adapter source and optional mixins for a future port, but they remain inactive without the required mods. The following maid-specific behavior describes the existing adapter contract; a future dependency still requires compatibility and runtime validation.
 
 The maid adapter compensates EFTLM's `0.8` model scale with a mesh-local `1.25` factor and a matching held-item translation adjustment after a converted draw. Retargeting handles extension-only armature subtrees without assigning them converted humanoid indices; malformed overlapping extensions are rejected. EFTLM retains its equipment layers.
 

@@ -9,7 +9,7 @@
 | Minecraft | ローダー | 状態 | ブランチ |
 | --- | --- | --- | --- |
 | 1.20.1 | Forge | 実装済み | `mc/1.20.1` |
-| 1.21.1 | 未実装 | 計画中 | — |
+| 1.21.1 | NeoForge | 実装済み | `mc/1.21.1` |
 
 `main` ブランチでは、READMEの共通部分、実装詳細ドキュメント、メンテナンスポリシー、ライセンス、再利用可能なプロジェクトアセットを管理します。ビルド可能なModのソースは、対応する `mc/<minecraft-version>` ブランチで管理します。
 
@@ -22,7 +22,7 @@ Modをビルドする前に、対象バージョンのブランチへ切り替�
 - モデル定義の移動・揺れ・持ち替え・Controllerアニメーション、音声、パーティクルに対応。
 - 独自の武器、弓動作、投射物、釣り針、乗り物を表示。
 - マルチプレイでモデル・テクスチャ・外観上のアニメーション状態を同期。
-- Touhou Little Maid + EpicFight：TouhouLittleMaid、ParCool!、Epic ParCool、SWEM、Oculusとの任意連携。
+- 対象のMinecraftとローダー向けに提供されているTouhou Little Maid + EpicFight：TouhouLittleMaid、ParCool!、Epic ParCool、SWEM、Oculus / Iris Shadersとの任意連携。
 
 ## 任意の連携Mod
 
@@ -30,12 +30,14 @@ Modをビルドする前に、対象バージョンのブランチへ切り替�
 
 | Mod | 連携内容 |
 | --- | --- |
-| [Configured](https://www.curseforge.com/minecraft/mc-mods/configured) | ゲーム内設定画面を提供します。 |
+| [Configured](https://www.curseforge.com/minecraft/mc-mods/configured) | ゲーム内設定画面を提供する任意Modです。1.20.1 Forgeでは2.2.3以上、1.21.1 NeoForgeでは2.6.3以上を使用します。 |
 | [Touhou Little Maid](https://www.curseforge.com/minecraft/mc-mods/touhou-little-maid) + [EpicFight：TouhouLittleMaid](https://modrinth.com/mod/epicfight_touhoulittlemaid) | Epic Fightタスク中も、YSMモデルをメイドのモデルとして使用できます。 |
 | [ParCool! ~ Minecraft Parkour ~](https://www.curseforge.com/minecraft/mc-mods/parcool) | パルクール中に、YSMモデルに用意された対応アニメーションを使用します。 |
 | [\[Official\] Epic ParCool](https://www.curseforge.com/minecraft/mc-mods/official-epic-fight-x-parcool) | Chain movement・Wall movementはEpic ParCoolのアニメーションを維持し、その他の対応動作ではYSMアニメーションを使用できます。 |
 | [Star Worm Equestrian (Upgrading Horses)](https://www.curseforge.com/minecraft/mc-mods/swem) (SWEM) | SWEMの馬に乗ったときに、YSMの騎乗アニメーションを使用します。馬の見た目や動きは変更しません。 |
-| [Oculus](https://www.curseforge.com/minecraft/mc-mods/oculus) | 対応するシェーダーで、YSMモデルに用意された凹凸・光沢の表現を利用できるようにします。 |
+| [Oculus](https://www.curseforge.com/minecraft/mc-mods/oculus) / [Iris Shaders](https://www.irisshaders.dev/) | 1.20.1 ForgeではOculus、1.21.1 NeoForgeではIrisを使用し、共通のPBRブリッジを通じて対応シェーダーへYSMモデルの凹凸・光沢テクスチャを提供します。 |
+
+EpicFight：TouhouLittleMaidには1.21.1版がありません。将来の移植に備えてアダプターのコードは残していますが、必要なModがない場合は動作しません。将来のリリースとの互換性を確認したものではありません。
 
 ParCool・SWEM連携はプレイヤーの見た目だけを変更し、YSMモデルに対応アニメーションが必要です。移動や戦闘の仕組みは変わらず、攻撃・防御・被弾ではEpic Fightのアニメーションを使用します。
 
@@ -186,7 +188,7 @@ Configuredでは保存済みモデルの項目に加え、現在選択中のモ�
 
 ## ビルド
 
-対応するMinecraftのソースブランチを選択してください。JavaとGitが必要です。
+対応するMinecraftのソースブランチを選択してください。Gitと、`mc/1.20.1` ではJava 17、`mc/1.21.1` ではJava 21が必要です。ローダーと依存Modのバージョンは各ブランチの `gradle.properties` で指定し、1.21.1のNeoForgeの基準版はYSM-Mapping-APIに合わせています。
 
 ```powershell
 ./gradlew.bat build

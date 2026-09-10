@@ -9,7 +9,7 @@ Use the player model selected in official Yes Steve Model with Epic Fight combat
 | Minecraft | Loader | Status | Branch |
 | --- | --- | --- | --- |
 | 1.20.1 | Forge | Implemented | `mc/1.20.1` |
-| 1.21.1 | To be implemented | Planned | — |
+| 1.21.1 | NeoForge | Implemented | `mc/1.21.1` |
 
 The `main` branch contains the shared README sections, implementation documentation, maintenance policy, licensing, and reusable project assets. Buildable mod sources are maintained on the matching `mc/<minecraft-version>` branch.
 
@@ -22,7 +22,7 @@ Select the appropriate version branch before building the mod. Each `mc/*` branc
 - Model-authored movement, secondary motion, item switches, controllers, sounds, and particles.
 - Custom weapons, bow actions, projectiles, fishing hooks, and vehicles.
 - Multiplayer synchronization of selected models, textures, and cosmetic animation state.
-- Optional integrations with Touhou Little Maid + EpicFight：TouhouLittleMaid, ParCool!, Epic ParCool, SWEM, and Oculus.
+- Optional integrations with Touhou Little Maid + EpicFight：TouhouLittleMaid, ParCool!, Epic ParCool, SWEM, and Oculus / Iris Shaders, where available for the target Minecraft version and loader.
 
 ## Optional integrations
 
@@ -30,12 +30,14 @@ These mods are not required for player-model compatibility. Install each integra
 
 | Mod | Integration |
 | --- | --- |
-| [Configured](https://www.curseforge.com/minecraft/mc-mods/configured) | Provides an in-game settings screen. |
+| [Configured](https://www.curseforge.com/minecraft/mc-mods/configured) | Provides an in-game settings screen; optional version 2.2.3+ for 1.20.1 Forge or 2.6.3+ for 1.21.1 NeoForge. |
 | [Touhou Little Maid](https://www.curseforge.com/minecraft/mc-mods/touhou-little-maid) + [EpicFight：TouhouLittleMaid](https://modrinth.com/mod/epicfight_touhoulittlemaid) | Lets maids use YSM models while performing the Epic Fight task. |
 | [ParCool! ~ Minecraft Parkour ~](https://www.curseforge.com/minecraft/mc-mods/parcool) | Uses the YSM model's matching animations during parkour. |
 | [\[Official\] Epic ParCool](https://www.curseforge.com/minecraft/mc-mods/official-epic-fight-x-parcool) | Keeps Epic ParCool's own animations for Chain movement and Wall movement. Other supported actions can use YSM animations. |
 | [Star Worm Equestrian (Upgrading Horses)](https://www.curseforge.com/minecraft/mc-mods/swem) (SWEM) | Uses YSM riding animations when riding a SWEM horse. The horse's appearance and movement are unchanged. |
-| [Oculus](https://www.curseforge.com/minecraft/mc-mods/oculus) | Enables compatible shaders to use the YSM model's surface-detail and shine textures. |
+| [Oculus](https://www.curseforge.com/minecraft/mc-mods/oculus) / [Iris Shaders](https://www.irisshaders.dev/) | Oculus on 1.20.1 Forge and Iris on 1.21.1 NeoForge use the same PBR bridge to expose the YSM model's surface-detail and shine textures to compatible shaders. |
+
+EpicFight：TouhouLittleMaid has no 1.21.1 release. Its adapter code is retained for a future port and stays inactive without the required mods; this does not establish compatibility with a future release.
 
 ParCool and SWEM integration changes only the player's appearance and requires matching animations in the YSM model. Movement and combat mechanics are unchanged; attacks, guarding, and hit reactions use Epic Fight's animations.
 
@@ -186,7 +188,7 @@ Converted player models hide armor and head equipment. Elytra require exactly on
 
 ## Building
 
-Select the matching Minecraft source branch first. Java and Git are required.
+Select the matching Minecraft source branch first. Git and Java 17 for `mc/1.20.1` or Java 21 for `mc/1.21.1` are required. The branch's `gradle.properties` specifies its loader and dependency versions; the 1.21.1 NeoForge baseline follows YSM-Mapping-API.
 
 ```powershell
 ./gradlew.bat build
