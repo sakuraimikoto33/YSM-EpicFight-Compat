@@ -12,7 +12,7 @@
 - [Epic Fight](https://modrinth.com/mod/epic-fight) 21.17.3.1以上、21.18未満（NeoForge 1.21.1版）
 - [YSM Mapping API](https://github.com/sakuraimikoto33/YSM-Mapping-API) 0.1.7 以降
 
-1.21.1移植版は、戦闘描画、IrisのPBRとリソース再読込、Configured、ParCool、Epic ParCool、SWEM、統合サーバーを用いた2クライアント間の同期を実機で確認しています。専用サーバーの起動は未検証です。EpicFight：TouhouLittleMaidはこの環境に未対応のため、将来の移植用に任意連携コードを保持しています。
+1.21.1移植版は、戦闘描画、IrisのPBRとリソース再読込、Configured、ParCool、Epic ParCool、SWEM、統合サーバーを用いた2クライアント間の同期を実機で確認しています。専用サーバーの起動は未検証です。EpicFight：TouhouLittleMaidはこの環境に未対応です。
 
 YSM 2.6.5とIris 1.8.12では、通常のYSM描画でリソース再読込後にPBRが崩れる問題が残っています。当ModとEpic Fightを含まない構成でも再現します。当Modは戦闘描画のPBRを復旧し、通常描画は引き続き公式YSMが担当します。
 
@@ -23,7 +23,7 @@ YSM 2.6.5とIris 1.8.12では、通常のYSM描画でリソース再読込後に
 - モデル定義の移動・揺れ・持ち替え・Controllerアニメーション、音声、パーティクルに対応。
 - 独自の武器、弓動作、投射物、釣り針、乗り物を表示。
 - マルチプレイでモデル・テクスチャ・外観上のアニメーション状態を同期。
-- Touhou Little Maid + EpicFight：TouhouLittleMaid、ParCool!、Epic ParCool、SWEM、Oculusとの任意連携。
+- ParCool!、Epic ParCool、SWEM、Iris Shadersとの任意連携。
 
 ## 任意の連携Mod
 
@@ -31,12 +31,11 @@ YSM 2.6.5とIris 1.8.12では、通常のYSM描画でリソース再読込後に
 
 | Mod | 連携内容 |
 | --- | --- |
-| [Configured](https://www.curseforge.com/minecraft/mc-mods/configured) | ゲーム内設定画面を提供します。 |
-| [Touhou Little Maid](https://www.curseforge.com/minecraft/mc-mods/touhou-little-maid) + [EpicFight：TouhouLittleMaid](https://modrinth.com/mod/epicfight_touhoulittlemaid) | Epic Fightタスク中も、YSMモデルをメイドのモデルとして使用できます。 |
+| [Configured](https://www.curseforge.com/minecraft/mc-mods/configured) | ゲーム内設定画面を提供します。導入する場合は2.6.3以降が必要です。 |
 | [ParCool! ~ Minecraft Parkour ~](https://www.curseforge.com/minecraft/mc-mods/parcool) | パルクール中に、YSMモデルに用意された対応アニメーションを使用します。 |
 | [\[Official\] Epic ParCool](https://www.curseforge.com/minecraft/mc-mods/official-epic-fight-x-parcool) | Chain movement・Wall movementはEpic ParCoolのアニメーションを維持し、その他の対応動作ではYSMアニメーションを使用できます。 |
 | [Star Worm Equestrian (Upgrading Horses)](https://www.curseforge.com/minecraft/mc-mods/swem) (SWEM) | SWEMの馬に乗ったときに、YSMの騎乗アニメーションを使用します。馬の見た目や動きは変更しません。 |
-| [Oculus](https://www.curseforge.com/minecraft/mc-mods/oculus) | 対応するシェーダーで、YSMモデルに用意された凹凸・光沢の表現を利用できるようにします。 |
+| [Iris Shaders](https://www.irisshaders.dev/) | 対応するシェーダーで、YSMモデルに用意された凹凸・光沢の表現を利用できるようにします。 |
 
 ParCool・SWEM連携はプレイヤーの見た目だけを変更し、YSMモデルに対応アニメーションが必要です。移動や戦闘の仕組みは変わらず、攻撃・防御・被弾ではEpic Fightのアニメーションを使用します。
 
@@ -104,7 +103,7 @@ ParCool・SWEMの設定と除外エディターは、対応Modの導入時に利
 
 ```toml
 [common.models.exclusions.heldItemModelExclusions]
-"example/model" = ["minecraft:diamond_sword", "#forge:tools/bows"]
+"example/model" = ["minecraft:diamond_sword", "#c:tools/bow"]
 
 [common.models.exclusions.projectileModelExclusions]
 "example/model" = ["minecraft:arrow"]
@@ -187,7 +186,7 @@ Configuredでは保存済みモデルの項目に加え、現在選択中のモ�
 
 ## ビルド
 
-対応するMinecraftのソースブランチを選択してください。JavaとGitが必要です。
+Java 21とGitを用意し、`mc/1.21.1` ブランチでビルドしてください。
 
 ```powershell
 ./gradlew.bat build

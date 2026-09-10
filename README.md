@@ -12,7 +12,7 @@ Use the player model selected in official Yes Steve Model with Epic Fight combat
 - [Epic Fight](https://modrinth.com/mod/epic-fight) 21.17.3.1 or later, below 21.18, for NeoForge 1.21.1
 - [YSM Mapping API](https://github.com/sakuraimikoto33/YSM-Mapping-API) 0.1.7 or later
 
-The 1.21.1 port has been verified in-game for combat rendering, Iris PBR and resource reloads, Configured, ParCool, Epic ParCool, SWEM, and synchronization between two clients using an integrated server. Dedicated-server startup has not been verified. EpicFight：TouhouLittleMaid is unavailable for this target; its optional adapter code is retained for future porting.
+The 1.21.1 port has been verified in-game for combat rendering, Iris PBR and resource reloads, Configured, ParCool, Epic ParCool, SWEM, and synchronization between two clients using an integrated server. Dedicated-server startup has not been verified. EpicFight：TouhouLittleMaid is unavailable for this target.
 
 With YSM 2.6.5 and Iris 1.8.12, resource reloads can still disrupt PBR in normal YSM rendering. This also reproduces without this mod or Epic Fight. The compatibility renderer recovers PBR during combat; official YSM retains ownership of normal rendering.
 
@@ -23,7 +23,7 @@ With YSM 2.6.5 and Iris 1.8.12, resource reloads can still disrupt PBR in normal
 - Model-authored movement, secondary motion, item switches, controllers, sounds, and particles.
 - Custom weapons, bow actions, projectiles, fishing hooks, and vehicles.
 - Multiplayer synchronization of selected models, textures, and cosmetic animation state.
-- Optional integrations with Touhou Little Maid + EpicFight：TouhouLittleMaid, ParCool!, Epic ParCool, SWEM, and Oculus.
+- Optional integrations with ParCool!, Epic ParCool, SWEM, and Iris Shaders.
 
 ## Optional integrations
 
@@ -31,12 +31,11 @@ These mods are not required for player-model compatibility. Install each integra
 
 | Mod | Integration |
 | --- | --- |
-| [Configured](https://www.curseforge.com/minecraft/mc-mods/configured) | Provides an in-game settings screen. |
-| [Touhou Little Maid](https://www.curseforge.com/minecraft/mc-mods/touhou-little-maid) + [EpicFight：TouhouLittleMaid](https://modrinth.com/mod/epicfight_touhoulittlemaid) | Lets maids use YSM models while performing the Epic Fight task. |
+| [Configured](https://www.curseforge.com/minecraft/mc-mods/configured) | Provides an in-game settings screen; requires version 2.6.3 or later when installed. |
 | [ParCool! ~ Minecraft Parkour ~](https://www.curseforge.com/minecraft/mc-mods/parcool) | Uses the YSM model's matching animations during parkour. |
 | [\[Official\] Epic ParCool](https://www.curseforge.com/minecraft/mc-mods/official-epic-fight-x-parcool) | Keeps Epic ParCool's own animations for Chain movement and Wall movement. Other supported actions can use YSM animations. |
 | [Star Worm Equestrian (Upgrading Horses)](https://www.curseforge.com/minecraft/mc-mods/swem) (SWEM) | Uses YSM riding animations when riding a SWEM horse. The horse's appearance and movement are unchanged. |
-| [Oculus](https://www.curseforge.com/minecraft/mc-mods/oculus) | Enables compatible shaders to use the YSM model's surface-detail and shine textures. |
+| [Iris Shaders](https://www.irisshaders.dev/) | Enables compatible shaders to use the YSM model's surface-detail and shine textures. |
 
 ParCool and SWEM integration changes only the player's appearance and requires matching animations in the YSM model. Movement and combat mechanics are unchanged; attacks, guarding, and hit reactions use Epic Fight's animations.
 
@@ -104,7 +103,7 @@ Example (replace `example/model` with your selected model's ID):
 
 ```toml
 [common.models.exclusions.heldItemModelExclusions]
-"example/model" = ["minecraft:diamond_sword", "#forge:tools/bows"]
+"example/model" = ["minecraft:diamond_sword", "#c:tools/bow"]
 
 [common.models.exclusions.projectileModelExclusions]
 "example/model" = ["minecraft:arrow"]
@@ -187,7 +186,7 @@ Converted player models hide armor and head equipment. Elytra require exactly on
 
 ## Building
 
-Select the matching Minecraft source branch first. Java and Git are required.
+Build the `mc/1.21.1` branch with Java 21 and Git installed.
 
 ```powershell
 ./gradlew.bat build

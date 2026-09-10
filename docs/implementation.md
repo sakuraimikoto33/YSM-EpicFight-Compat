@@ -4,6 +4,8 @@
 
 User-facing options, defaults, ranges, and exclusion syntax are listed in [README: Configuration](../README.md#configuration).
 
+Maid integration is unavailable for this 1.21.1 target. Maid-specific descriptions below document the retained, inactive adapter code.
+
 ## Rendering ownership
 
 Official Yes Steve Model (YSM) owns normal player rendering. When Epic Fight's player patch enables `overrideRender()`, `CombatRenderInterceptor` routes the player through Epic Fight's patched renderer and cancels the normal pass. Epic Fight's vanilla-model debugging mode is excluded.
@@ -132,19 +134,19 @@ First person uses the converted mesh's part visibility and suppresses its biped 
 
 ## Textures, materials, and skinning
 
-`OfficialTextureResolver` prefers official YSM's selected in-memory texture location. `CombatMeshCache` retains encoded fallback sources, decodes them off-thread, and queues bounded render-thread GPU registration when no official location is available. Adopting the official texture releases duplicate GPU registration without discarding the fallback source.
+`OfficialTextureResolver` prefers official YSM's selected in-memory texture location. `CombatMeshCache` retains encoded fallback sources, decodes them off-thread, and queues bounded render-thread GPU registration when no official location is available or an invalid Iris normal/specular companion is detected. During PBR recovery, the current official base texture remains selected until the matching fallback has uploaded. Once recovery is no longer needed, adopting the official texture releases duplicate GPU registration without discarding the fallback source.
 
 Geometry directly attached to case-sensitive `ysmGlow*` bones is emitted as a separate full-bright submesh. Descendants do not inherit that marker automatically. Base and glow geometry share animation, visibility, texture, and material selection.
 
 `all_cutout` changes back-face culling on supported body render types while preserving shader, transparency, sorting, and other material state. Outline and unsupported extended render types retain their own state. `render_layers_first` renders third-person layers once before body geometry, after final attachment poses are available. Immutable draw snapshots protect the outer pose during nested layer rendering.
 
-`CompatHumanoidMesh` uses Epic Fight's live compute-skinning setting and available compute setup. It checks the actual composed pose count plus each base/glow submesh's part count against Epic Fight's palette capacity. Both submeshes use the same capacity decision. An unavailable or over-capacity compute path falls back to Epic Fight's triangle-based CPU skinning.
+`CompatHumanoidMesh` uses Epic Fight's live compute-skinning setting and available compute setup. It checks the actual composed pose count plus each base/glow submesh's part count against Epic Fight's palette capacity. With Iris or nonpersistent buffer uploads, each submesh must also fit the 256-part visibility limit. That additional part limit does not apply when persistent mapping is active without Iris. Both submeshes use the same capacity decision. An unavailable or over-capacity compute path falls back to Epic Fight's triangle-based CPU skinning.
 
-The optional `OculusPbrBridge` registers a loader for `CompatPbrTexture` in Oculus through a supported Iris PBR API namespace. Normal/specular companions can be recreated after shader texture reloads. Missing APIs, loader failures, or unusable companions leave the base texture available.
+The optional `OculusPbrBridge` registers a loader for `CompatPbrTexture` in Iris Shaders through a supported Iris PBR API namespace. Normal/specular companions can be recreated after shader texture reloads. Missing APIs, loader failures, or unusable companions leave the base texture available.
 
 ## Selection and display-policy synchronization
 
-`PlayerSelectionNbt` reads official YSM's model/texture selection from serialized player capability data. The integrated-server path resolves the server player directly; `SelectionBroadcaster` supplies dedicated-server selection updates to compatible clients. This selection message carries identifiers, not model payloads.
+`PlayerSelectionNbt` reads official YSM's model/texture selection from serialized NeoForge player attachment data. The integrated-server path resolves the server player directly; `SelectionBroadcaster` supplies dedicated-server selection updates to compatible clients. This selection message carries identifiers, not model payloads.
 
 Player model-specific rules are resolved on the owner's client. The compatibility channels send resolved per-hand replacement/item-switch decisions and movement/mod-animation ownership, not the owner's option values or exclusion tables. Movement messages carry the semantic state; optional-mod authorization includes the exact clip family and name.
 
@@ -194,7 +196,7 @@ Resource/model reloads and session shutdown invalidate affected selection, mesh,
 | ParCool | Reads supported player native action state and clocks without advancing its animator; selects available `parcool:*` model clips. |
 | Epic ParCool | Reserves its specific Chain movement and Wall movement animations so those poses retain their own priority. |
 | SWEM | Reads the active rider-animation layer for a direct player passenger of a live SWEM horse and selects available `swem:*` clips. |
-| Oculus (Iris PBR API) | Supplies the optional fallback-texture LabPBR bridge described above. |
+| Iris Shaders (Iris PBR API) | Supplies the optional fallback-texture LabPBR bridge described above. |
 | Configured | Supplies dynamic exclusion-table editors and the animation evaluation-rate slider; TOML settings also work without its screen. |
 
 The maid adapter compensates EFTLM's `0.8` model scale with a mesh-local `1.25` factor and a matching held-item translation adjustment after a converted draw. Retargeting handles extension-only armature subtrees without assigning them converted humanoid indices; malformed overlapping extensions are rejected. EFTLM retains its equipment layers.
@@ -207,7 +209,7 @@ ParCool/SWEM adapters apply only to players, including remote players. Matching 
 
 ## Scope and verification
 
-Supported rendering is limited to official YSM player models and the explicit maid adapter. The implemented Molang/query/controller subset, rig analysis, particle locators, equipment attachment rules, and optional API boundaries determine whether a model feature can be reproduced. Missing model features or optional APIs use the documented fallback paths rather than guaranteeing identical output for every model.
+Supported rendering for this target is limited to official YSM player models. The implemented Molang/query/controller subset, rig analysis, particle locators, equipment attachment rules, and optional API boundaries determine whether a model feature can be reproduced. Missing model features or optional APIs use the documented fallback paths rather than guaranteeing identical output for every model.
 
 Compilation, automated tests, and distribution checks establish their respective code/package properties. They do not establish gameplay results; animation appearance, first person, equipment, shader behavior, reloads, and multiplayer still require in-game verification.
 

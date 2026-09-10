@@ -19,8 +19,8 @@ Read [integration-contract.md](references/integration-contract.md) before changi
 
 ## Documentation ownership
 
-- Author and commit `docs/implementation.md` and `docs/implementation.ja.md` on `main`, then use `$manage-minecraft-mod-git` to propagate `main` to every active `mc/*` branch. Never copy or merge documentation changes from `mc/*` into `main`.
-- In `README.md` and `README.ja.md`, author the shared Features, Installation, Building, and Documentation sections on `main`. Keep only explicitly required Minecraft-version-specific README differences on the matching `mc/*` branch.
+- `README.md`, `README.ja.md`, `docs/implementation.md`, and `docs/implementation.ja.md` are Mixed documentation. Keep project-wide coverage, shared-asset management, and target-selection policy on `main`; each `mc/*` document describes only that Minecraft target and its implementation.
+- Author shared documentation changes on `main`, then merge `main` into every active `mc/*` branch. Preserve each branch's existing version-specific documentation during the merge and adapt only content required for its target; never replace an `mc/*` document wholesale with `main`'s version. Do not copy or merge documentation from `mc/*` into `main`.
 - The Documentation section of each README links only to the implementation document in the same language: English to `docs/implementation.md`, and Japanese to `docs/implementation.ja.md`.
 
 ```powershell

@@ -28,8 +28,19 @@ function Require-Text {
 }
 
 Require-Text 'gradle.properties' ("^minecraft_version=" + [regex]::Escape($minecraftVersion) + "$") "Minecraft target must match branch '$branch'."
-Require-Text 'gradle.properties' '^forge_version=47\.4\.10$' 'Forge baseline must remain 47.4.10, matching YSM-Mapping-API.'
-Require-Text 'gradle.properties' '^forge_version_range=\[47\.4\.10,\)$' 'Forge loader dependency floor must remain 47.4.10.'
+switch ($minecraftVersion) {
+    '1.20.1' {
+        Require-Text 'gradle.properties' '^forge_version=47\.4\.10$' 'Forge baseline must remain 47.4.10, matching YSM-Mapping-API.'
+        Require-Text 'gradle.properties' '^forge_version_range=\[47\.4\.10,\)$' 'Forge loader dependency floor must remain 47.4.10.'
+        $metadataPath = 'src/main/resources/META-INF/mods.toml'
+    }
+    '1.21.1' {
+        Require-Text 'gradle.properties' '^neoforge_version=21\.1\.235$' 'NeoForge baseline must remain 21.1.235, matching YSM-Mapping-API.'
+        Require-Text 'gradle.properties' '^neoforge_version_range=\[21\.1\.235,\)$' 'NeoForge loader dependency floor must remain 21.1.235.'
+        $metadataPath = 'src/main/resources/META-INF/neoforge.mods.toml'
+    }
+    default { throw "No validated loader baseline is configured for Minecraft '$minecraftVersion'." }
+}
 Require-Text 'gradle.properties' '^ysm_mapping_api_version=0\.1\.7$' 'Mapping API selection version must remain 0.1.7.'
 Require-Text 'gradle.properties' '^ysm_mapping_api_version_range=0\.1\.7$' 'Mapping API loader dependency floor must remain 0.1.7.'
 Require-Text 'settings.gradle' "apply from: 'gradle/ysm-mapping-api\.settings\.gradle'" 'Settings must apply the Mapping API resolver.'
@@ -40,10 +51,10 @@ Require-Text 'gradle/ysm-mapping-api.settings.gradle' 'producesModule\([''"]net\
 Require-Text 'build.gradle' 'compileOnly "net\.okitsu\.ysmmapping:api:\$\{ysmMappingApiDependencyVersion\}"' 'Mapping API must remain a dynamically resolved compile-only dependency.'
 Require-Text 'build.gradle' 'testRuntimeOnly "net\.okitsu\.ysmmapping:api:\$\{ysmMappingApiDependencyVersion\}"' 'Mapping API tests must use the dynamically resolved source version.'
 Require-Text 'build.gradle' 'ysm_mapping_api_version_range' 'Build resources must expand the Mapping API loader dependency floor.'
-Require-Text 'src/main/resources/META-INF/mods.toml' 'modId="ysm_mapping_api"' 'Distribution metadata must require Mapping API.'
-Require-Text 'src/main/resources/META-INF/mods.toml' 'versionRange="\[\$\{ysm_mapping_api_version_range\},\)"' 'Distribution metadata must derive the Mapping API floor from gradle.properties.'
-Require-Text 'src/main/resources/META-INF/mods.toml' 'modId="yes_steve_model"' 'Distribution metadata must require official YSM.'
-Require-Text 'src/main/resources/META-INF/mods.toml' 'modId="epicfight"' 'Distribution metadata must require Epic Fight.'
+Require-Text $metadataPath 'modId="ysm_mapping_api"' 'Distribution metadata must require Mapping API.'
+Require-Text $metadataPath 'versionRange="\[\$\{ysm_mapping_api_version_range\},\)"' 'Distribution metadata must derive the Mapping API floor from gradle.properties.'
+Require-Text $metadataPath 'modId="yes_steve_model"' 'Distribution metadata must require official YSM.'
+Require-Text $metadataPath 'modId="epicfight"' 'Distribution metadata must require Epic Fight.'
 
 $settingsText = Get-Content -Raw -LiteralPath (Join-Path $repository 'settings.gradle')
 if ($settingsText -match '(\.\./YSM-Mapping-API|\.worktrees[/\\]YSM-Mapping-API)') {
