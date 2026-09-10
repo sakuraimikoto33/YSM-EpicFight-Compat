@@ -6,7 +6,6 @@
         ".github"
         "AGENTS.md"
         ".gitignore"
-        "docs"
         "LICENSE"
     )
     MinecraftPaths = @(
@@ -19,6 +18,7 @@
         "gradle.properties"
     )
     MixedPaths = @(
+        "docs"
         "README.md"
         "README.ja.md"
     )
