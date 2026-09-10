@@ -15,6 +15,7 @@ import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNotSame;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -538,6 +539,264 @@ class AuxiliaryPoseMatricesTest {
                 {1.0F, 1.0F}, {0.55F, 0.55F}, {0.7F, 0.9F}, {1.3F, 0.65F}}) {
             assertEpicFightGripProjection(scale[0], scale[1], 1.0F, true, true);
         }
+    }
+
+    @Test
+    void projectsOnlyToolAttachmentsAcrossModelScalesAndIndependentAddonMotion() {
+        for (float[] scale : new float[][]{
+                {1.0F, 1.0F}, {0.55F, 0.55F}, {0.7F, 0.9F}, {1.3F, 0.65F}}) {
+            for (float translationScale : new float[]{1.0F, 1.6F}) {
+                AuxiliaryBoneLayout layout = bothHandLayout(scale[0], scale[1]);
+                Armature armature = gripArmature(true);
+                OpenMatrix4f[] bind = bindPoses(armature);
+                OpenMatrix4f[] poses = AuxiliaryPoseMatrices.allocate(bind.length + 2);
+                for (int joint = 0; joint < bind.length; joint++) {
+                    poses[joint].load(bind[joint]);
+                }
+                for (int hand : new int[]{HumanoidRig.RIGHT_HAND, HumanoidRig.LEFT_HAND}) {
+                    boolean right = hand == HumanoidRig.RIGHT_HAND;
+                    int tool = right ? HumanoidRig.RIGHT_TOOL : HumanoidRig.LEFT_TOOL;
+                    OpenMatrix4f motion = new OpenMatrix4f()
+                            .translate(right ? 0.11F : -0.19F, -0.12F, 0.08F)
+                            .rotateDeg(right ? 28.0F : -39.0F, Vec3f.X_AXIS)
+                            .rotateDeg(-13.0F, Vec3f.Z_AXIS);
+                    poses[hand].load(motion).mulBack(bind[hand]);
+                    poses[tool].load(motion).mulBack(bind[tool])
+                            .translate(right ? 0.03F : -0.07F, -0.02F, 0.06F)
+                            .rotateDeg(right ? 17.0F : -61.0F, Vec3f.Y_AXIS)
+                            .scale(0.65F, 1.45F, 0.8F);
+                    OpenMatrix4f shear = new OpenMatrix4f();
+                    shear.m10 = right ? 0.25F : -0.37F;
+                    shear.m21 = -0.17F;
+                    poses[tool].mulBack(shear);
+                }
+                poses[bind.length].translate(8.0F, -4.0F, 3.0F)
+                        .rotateDeg(67.0F, Vec3f.Z_AXIS);
+                poses[bind.length + 1].scale(1.2F, 0.7F, 1.9F);
+                poses[bind.length + 1].m20 = 0.43F;
+                OpenMatrix4f[] snapshot = copy(poses);
+                AuxiliaryPoseMatrices matrices = new AuxiliaryPoseMatrices(layout);
+                OpenMatrix4f[] complete = matrices.compose(armature, poses,
+                        null, null, null, false, null, null, null);
+                assertNotNull(complete);
+                Vector3f rightFist = matrices.displayedFist(complete, HumanoidRig.RIGHT_TOOL);
+                Vector3f leftFist = matrices.displayedFist(complete, HumanoidRig.LEFT_TOOL);
+                assertNotNull(rightFist);
+                assertNotNull(leftFist);
+                Vector3f rightFistSnapshot = new Vector3f(rightFist);
+                Vector3f leftFistSnapshot = new Vector3f(leftFist);
+                // heldItemPose reuses one scratch matrix: copy the right result before
+                // asking for the left, exactly as the attachment helper must do.
+                OpenMatrix4f expectedRight = scaledTranslation(new OpenMatrix4f(
+                        matrices.heldItemPose(armature, poses,
+                                HumanoidRig.RIGHT_TOOL, rightFist)), translationScale);
+                OpenMatrix4f expectedLeft = scaledTranslation(new OpenMatrix4f(
+                        matrices.heldItemPose(armature, poses,
+                                HumanoidRig.LEFT_TOOL, leftFist)), translationScale);
+
+                OpenMatrix4f[] projected = matrices.heldItemAttachmentPoses(
+                        armature, poses, rightFist, leftFist, null, null, translationScale);
+
+                assertNotNull(projected);
+                assertNotSame(poses, projected);
+                assertEquals(poses.length, projected.length);
+                // This oracle has no ordinary-item origin adjustment. Direct addon
+                // meshes apply their own item-specific corrections after this seam.
+                assertMatrixEquals(expectedRight, projected[HumanoidRig.RIGHT_TOOL]);
+                assertMatrixEquals(expectedLeft, projected[HumanoidRig.LEFT_TOOL]);
+                assertNotSame(projected[HumanoidRig.RIGHT_TOOL], projected[HumanoidRig.LEFT_TOOL]);
+                for (int joint = 0; joint < poses.length; joint++) {
+                    assertNotSame(poses[joint], projected[joint]);
+                    if (joint != HumanoidRig.RIGHT_TOOL && joint != HumanoidRig.LEFT_TOOL) {
+                        assertMatrixEquals(snapshot[joint], projected[joint]);
+                    }
+                }
+                assertMatricesEqual(snapshot, poses);
+                assertEquals(rightFistSnapshot, rightFist);
+                assertEquals(leftFistSnapshot, leftFist);
+            }
+        }
+    }
+
+    @Test
+    void retainsFullAuthoredItemFramesIncludingHiddenItemScale() {
+        Armature armature = gripArmature(true);
+        OpenMatrix4f[] poses = bindPoses(armature);
+        OpenMatrix4f[] snapshot = copy(poses);
+        OpenMatrix4f authoredRight = new OpenMatrix4f().translate(3.0F, -4.0F, 5.0F)
+                .rotateDeg(-39.0F, Vec3f.Y_AXIS).scale(0.7F, 1.4F, -0.8F);
+        authoredRight.m10 += 0.36F;
+        OpenMatrix4f authoredLeft = new OpenMatrix4f().translate(-6.0F, 2.0F, -1.0F)
+                .rotateDeg(53.0F, Vec3f.X_AXIS).scale(0.0F, 1.2F, 0.9F);
+        OpenMatrix4f rightSnapshot = new OpenMatrix4f(authoredRight);
+        OpenMatrix4f leftSnapshot = new OpenMatrix4f(authoredLeft);
+        AuxiliaryPoseMatrices matrices = new AuxiliaryPoseMatrices(bothHandLayout(0.7F, 0.9F));
+
+        for (float translationScale : new float[]{1.0F, 0.75F}) {
+            OpenMatrix4f[] projected = matrices.heldItemAttachmentPoses(
+                    armature, poses, new Vector3f(20.0F, 30.0F, 40.0F), null,
+                    authoredRight, authoredLeft, translationScale);
+
+            assertNotNull(projected);
+            assertMatrixEquals(scaledTranslation(new OpenMatrix4f(rightSnapshot), translationScale),
+                    projected[HumanoidRig.RIGHT_TOOL]);
+            assertMatrixEquals(scaledTranslation(new OpenMatrix4f(leftSnapshot), translationScale),
+                    projected[HumanoidRig.LEFT_TOOL]);
+            assertNotSame(authoredRight, projected[HumanoidRig.RIGHT_TOOL]);
+            assertNotSame(authoredLeft, projected[HumanoidRig.LEFT_TOOL]);
+            for (int joint = 0; joint < poses.length; joint++) {
+                if (joint != HumanoidRig.RIGHT_TOOL && joint != HumanoidRig.LEFT_TOOL) {
+                    assertMatrixEquals(snapshot[joint], projected[joint]);
+                }
+            }
+            assertMatricesEqual(snapshot, poses);
+            assertMatrixEquals(rightSnapshot, authoredRight);
+            assertMatrixEquals(leftSnapshot, authoredLeft);
+        }
+    }
+
+    @Test
+    void fallsBackFromInvalidAuthoredFramesIndependentlyForEachHand() {
+        Armature armature = gripArmature(true);
+        OpenMatrix4f[] poses = bindPoses(armature);
+        poses[HumanoidRig.RIGHT_TOOL].translate(0.12F, -0.07F, 0.09F);
+        poses[HumanoidRig.LEFT_TOOL].rotateDeg(63.0F, Vec3f.Z_AXIS);
+        OpenMatrix4f[] snapshot = copy(poses);
+        AuxiliaryPoseMatrices matrices = new AuxiliaryPoseMatrices(bothHandLayout(1.0F, 1.0F));
+        Vector3f rightFist = new Vector3f(-0.8F, 0.9F, 0.1F);
+        Vector3f leftFist = new Vector3f(0.7F, 1.1F, -0.2F);
+        OpenMatrix4f validAuthored = new OpenMatrix4f().translate(4.0F, 5.0F, 6.0F)
+                .rotateDeg(-37.0F, Vec3f.X_AXIS);
+        OpenMatrix4f expectedRight = new OpenMatrix4f(matrices.heldItemPose(
+                armature, poses, HumanoidRig.RIGHT_TOOL, rightFist));
+        OpenMatrix4f expectedLeft = new OpenMatrix4f(matrices.heldItemPose(
+                armature, poses, HumanoidRig.LEFT_TOOL, leftFist));
+
+        for (float invalid : new float[]{Float.NaN, Float.POSITIVE_INFINITY}) {
+            OpenMatrix4f invalidAuthored = new OpenMatrix4f();
+            invalidAuthored.m10 = invalid;
+            OpenMatrix4f[] rightFallback = matrices.heldItemAttachmentPoses(
+                    armature, poses, rightFist, leftFist,
+                    invalidAuthored, validAuthored, 1.0F);
+            assertNotNull(rightFallback);
+            assertMatrixEquals(expectedRight, rightFallback[HumanoidRig.RIGHT_TOOL]);
+            assertMatrixEquals(validAuthored, rightFallback[HumanoidRig.LEFT_TOOL]);
+
+            OpenMatrix4f[] leftFallback = matrices.heldItemAttachmentPoses(
+                    armature, poses, rightFist, leftFist,
+                    validAuthored, invalidAuthored, 1.0F);
+            assertNotNull(leftFallback);
+            assertMatrixEquals(validAuthored, leftFallback[HumanoidRig.RIGHT_TOOL]);
+            assertMatrixEquals(expectedLeft, leftFallback[HumanoidRig.LEFT_TOOL]);
+        }
+        assertMatricesEqual(snapshot, poses);
+    }
+
+    @Test
+    void keepsMissingFistToolsOnTheLegacyEntityScaleAndCopiesUntouchedAddonSlots() {
+        Armature armature = gripArmature();
+        OpenMatrix4f[] poses = translatedMatrices(HumanoidRig.EPIC_JOINT_COUNT + 2, 0.13F);
+        poses[HumanoidRig.RIGHT_TOOL].rotateDeg(21.0F, Vec3f.X_AXIS);
+        poses[HumanoidRig.LEFT_TOOL].scale(0.7F, 1.4F, -0.6F);
+        OpenMatrix4f[] snapshot = copy(poses);
+        AuxiliaryPoseMatrices matrices = new AuxiliaryPoseMatrices(bothHandLayout(1.0F, 1.0F));
+
+        OpenMatrix4f[] projected = matrices.heldItemAttachmentPoses(
+                armature, poses, null, new Vector3f(Float.NaN, 0.0F, 0.0F),
+                null, null, 2.0F);
+
+        assertNotNull(projected);
+        assertNotSame(poses, projected);
+        OpenMatrix4f[] expected = copy(snapshot);
+        // The ordinary resolver also applies the entity's translation scale when
+        // no displayed fist is available; preserve that existing fallback contract.
+        scaledTranslation(expected[HumanoidRig.RIGHT_TOOL], 2.0F);
+        scaledTranslation(expected[HumanoidRig.LEFT_TOOL], 2.0F);
+        assertMatricesEqual(expected, projected);
+        for (int joint = 0; joint < poses.length; joint++) {
+            assertNotSame(poses[joint], projected[joint]);
+        }
+        projected[HumanoidRig.EPIC_JOINT_COUNT].m30 = -100.0F;
+        assertMatricesEqual(snapshot, poses);
+    }
+
+    @Test
+    void copiesASharedAuthoredFrameIntoIndependentRightAndLeftAttachments() {
+        Armature armature = gripArmature();
+        OpenMatrix4f[] poses = bindPoses(armature);
+        OpenMatrix4f authored = new OpenMatrix4f().translate(2.0F, 3.0F, -4.0F)
+                .rotateDeg(19.0F, Vec3f.Z_AXIS);
+        OpenMatrix4f authoredSnapshot = new OpenMatrix4f(authored);
+        AuxiliaryPoseMatrices matrices = new AuxiliaryPoseMatrices(bothHandLayout(1.0F, 1.0F));
+
+        OpenMatrix4f[] projected = matrices.heldItemAttachmentPoses(
+                armature, poses, null, null, authored, authored, 1.0F);
+
+        assertNotNull(projected);
+        assertNotSame(projected[HumanoidRig.RIGHT_TOOL], projected[HumanoidRig.LEFT_TOOL]);
+        assertNotSame(authored, projected[HumanoidRig.RIGHT_TOOL]);
+        assertNotSame(authored, projected[HumanoidRig.LEFT_TOOL]);
+        projected[HumanoidRig.RIGHT_TOOL].m31 += 100.0F;
+        assertMatrixEquals(authoredSnapshot, projected[HumanoidRig.LEFT_TOOL]);
+        assertMatrixEquals(authoredSnapshot, authored);
+    }
+
+    @Test
+    void normalizesInvalidAttachmentTranslationScalesWithoutChangingToolOrientation() {
+        Armature armature = gripArmature(true);
+        OpenMatrix4f[] poses = bindPoses(armature);
+        Vector3f fist = new Vector3f(-0.8F, 0.6F, 0.2F);
+        AuxiliaryPoseMatrices matrices = new AuxiliaryPoseMatrices(bothHandLayout(1.0F, 1.0F));
+        OpenMatrix4f expected = new OpenMatrix4f(matrices.heldItemPose(
+                armature, poses, HumanoidRig.RIGHT_TOOL, fist));
+
+        for (float invalid : new float[]{Float.NaN, Float.POSITIVE_INFINITY,
+                Float.NEGATIVE_INFINITY, -1.0F, 0.0F, 1.0E-8F}) {
+            OpenMatrix4f[] projected = matrices.heldItemAttachmentPoses(
+                    armature, poses, fist, null, null, null, invalid);
+            assertNotNull(projected);
+            assertMatrixEquals(expected, projected[HumanoidRig.RIGHT_TOOL]);
+            assertMatrixEquals(poses[HumanoidRig.LEFT_TOOL], projected[HumanoidRig.LEFT_TOOL]);
+        }
+    }
+
+    @Test
+    void rejectsIncompleteOrNonfiniteAttachmentInputsWithoutMutatingValidPoses() {
+        Armature armature = gripArmature();
+        OpenMatrix4f[] poses = bindPoses(armature);
+        OpenMatrix4f[] snapshot = copy(poses);
+        AuxiliaryPoseMatrices matrices = new AuxiliaryPoseMatrices(bothHandLayout(1.0F, 1.0F));
+        Vector3f fist = new Vector3f(-0.8F, 0.6F, 0.2F);
+        assertNull(matrices.heldItemAttachmentPoses(
+                null, poses, fist, fist, null, null, 1.0F));
+        assertNull(matrices.heldItemAttachmentPoses(
+                armature, null, fist, fist, null, null, 1.0F));
+        assertNull(matrices.heldItemAttachmentPoses(armature,
+                AuxiliaryPoseMatrices.allocate(HumanoidRig.EPIC_JOINT_COUNT - 1),
+                fist, fist, null, null, 1.0F));
+        assertNull(matrices.heldItemAttachmentPoses(
+                humanoidArmature(HumanoidRig.EPIC_JOINT_COUNT - 1, new OpenMatrix4f()),
+                poses, fist, fist, null, null, 1.0F));
+        Armature invalidBind = gripArmature();
+        invalidBind.searchJointById(HumanoidRig.RIGHT_TOOL).getToOrigin().m00 = Float.NaN;
+        assertNull(matrices.heldItemAttachmentPoses(
+                invalidBind, poses, fist, fist, null, null, 1.0F));
+        for (int joint : new int[]{HumanoidRig.CHEST, HumanoidRig.RIGHT_TOOL,
+                HumanoidRig.LEFT_TOOL, HumanoidRig.EPIC_JOINT_COUNT}) {
+            OpenMatrix4f[] invalid = AuxiliaryPoseMatrices.allocate(HumanoidRig.EPIC_JOINT_COUNT + 1);
+            invalid[joint] = null;
+            assertNull(matrices.heldItemAttachmentPoses(
+                    armature, invalid, fist, fist, null, null, 1.0F));
+            invalid[joint] = new OpenMatrix4f();
+            invalid[joint].m11 = Float.NaN;
+            assertNull(matrices.heldItemAttachmentPoses(
+                    armature, invalid, fist, fist, null, null, 1.0F));
+            invalid[joint].m11 = 1.0F;
+            invalid[joint].m30 = Float.POSITIVE_INFINITY;
+            assertNull(matrices.heldItemAttachmentPoses(
+                    armature, invalid, fist, fist, null, null, 1.0F));
+        }
+        assertMatricesEqual(snapshot, poses);
     }
 
     @Test
@@ -1581,6 +1840,30 @@ class AuxiliaryPoseMatricesTest {
 
     private static Armature gripArmature() {
         return gripArmature(false);
+    }
+
+    private static AuxiliaryBoneLayout bothHandLayout(float horizontalScale, float verticalScale) {
+        GeometryDocument geometry = new GeometryDocument();
+        for (String side : new String[]{"Right", "Left"}) {
+            float x = side.equals("Right") ? -0.35F : 0.35F;
+            GeometryDocument.Bone hand = faceBone(side + "Hand",
+                    x - 0.08F, x + 0.08F, 0.8F, 1.2F);
+            hand.pivot(x, 1.2F, 0.0F);
+            GeometryDocument.Bone locator = new GeometryDocument.Bone(side + "HandLocator");
+            locator.parentName(hand.name());
+            locator.pivot(x, 0.8F, 0.02F);
+            geometry.add(hand);
+            geometry.add(locator);
+        }
+        geometry.linkHierarchy();
+        return AuxiliaryBoneLayout.create(geometry, horizontalScale, verticalScale);
+    }
+
+    private static OpenMatrix4f scaledTranslation(OpenMatrix4f matrix, float scale) {
+        matrix.m30 *= scale;
+        matrix.m31 *= scale;
+        matrix.m32 *= scale;
+        return matrix;
     }
 
     private static Armature gripArmature(boolean hasBindResidual) {

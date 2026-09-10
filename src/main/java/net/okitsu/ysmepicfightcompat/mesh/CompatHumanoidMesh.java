@@ -302,10 +302,11 @@ public final class CompatHumanoidMesh extends HumanoidMesh {
                             complete, HumanoidRig.LEFT_TOOL) : null;
                     OpenMatrix4f elytraLocatorPose =
                             auxiliaryPoses.elytraLocatorPose(complete);
-                    OpenMatrix4f[] attachmentPoses = projectsDisplayedAttachments(
+                    boolean projectBodyAttachments = projectsDisplayedAttachments(
                             frame.epicFightActionActive(),
                             animationFrame != null
-                                    && animationFrame.replaceEpicFightPose())
+                                    && animationFrame.replaceEpicFightPose());
+                    OpenMatrix4f[] attachmentPoses = projectBodyAttachments
                             ? auxiliaryPoses.displayedAttachmentPoses(
                             armature, complete, inputPoses, meshScale,
                             rightItemSwitch, leftItemSwitch) : null;
@@ -329,6 +330,13 @@ public final class CompatHumanoidMesh extends HumanoidMesh {
                                     && animationFrame.suppressHeldItemPose(),
                             animationFrame == null ? Set.of()
                                     : animationFrame.ladderItemsInHand());
+                    if (!projectBodyAttachments) {
+                        RenderFrameContext.publishHeldItemPoses(
+                                frame.entity(), this, inputPoses,
+                                auxiliaryPoses.heldItemAttachmentPoses(
+                                        armature, inputPoses, rightFist, leftFist,
+                                        rightAuthoredItemPose, leftAuthoredItemPose, meshScale));
+                    }
                     if (!frame.firstPerson()) {
                         Set<String> hidden = animationFrame == null
                                 ? Set.of() : animationFrame.hiddenBones();
