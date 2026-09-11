@@ -13,7 +13,7 @@ The shared design applies to these source branches; each branch's `gradle.proper
 | `mc/1.20.1` | Forge 47.4.10 | 17 | 20.14.17 |
 | `mc/1.21.1` | NeoForge 21.1.235 | 21 | 21.17.3.1 |
 
-Both targets require YSM-Mapping-API 0.1.7 for their Minecraft version. The 1.21.1 NeoForge baseline matches that Mapping API target. Build targets and API adaptations do not establish runtime equivalence; gameplay validation is separate for each target.
+Both targets require YSM-Mapping-API 0.1.8 for their Minecraft version. The 1.21.1 NeoForge baseline matches that Mapping API target. Build targets and API adaptations do not establish runtime equivalence; gameplay validation is separate for each target.
 
 ## Rendering ownership
 
