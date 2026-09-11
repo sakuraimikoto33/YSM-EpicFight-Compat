@@ -15,6 +15,8 @@ import java.lang.invoke.MethodHandle;
 import java.lang.invoke.MethodHandles;
 import java.lang.invoke.MethodType;
 import java.lang.ref.WeakReference;
+import java.util.ArrayList;
+import java.util.HashMap;
 import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
 import java.util.Map;
@@ -22,6 +24,9 @@ import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicBoolean;
+import yesman.epicfight.client.ClientEngine;
+import yesman.epicfight.world.capabilities.EpicFightCapabilities;
+import yesman.epicfight.world.capabilities.entitypatch.LivingEntityPatch;
 
 /** Reads the live animation-variable providers already maintained by official YSM. */
 public final class OfficialRoamingVariables {
@@ -33,6 +38,7 @@ public final class OfficialRoamingVariables {
             YsmSymbols.PLAYER_STATE_ROAMING_PROVIDER_GETTER,
             YsmSymbols.PLAYER_STATE_ROAMING_VALUE_GETTER,
             YsmSymbols.PLAYER_STATE_ROAMING_VALUE_SETTER,
+            YsmSymbols.ANIMATION_CONTEXT_ROAMING_PROVIDER_BINDER,
             YsmSymbols.PLAYER_STATE_ROAMING_NAME_HASHER);
     private static final View MISSING_VIEW = new View(null, null);
     private static final Map<UUID, WeakReference<Object>> CAPABILITIES =
@@ -40,6 +46,10 @@ public final class OfficialRoamingVariables {
     private static final AtomicBoolean REGISTRATION_LOGGED = new AtomicBoolean();
     private static final AtomicBoolean READ_FAILURE_LOGGED = new AtomicBoolean();
     private static final AtomicBoolean STOP_FAILURE_LOGGED = new AtomicBoolean();
+    private static final AtomicBoolean BIND_FAILURE_LOGGED = new AtomicBoolean();
+    private static final Map<WeakIdentityKey<Player>, NativePlayerState> NATIVE_PLAYERS = new HashMap<>();
+    private static final Map<WeakIdentityKey<Object>, WeakReference<NativePlayerState>> PROVIDER_OWNERS =
+            new HashMap<>();
 
     public record RouletteState(String animationName, boolean playing,
                                 long generation) {
@@ -60,6 +70,7 @@ public final class OfficialRoamingVariables {
                           MethodHandle animationStopSender,
                           MethodHandle providerGetter, MethodHandle valueGetter,
                           MethodHandle valueSetter,
+                          MethodHandle providerBinder, Method setterMethod, Class<?> providerType,
                           RoamingVariableLookup lookup) {
     }
 
@@ -116,6 +127,12 @@ public final class OfficialRoamingVariables {
         if (player != null && capability != null) {
             OfficialConfigurationVariables.reset(player);
             CAPABILITIES.put(player.getUUID(), new WeakReference<>(capability));
+            if (player.level().isClientSide()) {
+                synchronized (NATIVE_PLAYERS) {
+                    NATIVE_PLAYERS.put(new WeakIdentityKey<>(player, null),
+                            new NativePlayerState(player, capability));
+                }
+            }
             if (REGISTRATION_LOGGED.compareAndSet(false, true)) {
                 CompatMod.LOG.info(
                         "YSM-EF Compat: official YSM live animation state was captured");
@@ -197,6 +214,10 @@ public final class OfficialRoamingVariables {
     }
 
     public static void clear() {
+        synchronized (NATIVE_PLAYERS) {
+            NATIVE_PLAYERS.clear();
+        }
+        synchronized (PROVIDER_OWNERS) { PROVIDER_OWNERS.clear(); }
         CAPABILITIES.clear();
         TouhouMaidAnimationStateAccess.clear();
     }
@@ -236,11 +257,22 @@ public final class OfficialRoamingVariables {
                 MethodHandle valueSetter = instanceMethod(
                         mapping.require(YsmSymbols.PLAYER_STATE_ROAMING_VALUE_SETTER),
                         int.class, Object.class);
+                Class<?> providerType = valueGetter.type().parameterType(0);
+                MethodHandle providerBinder = instanceMethod(
+                        mapping.require(YsmSymbols.ANIMATION_CONTEXT_ROAMING_PROVIDER_BINDER), providerType);
+                if (!providerType.isInterface() || providerBinder.type().parameterCount() != 2
+                        || providerBinder.type().returnType() != void.class
+                        || providerBinder.type().parameterType(1) != providerType) {
+                    throw new ReflectiveOperationException("Official roaming binding contract does not match");
+                }
+                YsmMethodSymbol setterSymbol = mapping.require(YsmSymbols.PLAYER_STATE_ROAMING_VALUE_SETTER);
+                Method setterMethod = owner(setterSymbol.owner()).getDeclaredMethod(
+                        setterSymbol.name(), int.class, Object.class);
                 MethodHandle hasher = staticHasher(
                         mapping.require(YsmSymbols.PLAYER_STATE_ROAMING_NAME_HASHER));
                 access = new Access(activeAnimationGetter, animationPlayingGetter,
                         animationStopPacketFactory, animationStopSender,
-                        providerGetter, valueGetter, valueSetter,
+                        providerGetter, valueGetter, valueSetter, providerBinder, setterMethod, providerType,
                         new RoamingVariableLookup(name -> invokeHasher(hasher, name)));
                 CompatMod.LOG.info(
                         "YSM-EF Compat: official YSM live animation-variable bridge is ready");
@@ -250,6 +282,101 @@ public final class OfficialRoamingVariables {
                         exception);
             }
             return access;
+        }
+    }
+
+    /** Publishes render ownership before native animation workers run. */
+    public static void refreshNativeWriteOwnership() {
+        Minecraft minecraft = Minecraft.getInstance();
+        ArrayList<NativePlayerState> states;
+        synchronized (NATIVE_PLAYERS) {
+            NATIVE_PLAYERS.entrySet().removeIf(entry -> entry.getKey().get() == null
+                    || entry.getValue().capability.get() == null);
+            states = new ArrayList<>(NATIVE_PLAYERS.values());
+        }
+        Access current = states.isEmpty() ? null : access();
+        for (NativePlayerState state : states) {
+            Player player = state.player.get();
+            Object capability = state.capability.get();
+            boolean live = player != null && capability != null && minecraft.level != null
+                    && player.level() == minecraft.level
+                    && minecraft.level.getEntity(player.getId()) == player;
+            // A queued evaluation may outlive its world; retain its last ownership restriction.
+            if (live) state.suppressWrites = player != minecraft.player && combatOwnsRendering(player);
+            if (live && current != null) {
+                try {
+                    state.provider(current.providerGetter().invoke(capability));
+                } catch (Throwable exception) {
+                    logReadFailure(exception);
+                }
+            }
+        }
+    }
+
+    private static boolean combatOwnsRendering(Player player) {
+        LivingEntityPatch<?> patch = EpicFightCapabilities.getEntityPatch(player, LivingEntityPatch.class);
+        ClientEngine engine = ClientEngine.getInstance();
+        return patch != null && patch.overrideRender() && engine != null
+                && !engine.isVanillaModelDebuggingMode();
+    }
+
+    /** Rebinds only the evaluator's view; packet application keeps the original provider. */
+    public static boolean bindNativeProvider(Object context, Object provider) {
+        if (context == null || provider == null) return false;
+        NativePlayerState state;
+        synchronized (PROVIDER_OWNERS) {
+            PROVIDER_OWNERS.entrySet().removeIf(entry -> entry.getKey().get() == null
+                    || entry.getValue().get() == null);
+            WeakReference<NativePlayerState> owner = PROVIDER_OWNERS.get(new WeakIdentityKey<>(provider, null));
+            state = owner == null ? null : owner.get();
+        }
+        // A guarded view is never registered here, so the nested binder invocation proceeds once.
+        if (state == null) return false;
+        Access current = access();
+        if (current == null) return false;
+        try {
+            Object view = state.view(provider, current);
+            if (view == null) return false;
+            // Do not invoke native code while holding either ownership map or player-state lock.
+            current.providerBinder().invoke(context, view);
+            return true;
+        } catch (Throwable exception) {
+            if (BIND_FAILURE_LOGGED.compareAndSet(false, true)) {
+                CompatMod.LOG.warn("YSM-EF Compat: official roaming evaluation guard is unavailable");
+            }
+            return false;
+        }
+    }
+
+    private static final class NativePlayerState {
+        private final WeakIdentityKey<Player> player;
+        private final WeakReference<Object> capability;
+        private WeakIdentityKey<Object> provider;
+        private Object nativeView;
+        private volatile boolean suppressWrites;
+
+        private NativePlayerState(Player player, Object capability) {
+            this.player = new WeakIdentityKey<>(player, null);
+            this.capability = new WeakReference<>(capability);
+        }
+
+        private synchronized void provider(Object next) {
+            if (provider != null && provider.get() == next) return;
+            synchronized (PROVIDER_OWNERS) {
+                if (provider != null) PROVIDER_OWNERS.remove(provider);
+                provider = next == null ? null : new WeakIdentityKey<>(next, null);
+                if (provider != null) PROVIDER_OWNERS.put(provider, new WeakReference<>(this));
+            }
+            nativeView = null;
+        }
+
+        private synchronized Object view(Object expected, Access current) {
+            if (provider == null || provider.get() != expected) return null;
+            if (nativeView == null) {
+                nativeView = RoamingProviderWriteGuard.wrap(current.providerType(), expected,
+                        current.setterMethod(), () -> suppressWrites);
+            }
+            return nativeView;
         }
     }
 

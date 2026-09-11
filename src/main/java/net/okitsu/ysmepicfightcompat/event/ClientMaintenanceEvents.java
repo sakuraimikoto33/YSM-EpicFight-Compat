@@ -103,12 +103,16 @@ public final class ClientMaintenanceEvents {
     @SubscribeEvent
     public static void renderFrame(TickEvent.RenderTickEvent event) {
         if (event.phase == TickEvent.Phase.START) {
+            OfficialRoamingVariables.refreshNativeWriteOwnership();
             CombatMeshCache.uploadReadyTextures();
         }
     }
 
     @SubscribeEvent
     public static void clientTick(TickEvent.ClientTickEvent event) {
+        if (event.phase == TickEvent.Phase.START) {
+            OfficialRoamingVariables.refreshNativeWriteOwnership();
+        }
         if (event.phase != TickEvent.Phase.END) {
             return;
         }
