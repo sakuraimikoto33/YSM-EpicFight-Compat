@@ -119,6 +119,18 @@
       "required": true
     },
     {
+      "key": "ysm.animation_context.roaming_provider_binder.method",
+      "kind": "METHOD",
+      "required": true,
+      "sourceAlias": {
+        "common": {
+          "owner": "net/okitsu/ysmepicfightcompat/ysmref/AnimationContextAlias",
+          "name": "bindRoamingProvider",
+          "descriptor": "(Ljava/lang/Object;)V"
+        }
+      }
+    },
+    {
       "key": "ysm.client.animation_roulette.configuration_expression.method",
       "kind": "METHOD",
       "required": true,
@@ -188,6 +200,9 @@
     ],
     "net.okitsu.ysmepicfightcompat.mixin.YsmConfigurationExpressionMixin": [
       "ysm.client.animation_roulette.configuration_expression.method"
+    ],
+    "net.okitsu.ysmepicfightcompat.mixin.YsmRoamingProviderBindingMixin": [
+      "ysm.animation_context.roaming_provider_binder.method"
     ],
     "net.okitsu.ysmepicfightcompat.mixin.YsmProjectileRendererMixin": [
       "ysm.client.renderer.custom_projectile.render.method"

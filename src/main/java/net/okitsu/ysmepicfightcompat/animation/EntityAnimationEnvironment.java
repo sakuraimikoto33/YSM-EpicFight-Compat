@@ -304,6 +304,9 @@ final class EntityAnimationEnvironment implements MolangScriptRuntime.Host {
 
     @Override
     public void writeVariable(int slot, double value) {
+        if (!permitsVariableWrite(slot)) {
+            return;
+        }
         typedVariables.remove(slot);
         String name = ExpressionEngine.slotName(slot);
         if (permitsExternalEffects(preview) && RoamingVariableLookup.isRoaming(name)
@@ -316,6 +319,18 @@ final class EntityAnimationEnvironment implements MolangScriptRuntime.Host {
 
     static boolean permitsExternalEffects(boolean preview) {
         return !preview;
+    }
+
+    private boolean permitsVariableWrite(int slot) {
+        return permitsVariableWrite(preview,
+                entity instanceof Player && entity != Minecraft.getInstance().player,
+                ExpressionEngine.slotName(slot));
+    }
+
+    static boolean permitsVariableWrite(boolean preview, boolean remotePlayer, String name) {
+        // Remote timelines may run after the owner's synchronized values arrive.
+        // Replaying persistent writes here would undo that authoritative update.
+        return preview || !remotePlayer || !RoamingVariableLookup.isRoaming(name);
     }
 
     static boolean prefersPreviewRoamingValue(boolean preview, String name, boolean assigned) {
@@ -331,6 +346,9 @@ final class EntityAnimationEnvironment implements MolangScriptRuntime.Host {
     }
 
     @Override public void writeVariableValue(int slot, Object value) {
+        if (!permitsVariableWrite(slot)) {
+            return;
+        }
         if (value instanceof Number number) {
             writeVariable(slot, number.doubleValue());
         } else if (typedVariables.containsKey(slot) || typedVariables.size() < 4096) {

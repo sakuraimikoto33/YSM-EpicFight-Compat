@@ -103,7 +103,13 @@ public final class ClientMaintenanceEvents {
 
     @SubscribeEvent
     public static void renderFrame(RenderFrameEvent.Pre event) {
+        OfficialRoamingVariables.refreshNativeWriteOwnership();
         CombatMeshCache.uploadReadyTextures();
+    }
+
+    @SubscribeEvent
+    public static void clientTickStart(ClientTickEvent.Pre event) {
+        OfficialRoamingVariables.refreshNativeWriteOwnership();
     }
 
     @SubscribeEvent
