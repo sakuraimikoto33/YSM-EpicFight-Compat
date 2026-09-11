@@ -6,7 +6,6 @@ import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.entity.player.Player;
 import net.okitsu.ysmepicfightcompat.CompatMod;
 import net.okitsu.ysmepicfightcompat.network.CompatNetwork;
-import net.okitsu.ysmepicfightcompat.network.PlayerSelectionNbt;
 import net.okitsu.ysmepicfightcompat.network.message.ConfigurationVariableSnapshotMessage;
 import net.okitsu.ysmepicfightcompat.network.message.ConfigurationVariableUpdateMessage;
 import net.okitsu.ysmepicfightcompat.network.message.ConfigurationVariableScopeRequestMessage;
@@ -41,20 +40,20 @@ public final class OfficialConfigurationVariables {
         if (player != localPlayer || connection == null) {
             return;
         }
-        // Configuration UI operations must use the live official selection, not the render cache.
-        PlayerSelectionNbt.Selection selection = PlayerSelectionNbt.read(player);
-        if (selection == null) {
+        // Official YSM only attaches the persistent selection NBT on the server.
+        String selectedModelId = OfficialClientModelSelection.modelId(player);
+        if (selectedModelId == null) {
             reset(player);
             return;
         }
         ModelConfigurationOverrides state = STATES.computeIfAbsent(player.getUUID(),
                 ignored -> new ModelConfigurationOverrides());
         EntityAnimationEnvironment fallback = new EntityAnimationEnvironment(
-                player, new HashMap<>(), new HashSet<>(), selection.modelId());
+                player, new HashMap<>(), new HashSet<>(), selectedModelId);
         fallback.update(0.0F, false, 0.0D);
         Map<String, Double> changes;
         try {
-            changes = state.evaluate(selection.modelId(), expression, fallback);
+            changes = state.evaluate(selectedModelId, expression, fallback);
         } catch (IllegalArgumentException ignored) {
             // An invalid/oversized edit must leave both the confirmed and pending values unchanged.
             return;
@@ -124,12 +123,12 @@ public final class OfficialConfigurationVariables {
         if (state == null) {
             return;
         }
-        PlayerSelectionNbt.Selection selection = PlayerSelectionNbt.read(localPlayer);
-        if (selection == null) {
+        String selectedModelId = OfficialClientModelSelection.modelId(localPlayer);
+        if (selectedModelId == null) {
             reset(localPlayer);
             return;
         }
-        state.selectModel(selection.modelId());
+        state.selectModel(selectedModelId);
         if (state.serverScope() == null && !state.pendingChanges().isEmpty() && --retryTicks <= 0) {
             requestScope(state);
         }
@@ -147,12 +146,12 @@ public final class OfficialConfigurationVariables {
             state.accept(snapshot.modelId(), snapshot.values());
             return;
         }
-        PlayerSelectionNbt.Selection selection = PlayerSelectionNbt.read(localPlayer);
-        if (selection == null || !selection.modelId().equals(snapshot.modelId())) {
+        String selectedModelId = OfficialClientModelSelection.modelId(localPlayer);
+        if (selectedModelId == null || !selectedModelId.equals(snapshot.modelId())) {
             return;
         }
         // A live selection change starts a new context even before its next UI operation.
-        state.selectModel(selection.modelId());
+        state.selectModel(selectedModelId);
         if (state.serverScope() != null
                 && state.context().equals(snapshot.clientContext())
                 && state.serverScope().equals(snapshot.serverScope())) {
@@ -185,8 +184,8 @@ public final class OfficialConfigurationVariables {
             return;
         }
         ModelConfigurationOverrides state = STATES.get(localPlayer.getUUID());
-        PlayerSelectionNbt.Selection selection = PlayerSelectionNbt.read(localPlayer);
-        if (state == null || selection == null || !selection.modelId().equals(reply.modelId())
+        String selectedModelId = OfficialClientModelSelection.modelId(localPlayer);
+        if (state == null || selectedModelId == null || !selectedModelId.equals(reply.modelId())
                 || !state.modelId().equals(reply.modelId())
                 || !state.context().equals(reply.clientContext())) {
             return;

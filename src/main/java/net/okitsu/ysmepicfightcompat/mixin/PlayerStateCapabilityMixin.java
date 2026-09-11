@@ -3,6 +3,7 @@ package net.okitsu.ysmepicfightcompat.mixin;
 import net.minecraft.world.entity.player.Player;
 import net.okitsu.ysmepicfightcompat.animation.OfficialRoamingVariables;
 import net.okitsu.ysmepicfightcompat.animation.OfficialGroundSpeedQuery;
+import net.okitsu.ysmepicfightcompat.animation.OfficialClientModelSelection;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
@@ -20,5 +21,6 @@ public abstract class PlayerStateCapabilityMixin {
     private void ysmCompat$capturePlayer(Player player, CallbackInfo callback) {
         OfficialRoamingVariables.register(player, this);
         OfficialGroundSpeedQuery.register(player, this);
+        OfficialClientModelSelection.register(player, this);
     }
 }

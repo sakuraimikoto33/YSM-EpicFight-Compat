@@ -117,14 +117,20 @@ class ConfigurationSelectionSyncContractTest {
     }
 
     @Test
-    void configurationEditsUseTheLiveOfficialSelectionRatherThanTheRenderCache()
+    void configurationEditsUseTheLiveClientSelectionWithoutRequiringServerOnlyNbt()
             throws IOException {
         MethodCode apply = method(read(OFFICIAL), "apply");
-        int liveSelection = only(apply.calls(ROOT + "network/PlayerSelectionNbt", "read"));
+        int liveSelection = only(apply.calls(ROOT + "animation/OfficialClientModelSelection", "modelId"));
         int evaluate = only(apply.calls(OVERRIDES, "evaluate"));
 
         assertTrue(liveSelection < evaluate);
         assertTrue(apply.calls(RESOLVER, "current").isEmpty());
+        for (String name : List.of("apply", "tickSync", "acceptSnapshot", "acceptScope")) {
+            MethodCode handler = method(read(OFFICIAL), name);
+            assertEquals(1, handler.calls(ROOT + "animation/OfficialClientModelSelection", "modelId").size());
+            assertTrue(handler.calls(ROOT + "network/PlayerSelectionNbt", "read").isEmpty(), name);
+            assertTrue(handler.calls(RESOLVER, "current").isEmpty(), name);
+        }
     }
 
     @Test

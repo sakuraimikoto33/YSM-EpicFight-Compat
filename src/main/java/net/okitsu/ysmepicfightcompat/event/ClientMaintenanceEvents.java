@@ -19,6 +19,7 @@ import net.okitsu.ysmepicfightcompat.animation.ClientShieldBlockState;
 import net.okitsu.ysmepicfightcompat.animation.OfficialConfigurationVariables;
 import net.okitsu.ysmepicfightcompat.animation.OfficialRoamingVariables;
 import net.okitsu.ysmepicfightcompat.animation.OfficialGroundSpeedQuery;
+import net.okitsu.ysmepicfightcompat.animation.OfficialClientModelSelection;
 import net.okitsu.ysmepicfightcompat.integration.tlm.TouhouMaidRenderBridge;
 import net.okitsu.ysmepicfightcompat.integration.tlm.TouhouMaidSelectionAccess;
 import net.okitsu.ysmepicfightcompat.mesh.CombatMeshCache;
@@ -52,6 +53,7 @@ public final class ClientMaintenanceEvents {
         OfficialConfigurationVariables.clear();
         OfficialRoamingVariables.clear();
         OfficialGroundSpeedQuery.clear();
+        OfficialClientModelSelection.clear();
         ClientAttackSoundRouter.clear();
         ClientShieldBlockState.clear();
         ClientHeldItemModelPreferences.beginConnection();
@@ -80,6 +82,7 @@ public final class ClientMaintenanceEvents {
             if (entity instanceof Player player) {
                 OfficialConfigurationVariables.reset(player);
                 OfficialGroundSpeedQuery.remove(player);
+                OfficialClientModelSelection.remove(player);
             }
         }
     }

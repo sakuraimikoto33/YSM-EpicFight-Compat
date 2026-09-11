@@ -2,6 +2,16 @@
   "schemaVersion": 1,
   "symbols": [
     {
+      "key": "ysm.player_state.model_id_getter.method",
+      "kind": "METHOD",
+      "required": true
+    },
+    {
+      "key": "ysm.player_state.model_disabled_getter.method",
+      "kind": "METHOD",
+      "required": true
+    },
+    {
       "key": "ysm.client.model_manager.model_lookup.method",
       "kind": "METHOD",
       "required": true
