@@ -10,7 +10,7 @@
 - NeoForge 21.1.235 以降
 - [Yes Steve Model](https://modrinth.com/mod/yes-steve-model) 2.6.0 以降（NeoForge 1.21.1版）
 - [Epic Fight](https://modrinth.com/mod/epic-fight) 21.17.3.1以上、21.18未満（NeoForge 1.21.1版）
-- [YSM Mapping API](https://github.com/sakuraimikoto33/YSM-Mapping-API) 0.1.7 以降
+- [YSM Mapping API](https://github.com/sakuraimikoto33/YSM-Mapping-API) 0.1.8 以降
 
 1.21.1移植版は、戦闘描画、IrisのPBRとリソース再読込、Configured、ParCool、Epic ParCool、SWEM、統合サーバーを用いた2クライアント間の同期を実機で確認しています。専用サーバーの起動は未検証です。EpicFight：TouhouLittleMaidはこの環境に未対応です。
 

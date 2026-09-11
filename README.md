@@ -10,7 +10,7 @@ Use the player model selected in official Yes Steve Model with Epic Fight combat
 - NeoForge 21.1.235 or later
 - [Yes Steve Model](https://modrinth.com/mod/yes-steve-model) 2.6.0 or later for NeoForge 1.21.1
 - [Epic Fight](https://modrinth.com/mod/epic-fight) 21.17.3.1 or later, below 21.18, for NeoForge 1.21.1
-- [YSM Mapping API](https://github.com/sakuraimikoto33/YSM-Mapping-API) 0.1.7 or later
+- [YSM Mapping API](https://github.com/sakuraimikoto33/YSM-Mapping-API) 0.1.8 or later
 
 The 1.21.1 port has been verified in-game for combat rendering, Iris PBR and resource reloads, Configured, ParCool, Epic ParCool, SWEM, and synchronization between two clients using an integrated server. Dedicated-server startup has not been verified. EpicFight：TouhouLittleMaid is unavailable for this target.
 
