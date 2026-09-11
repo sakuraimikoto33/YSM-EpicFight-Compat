@@ -41,8 +41,27 @@ switch ($minecraftVersion) {
     }
     default { throw "No validated loader baseline is configured for Minecraft '$minecraftVersion'." }
 }
-Require-Text 'gradle.properties' '^ysm_mapping_api_version=0\.1\.8$' 'Mapping API selection version must remain 0.1.8.'
-Require-Text 'gradle.properties' '^ysm_mapping_api_version_range=0\.1\.8$' 'Mapping API loader dependency floor must remain 0.1.8.'
+$mappingProperties = @{}
+foreach ($line in Get-Content -LiteralPath (Join-Path $repository 'gradle.properties')) {
+    if ($line -cmatch '^(ysm_mapping_api_version(?:_range)?)=(.*)$') {
+        $mappingProperties[$Matches[1]] = $Matches[2]
+    }
+}
+$mappingApiVersion = [string]$mappingProperties['ysm_mapping_api_version']
+$mappingApiVersionRange = [string]$mappingProperties['ysm_mapping_api_version_range']
+$stableSemVerPattern = '^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$'
+$validMappingApiVersion = $mappingApiVersion -cmatch $stableSemVerPattern
+$validMappingApiVersionRange = $mappingApiVersionRange -cmatch $stableSemVerPattern
+if (-not $validMappingApiVersion) {
+    $errors.Add('Mapping API selection version must be a stable SemVer in ysm_mapping_api_version.')
+}
+if (-not $validMappingApiVersionRange) {
+    $errors.Add('Mapping API loader dependency floor must be a stable SemVer in ysm_mapping_api_version_range.')
+}
+if ($validMappingApiVersion -and $validMappingApiVersionRange -and
+        $mappingApiVersion -cne $mappingApiVersionRange) {
+    $errors.Add('Mapping API selection version must match the loader dependency floor, as required by the resolver.')
+}
 Require-Text 'settings.gradle' "apply from: 'gradle/ysm-mapping-api\.settings\.gradle'" 'Settings must apply the Mapping API resolver.'
 Require-Text 'gradle/ysm-mapping-api.settings.gradle' 'git.*ls-remote.*--refs.*--tags' 'Mapping API resolver must query remote tags.'
 Require-Text 'gradle/ysm-mapping-api.settings.gradle' 'ysm_mapping_api_version_range' 'Mapping API resolver must validate the loader dependency floor.'
@@ -127,8 +146,8 @@ if (-not $SkipBuild) {
 [pscustomobject]@{
     success = $true
     target = $branch
-    mappingApiVersion = '0.1.8'
-    mappingApiVersionRange = '0.1.8'
+    mappingApiVersion = $mappingApiVersion
+    mappingApiVersionRange = $mappingApiVersionRange
     officialYsmOnly = $true
     buildSkipped = [bool]$SkipBuild
 } | ConvertTo-Json -Compress
