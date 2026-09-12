@@ -100,6 +100,7 @@ public final class SelectionBroadcaster {
             return;
         }
         ConfigurationVariableBroadcaster.flushRespawns();
+        ServerModelTransfers.tick(server);
         if (server.getTickCount() % POLL_INTERVAL != 0) {
             return;
         }

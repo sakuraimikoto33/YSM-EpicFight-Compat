@@ -15,6 +15,7 @@ import net.okitsu.ysmepicfightcompat.network.message.ModelChunkMessage;
 
 import java.io.IOException;
 import java.security.MessageDigest;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
@@ -24,7 +25,10 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
+import java.util.concurrent.ArrayBlockingQueue;
+import java.util.concurrent.RejectedExecutionException;
+import java.util.concurrent.ThreadPoolExecutor;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
 /** Builds each approved server model once and serves memory or persistent payload caches. */
@@ -38,7 +42,8 @@ public final class ServerModelTransfers {
     private static final ModelTransferRateLimiter RATE_LIMITER =
             new ModelTransferRateLimiter(RATE_WINDOW_NANOS, 16L,
                     MAX_DATA_BYTES_PER_WINDOW);
-    private static final ExecutorService ENCODERS = Executors.newFixedThreadPool(2, task -> {
+    private static final ExecutorService ENCODERS = new ThreadPoolExecutor(2, 2,
+            0L, TimeUnit.MILLISECONDS, new ArrayBlockingQueue<>(MAX_PENDING_MODELS * 2), task -> {
         Thread worker = new Thread(task, "ysm-ef-model-sender");
         worker.setDaemon(true);
         return worker;
@@ -51,10 +56,14 @@ public final class ServerModelTransfers {
     private static final Map<UUID, Set<UUID>> TRACKED_ENTITIES =
             new LinkedHashMap<>();
     private static final AtomicInteger GENERATION = new AtomicInteger();
+    private static final int CHUNKS_PER_TICK = 16;
+    private static final ModelDeliveryQueue<DeliveryRequest, CompatNetwork.PreparedModelPacket>
+            DELIVERIES = new ModelDeliveryQueue<>(MAX_PENDING_MODELS, ModelChunkPreparation.MAX_RETAINED_BYTES);
     private static long cachedBytes;
 
     private record Request(UUID recipientUuid, int sourceEntityId,
-                           UUID sourceEntityUuid, byte[] knownPayloadDigest) {
+                           UUID sourceEntityUuid, byte[] knownPayloadDigest,
+                           Object recipientConnection) {
         private Request {
             knownPayloadDigest = Arrays.copyOf(knownPayloadDigest, knownPayloadDigest.length);
         }
@@ -67,6 +76,10 @@ public final class ServerModelTransfers {
     }
 
     private record PendingBatch(int generation, Map<UUID, Request> requests) {
+    }
+
+    private record DeliveryRequest(MinecraftServer server, String modelId,
+                                   Request request, int generation) {
     }
 
     private ServerModelTransfers() {
@@ -87,11 +100,6 @@ public final class ServerModelTransfers {
             return;
         }
         if (!authorizedSelection(recipient, sourceEntityId, sourceEntityUuid, modelId)) {
-            return;
-        }
-        if (!LocalModelRepository.exists(modelId)) {
-            ServerModelDiskCache.remove(modelId);
-            CompatNetwork.toPlayer(recipient, ModelChunkMessage.unavailable(modelId));
             return;
         }
         boolean start;
@@ -124,11 +132,15 @@ public final class ServerModelTransfers {
                 }
                 batch.requests().put(recipientUuid,
                         new Request(recipientUuid, sourceEntityId,
-                                sourceEntityUuid, knownPayloadDigest));
+                                sourceEntityUuid, knownPayloadDigest, recipient.connection));
             }
         }
         if (accepted && start) {
-            ENCODERS.execute(() -> prepare(server, modelId, expectedGeneration));
+            try {
+                ENCODERS.execute(() -> prepare(server, modelId, expectedGeneration));
+            } catch (RejectedExecutionException busy) {
+                discardWaiters(modelId, expectedGeneration);
+            }
         }
     }
 
@@ -175,6 +187,7 @@ public final class ServerModelTransfers {
 
     public static void clear() {
         GENERATION.incrementAndGet();
+        DELIVERIES.clear();
         synchronized (WAITERS) {
             WAITERS.clear();
             PENDING_BY_RECIPIENT.clear();
@@ -185,11 +198,19 @@ public final class ServerModelTransfers {
             CACHE.clear();
             cachedBytes = 0;
         }
-        ENCODERS.execute(ServerModelDiskCache::maintain);
+        try {
+            ENCODERS.execute(ServerModelDiskCache::maintain);
+        } catch (RejectedExecutionException busy) {
+            // Persistent-cache maintenance can wait for the next normal cache access.
+        }
     }
 
     private static void prepare(MinecraftServer server, String modelId,
                                 int expectedGeneration) {
+        if (expectedGeneration != GENERATION.get()) {
+            discardWaiters(modelId, expectedGeneration);
+            return;
+        }
         Prepared prepared = null;
         try {
             prepared = encoded(modelId, expectedGeneration);
@@ -202,10 +223,19 @@ public final class ServerModelTransfers {
             discardWaiters(modelId, expectedGeneration);
             return;
         }
-        server.execute(() -> deliver(server, modelId, completed, expectedGeneration));
+        try {
+            CompatNetwork.PreparedModelPacket status = CompatNetwork.prepareModelChunk(
+                    completed == null ? ModelChunkMessage.unavailable(modelId)
+                            : ModelChunkMessage.unchanged(modelId, completed.payloadDigest()));
+            server.execute(() -> deliver(server, modelId, completed, status, expectedGeneration));
+        } catch (RuntimeException exception) {
+            discardWaiters(modelId, expectedGeneration);
+            CompatMod.LOG.warn("YSM-EF Compat: failed to encode model status '{}'", modelId, exception);
+        }
     }
 
     private static void deliver(MinecraftServer server, String modelId, Prepared prepared,
+                                CompatNetwork.PreparedModelPacket status,
                                 int expectedGeneration) {
         List<Request> requests;
         if (expectedGeneration != GENERATION.get()) {
@@ -222,9 +252,10 @@ public final class ServerModelTransfers {
         if (expectedGeneration != GENERATION.get()) {
             return;
         }
+        List<Request> dataRequests = new ArrayList<>();
         for (Request request : requests) {
             ServerPlayer player = server.getPlayerList().getPlayer(request.recipientUuid());
-            if (!CompatNetwork.isConnected(player)) {
+            if (!CompatNetwork.isConnected(player) || player.connection != request.recipientConnection()) {
                 continue;
             }
             if (!authorizedSelection(player, request.sourceEntityId(),
@@ -232,18 +263,17 @@ public final class ServerModelTransfers {
                 continue;
             }
             if (prepared == null) {
-                CompatNetwork.toPlayer(player, ModelChunkMessage.unavailable(modelId));
+                CompatNetwork.sendPreparedModelChunk(player, status);
             } else if (request.knownPayloadDigest().length == ModelDiskCache.DIGEST_BYTES
                     && MessageDigest.isEqual(request.knownPayloadDigest(),
                     prepared.payloadDigest())) {
-                CompatNetwork.toPlayer(player,
-                        ModelChunkMessage.unchanged(modelId, prepared.payloadDigest()));
+                CompatNetwork.sendPreparedModelChunk(player, status);
             } else {
-                if (RATE_LIMITER.allowData(player.getUUID(), System.nanoTime(),
-                        prepared.bytes().length)) {
-                    sendChunks(player, modelId, prepared);
-                }
+                dataRequests.add(request);
             }
+        }
+        if (prepared != null && !dataRequests.isEmpty()) {
+            prepareDelivery(server, modelId, prepared, dataRequests, expectedGeneration);
         }
     }
 
@@ -330,22 +360,68 @@ public final class ServerModelTransfers {
                 modelId, selectedModelId);
     }
 
-    private static void sendChunks(ServerPlayer recipient, String modelId, Prepared prepared) {
-        byte[] payload = prepared.bytes();
-        UUID transfer = UUID.randomUUID();
-        int chunkCount = (payload.length + ModelChunkMessage.CHUNK_BYTES - 1)
-                / ModelChunkMessage.CHUNK_BYTES;
-        for (int index = 0; index < chunkCount; index++) {
-            int offset = index * ModelChunkMessage.CHUNK_BYTES;
-            int length = Math.min(ModelChunkMessage.CHUNK_BYTES, payload.length - offset);
-            CompatNetwork.toPlayer(recipient, new ModelChunkMessage(
-                    ModelChunkMessage.Status.DATA, transfer, modelId,
-                    prepared.payloadDigest(), payload.length, index, chunkCount,
-                    Arrays.copyOfRange(payload, offset, offset + length)));
+    private static void prepareDelivery(MinecraftServer server, String modelId, Prepared prepared,
+                                        List<Request> requests, int generation) {
+        // Charge the source plus one wire representation before allocating any chunk copies.
+        ModelDeliveryQueue.Reservation reservation = DELIVERIES.reserve(
+                ModelChunkPreparation.retainedBytes(modelId.length(), prepared.bytes().length));
+        if (reservation == null) {
+            return;
         }
-        CompatMod.LOG.info(
-                "YSM-EF Compat: streamed '{}' to '{}' in {} chunks",
-                modelId, recipient.getGameProfile().getName(), chunkCount);
+        List<DeliveryRequest> recipients = requests.stream()
+                .filter(request -> RATE_LIMITER.allowData(request.recipientUuid(), System.nanoTime(),
+                        prepared.bytes().length))
+                .map(request -> new DeliveryRequest(server, modelId, request, generation))
+                .toList();
+        if (recipients.isEmpty()) {
+            DELIVERIES.cancel(reservation);
+            return;
+        }
+        try {
+            ENCODERS.execute(() -> {
+                try {
+                    List<CompatNetwork.PreparedModelPacket> packets = ModelChunkPreparation.prepare(
+                            modelId, prepared.payloadDigest(), prepared.bytes(),
+                            () -> generation == GENERATION.get() && DELIVERIES.isCurrent(reservation),
+                            CompatNetwork::prepareModelChunk);
+                    if (generation != GENERATION.get() || packets.isEmpty()) {
+                        DELIVERIES.cancel(reservation);
+                        return;
+                    }
+                    // Publication holds no game objects beyond the immutable recipient handles.
+                    DELIVERIES.publish(reservation, recipients, packets);
+                } catch (Throwable exception) {
+                    DELIVERIES.cancel(reservation);
+                    CompatMod.LOG.warn("YSM-EF Compat: failed to prepare model chunks '{}'",
+                            modelId, exception);
+                }
+            });
+        } catch (RejectedExecutionException busy) {
+            DELIVERIES.cancel(reservation);
+        }
+    }
+
+    /** Game-state checks and bounded packet submission stay on the server tick thread. */
+    public static void tick(MinecraftServer server) {
+        try {
+            DELIVERIES.drain(CHUNKS_PER_TICK, (delivery, packet) -> {
+                if (delivery.server() != server || delivery.generation() != GENERATION.get()) {
+                    return false;
+                }
+                Request request = delivery.request();
+                ServerPlayer player = server.getPlayerList().getPlayer(request.recipientUuid());
+                if (!CompatNetwork.isConnected(player)
+                        || player.connection != request.recipientConnection()
+                        || !authorizedSelection(player, request.sourceEntityId(),
+                        request.sourceEntityUuid(), delivery.modelId())) {
+                    return false;
+                }
+                CompatNetwork.sendPreparedModelChunk(player, packet);
+                return true;
+            });
+        } catch (RuntimeException exception) {
+            CompatMod.LOG.warn("YSM-EF Compat: model packet delivery failed", exception);
+        }
     }
 
     private static void discardWaiters(String modelId, int expectedGeneration) {

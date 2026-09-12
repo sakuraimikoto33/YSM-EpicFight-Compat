@@ -101,6 +101,30 @@ public final class CompatNetwork {
                 && player.connection.getConnection().isConnected();
     }
 
+    /** The payload owns its bytes; encoding occurs on the connection event loop. */
+    public static final class PreparedModelPacket {
+        private final ModelChunkMessage payload;
+
+        private PreparedModelPacket(ModelChunkMessage payload) {
+            this.payload = payload;
+        }
+
+        public ModelChunkMessage payload() {
+            return payload;
+        }
+    }
+
+    /** Called on model workers; never reads game state or copies data on the server thread. */
+    public static PreparedModelPacket prepareModelChunk(ModelChunkMessage message) {
+        return new PreparedModelPacket(message);
+    }
+
+    public static void sendPreparedModelChunk(ServerPlayer player, PreparedModelPacket packet) {
+        if (isConnected(player)) {
+            PacketDistributor.sendToPlayer(player, packet.payload);
+        }
+    }
+
     public static void toPlayer(ServerPlayer player, CustomPacketPayload message) {
         if (isConnected(player)) {
             PacketDistributor.sendToPlayer(player, message);
