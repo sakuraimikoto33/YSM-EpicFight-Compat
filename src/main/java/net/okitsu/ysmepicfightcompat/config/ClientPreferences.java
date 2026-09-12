@@ -59,6 +59,28 @@ public final class ClientPreferences {
             SWEM_ANIMATION_EXCLUSIONS;
     public static final ModConfigSpec.BooleanValue YSM_WARNING_ACKNOWLEDGED;
 
+    private static final DecodedRuleCache HELD_ITEM_MODEL_RULES =
+            new DecodedRuleCache(HeldItemModelPolicy::decodeConfiguration,
+                    HeldItemModelPolicy.MAX_MODELS, HeldItemModelPolicy.MAX_SELECTORS_PER_MODEL);
+    private static final DecodedRuleCache PROJECTILE_MODEL_RULES =
+            new DecodedRuleCache(EntityModelPolicy::decodeConfiguration,
+                    EntityModelPolicy.MAX_MODELS, EntityModelPolicy.MAX_SELECTORS_PER_MODEL);
+    private static final DecodedRuleCache VEHICLE_MODEL_RULES =
+            new DecodedRuleCache(EntityModelPolicy::decodeConfiguration,
+                    EntityModelPolicy.MAX_MODELS, EntityModelPolicy.MAX_SELECTORS_PER_MODEL);
+    private static final DecodedRuleCache HELD_ITEM_SWITCH_ANIMATION_RULES =
+            new DecodedRuleCache(HeldItemModelPolicy::decodeConfiguration,
+                    HeldItemModelPolicy.MAX_MODELS, HeldItemModelPolicy.MAX_SELECTORS_PER_MODEL);
+    private static final DecodedRuleCache MOVEMENT_ANIMATION_RULES =
+            new DecodedRuleCache(MovementAnimationPolicy::decodeConfiguration,
+                    MovementAnimationPolicy.MAX_MODELS, MovementAnimationPolicy.MAX_SELECTORS_PER_MODEL);
+    private static final DecodedRuleCache PARCOOL_ANIMATION_RULES =
+            new DecodedRuleCache(value -> ModAnimationPolicy.decodeConfiguration(ModAnimationType.PARCOOL, value),
+                    ModAnimationPolicy.MAX_MODELS, ModAnimationPolicy.maxSelectorsPerModel(ModAnimationType.PARCOOL));
+    private static final DecodedRuleCache SWEM_ANIMATION_RULES =
+            new DecodedRuleCache(value -> ModAnimationPolicy.decodeConfiguration(ModAnimationType.SWEM, value),
+                    ModAnimationPolicy.MAX_MODELS, ModAnimationPolicy.maxSelectorsPerModel(ModAnimationType.SWEM));
+
     static {
         ModConfigSpec.Builder config = new ModConfigSpec.Builder();
         boolean parCoolAvailable = isOptionalAnimationAvailable(ModAnimationType.PARCOOL);
@@ -300,8 +322,8 @@ public final class ClientPreferences {
     }
 
     public static Map<String, List<String>> heldItemModelExclusions() {
-        return HeldItemModelPolicy.decodeConfiguration(
-                HELD_ITEM_MODEL_EXCLUSIONS.get());
+        return HELD_ITEM_MODEL_RULES.get(
+                HELD_ITEM_MODEL_EXCLUSIONS.get(), CLIENT_SPEC.isLoaded());
     }
 
     public static void setHeldItemModelExclusions(
@@ -312,8 +334,8 @@ public final class ClientPreferences {
     }
 
     public static Map<String, List<String>> projectileModelExclusions() {
-        return EntityModelPolicy.decodeConfiguration(
-                PROJECTILE_MODEL_EXCLUSIONS.get());
+        return PROJECTILE_MODEL_RULES.get(
+                PROJECTILE_MODEL_EXCLUSIONS.get(), CLIENT_SPEC.isLoaded());
     }
 
     public static void setProjectileModelExclusions(
@@ -324,8 +346,8 @@ public final class ClientPreferences {
     }
 
     public static Map<String, List<String>> vehicleModelExclusions() {
-        return EntityModelPolicy.decodeConfiguration(
-                VEHICLE_MODEL_EXCLUSIONS.get());
+        return VEHICLE_MODEL_RULES.get(
+                VEHICLE_MODEL_EXCLUSIONS.get(), CLIENT_SPEC.isLoaded());
     }
 
     public static void setVehicleModelExclusions(
@@ -336,8 +358,8 @@ public final class ClientPreferences {
     }
 
     public static Map<String, List<String>> heldItemSwitchAnimationExclusions() {
-        return HeldItemModelPolicy.decodeConfiguration(
-                HELD_ITEM_SWITCH_ANIMATION_EXCLUSIONS.get());
+        return HELD_ITEM_SWITCH_ANIMATION_RULES.get(
+                HELD_ITEM_SWITCH_ANIMATION_EXCLUSIONS.get(), CLIENT_SPEC.isLoaded());
     }
 
     public static void setHeldItemSwitchAnimationExclusions(
@@ -348,8 +370,8 @@ public final class ClientPreferences {
     }
 
     public static Map<String, List<String>> movementAnimationExclusions() {
-        return MovementAnimationPolicy.decodeConfiguration(
-                MOVEMENT_ANIMATION_EXCLUSIONS.get());
+        return MOVEMENT_ANIMATION_RULES.get(
+                MOVEMENT_ANIMATION_EXCLUSIONS.get(), CLIENT_SPEC.isLoaded());
     }
 
     public static void setMovementAnimationExclusions(
@@ -360,8 +382,8 @@ public final class ClientPreferences {
     }
 
     public static Map<String, List<String>> parCoolAnimationExclusions() {
-        return ModAnimationPolicy.decodeConfiguration(
-                ModAnimationType.PARCOOL, PARCOOL_ANIMATION_EXCLUSIONS.get());
+        return PARCOOL_ANIMATION_RULES.get(
+                PARCOOL_ANIMATION_EXCLUSIONS.get(), CLIENT_SPEC.isLoaded());
     }
 
     public static void setParCoolAnimationExclusions(
@@ -372,8 +394,8 @@ public final class ClientPreferences {
     }
 
     public static Map<String, List<String>> swemAnimationExclusions() {
-        return ModAnimationPolicy.decodeConfiguration(
-                ModAnimationType.SWEM, SWEM_ANIMATION_EXCLUSIONS.get());
+        return SWEM_ANIMATION_RULES.get(
+                SWEM_ANIMATION_EXCLUSIONS.get(), CLIENT_SPEC.isLoaded());
     }
 
     public static void setSwemAnimationExclusions(
