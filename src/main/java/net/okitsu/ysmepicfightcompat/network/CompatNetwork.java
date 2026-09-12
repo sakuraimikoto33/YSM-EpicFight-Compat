@@ -1,5 +1,8 @@
 package net.okitsu.ysmepicfightcompat.network;
 
+import io.netty.buffer.Unpooled;
+import net.minecraft.network.FriendlyByteBuf;
+import net.minecraft.network.protocol.game.ClientboundCustomPayloadPacket;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.entity.Entity;
@@ -41,8 +44,10 @@ import java.util.UUID;
 /** Forge channel for compatibility-owned state; official YSM's channel remains untouched. */
 public final class CompatNetwork {
     public static final String PROTOCOL = "1";
+    private static final ResourceLocation BRIDGE =
+            ResourceLocation.fromNamespaceAndPath(CompatMod.MOD_ID, "bridge");
     public static final SimpleChannel CHANNEL = NetworkRegistry.newSimpleChannel(
-            ResourceLocation.fromNamespaceAndPath(CompatMod.MOD_ID, "bridge"),
+            BRIDGE,
             () -> PROTOCOL, PROTOCOL::equals, PROTOCOL::equals);
 
     private CompatNetwork() {
@@ -166,6 +171,39 @@ public final class CompatNetwork {
         return player != null && player.connection != null
                 && player.connection.connection != null
                 && player.connection.connection.isConnected();
+    }
+
+    /** Immutable wire bytes prepared by a model worker, with a fresh buffer per recipient. */
+    public static final class PreparedModelPacket {
+        private final byte[] wireBytes;
+
+        private PreparedModelPacket(byte[] wireBytes) {
+            this.wireBytes = wireBytes;
+        }
+
+        public ClientboundCustomPayloadPacket packet() {
+            return new ClientboundCustomPayloadPacket(BRIDGE,
+                    new FriendlyByteBuf(Unpooled.wrappedBuffer(wireBytes).asReadOnly()));
+        }
+    }
+
+    /** Called on model workers after channel registration; never reads game state. */
+    public static PreparedModelPacket prepareModelChunk(ModelChunkMessage message) {
+        FriendlyByteBuf output = new FriendlyByteBuf(Unpooled.buffer());
+        try {
+            CHANNEL.encodeMessage(message, output);
+            byte[] bytes = new byte[output.readableBytes()];
+            output.getBytes(output.readerIndex(), bytes);
+            return new PreparedModelPacket(bytes);
+        } finally {
+            output.release();
+        }
+    }
+
+    public static void sendPreparedModelChunk(ServerPlayer player, PreparedModelPacket packet) {
+        if (isConnected(player)) {
+            player.connection.send(packet.packet());
+        }
     }
 
     public static void toPlayer(ServerPlayer player, Object message) {
