@@ -8,6 +8,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Predicate;
 
 /** Per-entity state-machine evaluator for the supported YSM controller subset. */
@@ -104,7 +105,7 @@ final class AnimationControllerProgram {
         }
     }
 
-    private static final class ControllerEnvironment implements MolangScriptRuntime.Host {
+    private final class ControllerEnvironment implements MolangScriptRuntime.Host {
         private final ExpressionEngine.Environment delegate;
         private final ExpressionEngine.Environment poseOnlyExpressions;
         private Completion completion = Completion.NONE;
@@ -163,6 +164,11 @@ final class AnimationControllerProgram {
             return outputsEnabled && !stateEffectsEnabled ? poseOnlyExpressions : this;
         }
 
+        private ExpressionEngine.Expression compiledExpression(String source) {
+            return source == null ? ExpressionEngine.compile(null)
+                    : compiledExpressions.computeIfAbsent(source, ExpressionEngine::compile);
+        }
+
         private void stopOutputScope() {
             if (delegate instanceof EntityAnimationEnvironment entityEnvironment) {
                 entityEnvironment.stopSoundScope(soundScope);
@@ -191,7 +197,7 @@ final class AnimationControllerProgram {
             }
             for (AnimationController.StateVariable variable : state.variables()) {
                 int slot = ExpressionEngine.slot(variable.name());
-                double input = ExpressionEngine.compile(variable.inputExpression())
+                double input = compiledExpression(variable.inputExpression())
                         .evaluate(expressions());
                 double value = variable.remap(input);
                 stateVariables.put(slot, Double.isFinite(value) ? value : 0.0D);
@@ -253,6 +259,10 @@ final class AnimationControllerProgram {
     private final Map<String, AnimationController> controllers;
     private final Set<String> builtinControllers;
     private final Map<String, ClipInfo> clips;
+    // Retain handles for this immutable controller definition even after the global
+    // compiler cache fills. Only reached expressions are compiled; values stay per entity.
+    private final Map<String, ExpressionEngine.Expression> compiledExpressions =
+            new ConcurrentHashMap<>();
 
     AnimationControllerProgram(Map<String, AnimationController> controllers,
                                Map<String, ClipInfo> clips) {
@@ -420,7 +430,7 @@ final class AnimationControllerProgram {
             AnimationController.State target = null;
             for (AnimationController.Transition transition : runtime.current.transitions()) {
                 AnimationController.State candidate = controller.states().get(transition.targetState());
-                if (candidate != null && truth(ExpressionEngine.compile(
+                if (candidate != null && truth(environment.compiledExpression(
                         transition.conditionExpression()).evaluate(environment.expressions()))) {
                     target = candidate;
                     break;
@@ -505,7 +515,7 @@ final class AnimationControllerProgram {
             if (clip == null || !clip.renderable()) {
                 continue;
             }
-            double evaluated = ExpressionEngine.compile(reference.weightExpression())
+            double evaluated = environment.compiledExpression(reference.weightExpression())
                     .evaluate(environment.expressions());
             float weight = finite(evaluated * transitionWeight);
             String key = "controller/" + controllerName + '/' + state.name() + '/'
@@ -529,7 +539,7 @@ final class AnimationControllerProgram {
         for (AnimationController.AnimationReference reference : state.animations()) {
             String name = normalize(reference.name());
             ClipInfo clip = clips.get(name);
-            if (clip == null || !truth(ExpressionEngine.compile(
+            if (clip == null || !truth(environment.compiledExpression(
                     reference.weightExpression()).evaluate(environment.expressions()))) {
                 continue;
             }
@@ -553,7 +563,7 @@ final class AnimationControllerProgram {
     }
 
     private static void execute(List<String> expressions, ControllerEnvironment environment) {
-        expressions.forEach(expression -> ExpressionEngine.compile(expression)
+        expressions.forEach(expression -> environment.compiledExpression(expression)
                 .evaluate(environment.expressions()));
     }
 
