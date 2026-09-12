@@ -360,13 +360,72 @@ class CombatMeshCacheLifecycleTest {
                 "The failure stamp must be captured on the conversion worker");
     }
 
+    @Test
+    void remoteLeaseSurvivesTheGpuFenceUntilCurrentOrStaleClientCompletion() throws Exception {
+        for (int generation : new int[]{OLD_GENERATION, CURRENT_GENERATION}) {
+            try (Fixture fixture = new Fixture()) {
+                fixture.pending.add(MODEL);
+                AtomicInteger releases = new AtomicInteger();
+                CompletionQueues queues = new CompletionQueues(true);
+                queues.enqueue(() -> assertDoesNotThrow(() ->
+                        completeNull(generation, releases::incrementAndGet)));
+                queues.drainClient();
+                assertEquals(0, releases.get());
+                queues.drainRender();
+                assertEquals(0, releases.get(), "GPU fence alone does not settle the client result");
+                queues.drainClient();
+                assertEquals(1, releases.get());
+                assertEquals(generation != CURRENT_GENERATION, fixture.pending.contains(MODEL));
+            }
+        }
+    }
+
+    @Test
+    void failureAndInterruptionReleaseTheirRemoteLeaseIncludingOldGenerations() throws Exception {
+        for (int generation : new int[]{OLD_GENERATION, CURRENT_GENERATION}) {
+            try (Fixture fixture = new Fixture()) {
+                AtomicInteger releases = new AtomicInteger();
+                fixture.pending.add(MODEL);
+                completeFailure(generation, 0L, releases::incrementAndGet);
+                assertEquals(1, releases.get());
+                assertEquals(generation != CURRENT_GENERATION, fixture.pending.contains(MODEL));
+                fixture.pending.add(MODEL);
+                completeInterruption(generation, releases::incrementAndGet);
+                assertEquals(2, releases.get());
+                assertEquals(generation != CURRENT_GENERATION, fixture.pending.contains(MODEL));
+            }
+        }
+    }
+
+    @Test
+    void staleDisposalFailureStillReleasesTheRemoteLease() throws Exception {
+        try (Fixture fixture = new Fixture()) {
+            Class<?> conversion = Class.forName(CombatMeshCache.class.getName() + "$Conversion",
+                    false, CombatMeshCache.class.getClassLoader());
+            var constructor = conversion.getDeclaredConstructors()[0];
+            constructor.setAccessible(true);
+            Object broken = constructor.newInstance(MODEL, null, 0, List.of());
+            Method method = handler("completeConversion", String.class, boolean.class,
+                    int.class, conversion, Runnable.class);
+            AtomicInteger releases = new AtomicInteger();
+            assertThrows(java.lang.reflect.InvocationTargetException.class, () ->
+                    method.invoke(null, MODEL, false, OLD_GENERATION, broken,
+                            (Runnable) releases::incrementAndGet));
+            assertEquals(1, releases.get());
+        }
+    }
+
     private static void completeNull(int generation) throws Exception {
+        completeNull(generation, () -> { });
+    }
+
+    private static void completeNull(int generation, Runnable release) throws Exception {
         Class<?> conversion = Class.forName(CombatMeshCache.class.getName() + "$Conversion",
                 false, CombatMeshCache.class.getClassLoader());
         Method method = handler("completeConversion", String.class, boolean.class,
-                int.class, conversion);
+                int.class, conversion, Runnable.class);
         // A null conversion exercises bookkeeping without allocating a mesh or invoking GL.
-        method.invoke(null, MODEL, false, generation, null);
+        method.invoke(null, MODEL, false, generation, null, release);
     }
 
     private static long failureStamp(LongSupplier sourceStamp, Throwable conversionFailure)
@@ -376,14 +435,24 @@ class CombatMeshCacheLifecycleTest {
     }
 
     private static void completeFailure(int generation, long failedStamp) throws Exception {
-        handler("completeConversionFailure", String.class, int.class, long.class, Throwable.class)
+        completeFailure(generation, failedStamp, () -> { });
+    }
+
+    private static void completeFailure(int generation, long failedStamp, Runnable release)
+            throws Exception {
+        handler("completeConversionFailure", String.class, int.class, long.class, Throwable.class,
+                Runnable.class)
                 .invoke(null, MODEL, generation, failedStamp,
-                        new IllegalStateException("Expected conversion lifecycle test failure"));
+                        new IllegalStateException("Expected conversion lifecycle test failure"), release);
     }
 
     private static void completeInterruption(int generation) throws Exception {
-        handler("completeConversionInterruption", String.class, int.class)
-                .invoke(null, MODEL, generation);
+        completeInterruption(generation, () -> { });
+    }
+
+    private static void completeInterruption(int generation, Runnable release) throws Exception {
+        handler("completeConversionInterruption", String.class, int.class, Runnable.class)
+                .invoke(null, MODEL, generation, release);
     }
 
     private static Method handler(String name, Class<?>... parameterTypes) throws Exception {

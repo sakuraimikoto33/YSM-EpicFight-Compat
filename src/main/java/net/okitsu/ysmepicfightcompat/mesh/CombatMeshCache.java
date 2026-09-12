@@ -144,23 +144,36 @@ public final class CombatMeshCache {
             return false;
         }
         boolean local = LocalModelRepository.exists(modelId);
-        ModelBundle remote = local || sourceEntity == null
+        ClientModelTransfers.ReadyModel remote = local || sourceEntity == null
                 ? null : ClientModelTransfers.findOrRequest(modelId, sourceEntity);
         if (!local && remote == null) {
             return false;
         }
-        Long failedAt = FAILED_STAMPS.get(modelId);
-        if (failedAt != null) {
-            long current = local
-                    ? failureStamp(() -> LocalModelRepository.metadataStamp(modelId), null) : 0L;
-            if (failedAt == current) {
-                return false;
+        Runnable release = remote == null ? () -> { } : remote.completion();
+        boolean submitted = false;
+        boolean pending = false;
+        try {
+            Long failedAt = FAILED_STAMPS.get(modelId);
+            if (failedAt != null) {
+                long current = local
+                        ? failureStamp(() -> LocalModelRepository.metadataStamp(modelId), null) : 0L;
+                if (failedAt == current) {
+                    return false;
+                }
+                FAILED_STAMPS.remove(modelId);
             }
-            FAILED_STAMPS.remove(modelId);
+            PENDING_MODELS.add(modelId);
+            pending = true;
+            int generation = GENERATION.get();
+            ModelBundle model = remote == null ? null : remote.model();
+            WORKERS.execute(() -> convert(modelId, model, local, generation, release));
+            submitted = true;
+        } finally {
+            if (!submitted) {
+                if (pending) { PENDING_MODELS.remove(modelId); }
+                release.run();
+            }
         }
-        PENDING_MODELS.add(modelId);
-        int generation = GENERATION.get();
-        WORKERS.execute(() -> convert(modelId, remote, local, generation));
         return false;
     }
 
@@ -481,7 +494,7 @@ public final class CombatMeshCache {
     }
 
     private static void convert(String modelId, ModelBundle remote, boolean local,
-                                int expectedGeneration) {
+                                int expectedGeneration, Runnable release) {
         boolean acquired = false;
         try {
             CONVERSION_PERMITS.acquire();
@@ -491,17 +504,17 @@ public final class CombatMeshCache {
             queueConversionCompletion(
                     fence -> RenderSystem.recordRenderCall(fence::run),
                     completion -> Minecraft.getInstance().tell(completion),
-                    () -> completeConversion(modelId, local, expectedGeneration, conversion));
+                    () -> completeConversion(modelId, local, expectedGeneration, conversion, release));
         } catch (InterruptedException exception) {
             Thread.currentThread().interrupt();
             Minecraft.getInstance().execute(() -> completeConversionInterruption(
-                    modelId, expectedGeneration));
+                    modelId, expectedGeneration, release));
         } catch (Throwable exception) {
             // Keep source inspection on the worker; only publish the failure in its own generation.
             long failedStamp = local
                     ? failureStamp(() -> LocalModelRepository.metadataStamp(modelId), exception) : 0L;
             Minecraft.getInstance().execute(() -> completeConversionFailure(
-                    modelId, expectedGeneration, failedStamp, exception));
+                    modelId, expectedGeneration, failedStamp, exception, release));
         } finally {
             if (acquired) {
                 CONVERSION_PERMITS.release();
@@ -535,42 +548,55 @@ public final class CombatMeshCache {
     /** Publishes and replaces render resources only on Minecraft's render thread. */
     private static synchronized void completeConversion(
             String modelId, boolean local, int expectedGeneration,
-            Conversion conversion) {
-        if (expectedGeneration != GENERATION.get()) {
-            if (conversion != null) {
-                conversion.mesh().releaseAllAnimationStates();
-                conversion.mesh().destroy();
+            Conversion conversion, Runnable release) {
+        try {
+            if (expectedGeneration != GENERATION.get()) {
+                if (conversion != null) {
+                    conversion.mesh().releaseAllAnimationStates();
+                    conversion.mesh().destroy();
+                }
+                return;
             }
-            return;
+            PENDING_MODELS.remove(modelId);
+            if (conversion == null) {
+                FAILED_STAMPS.put(modelId,
+                        local ? failureStamp(() -> LocalModelRepository.metadataStamp(modelId), null) : 0L);
+                return;
+            }
+            register(conversion);
+        } finally {
+            release.run();
         }
-        PENDING_MODELS.remove(modelId);
-        if (conversion == null) {
-            FAILED_STAMPS.put(modelId,
-                    local ? failureStamp(() -> LocalModelRepository.metadataStamp(modelId), null) : 0L);
-            return;
-        }
-        register(conversion);
     }
 
     /** Worker cancellation must not clear a replacement conversion queued after a reload. */
     private static synchronized void completeConversionInterruption(
-            String modelId, int expectedGeneration) {
-        if (expectedGeneration != GENERATION.get()) {
-            return;
+            String modelId, int expectedGeneration, Runnable release) {
+        try {
+            if (expectedGeneration != GENERATION.get()) {
+                return;
+            }
+            PENDING_MODELS.remove(modelId);
+        } finally {
+            release.run();
         }
-        PENDING_MODELS.remove(modelId);
     }
 
     /** Failure state shares the same client-thread commit boundary as successful conversion. */
     private static synchronized void completeConversionFailure(
-            String modelId, int expectedGeneration, long failedStamp, Throwable exception) {
-        if (expectedGeneration != GENERATION.get()) {
-            return;
+            String modelId, int expectedGeneration, long failedStamp, Throwable exception,
+            Runnable release) {
+        try {
+            if (expectedGeneration != GENERATION.get()) {
+                return;
+            }
+            PENDING_MODELS.remove(modelId);
+            FAILED_STAMPS.put(modelId, failedStamp);
+            CompatMod.LOG.warn(
+                    "YSM-EF Compat: model conversion failed for '{}'", modelId, exception);
+        } finally {
+            release.run();
         }
-        PENDING_MODELS.remove(modelId);
-        FAILED_STAMPS.put(modelId, failedStamp);
-        CompatMod.LOG.warn(
-                "YSM-EF Compat: model conversion failed for '{}'", modelId, exception);
     }
 
     private static Conversion bake(ModelBundle source) {

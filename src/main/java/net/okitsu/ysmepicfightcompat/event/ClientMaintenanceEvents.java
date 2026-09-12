@@ -71,6 +71,7 @@ public final class ClientMaintenanceEvents {
             return;
         }
         Entity removed = event.getEntity();
+        ClientModelTransfers.removeSource(removed.getId(), removed.getUUID());
         RemoteSubEntityModelPreferences.remove(removed.getUUID());
         if (removed instanceof LivingEntity entity) {
             ClientShieldBlockState.remove(entity);
@@ -123,6 +124,7 @@ public final class ClientMaintenanceEvents {
         CombatMeshCache.advanceAnimationOutputs();
         ClientAttackSoundRouter.tick();
         OfficialConfigurationVariables.tickSync();
+        ClientModelTransfers.tick();
         ClientHeldItemModelPreferences.tickSync();
         ClientMovementAnimationPreferences.tickSync();
         ClientMaidPreferenceSync.tickSync();
