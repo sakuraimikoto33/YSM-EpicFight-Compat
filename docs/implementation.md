@@ -101,6 +101,8 @@ Controller handlers can select/reset animations, request reloads, and set beginn
 
 `CompiledAnimationTrack` stores immutable keyframe sampling arrays. Ordered tracks use binary search; unordered input retains its source order. Each evaluation scratch owns a bounded exact-time numeric XYZ cache. Only finite-time, multi-key, expression-free samples are reusable; expression evaluation and side effects are not memoized by that cache.
 
+`AnimationControllerProgram` retains lazily compiled expression handles for its own lifetime, including expressions reached after the global compiler cache is full. Runtime resets keep those handles; each entity still evaluates values, transitions, and callbacks in the original order with their original side effects. Variable-slot identities are unchanged.
+
 `AnimationEvaluationRateLimiter` controls complete compatibility animation evaluations per entity/render context. `client.animationEvaluationRateLimitHz` accepts 30–240 Hz or `0` (unlimited). It is not a game FPS cap: intervening draws reuse completed YSM evaluation outputs while composing against live Epic Fight joints.
 
 Deadlines retain their phase and coalesce missed admissions without replaying a batch of intermediate samples. Elapsed animation time advances to the admitted sample. Context changes, item changes, restarted clips, pending script-sync callbacks, and relevant transition endpoints can force an evaluation. World/preview state and incompatible view or pose-owner contexts do not share stale evaluation results.
@@ -168,7 +170,15 @@ For supported owned maids, the server separately requests the owner's held-item/
 
 A client missing a selected model can request it from the dedicated server for an online player or supported synchronized maid. `ServerModelTransfers` checks source entity ID/UUID, tracking relation, and current selection both before work and before delivery. Parsing/encoding happens outside the server tick, with bounded requests, pending work, and recipient data volume.
 
+Chunk slicing and payload preparation run on the sender workers. On 1.20.1 Forge, those workers also serialize the channel message, and each recipient gets an independent read-only view of the prepared wire bytes. On 1.21.1 NeoForge, recipients share the immutable prepared payload and each connection encodes it on its network thread. The server tick submits at most 16 DATA chunks (8 MiB of payload) per tick and rechecks the same connection, tracking relation, and selection immediately before each submission.
+
+Preparation and pending delivery share a 32-transfer limit and a byte budget for the compressed source, prepared payload, and framing. That budget admits one maximum-size model; it does not include decoded models, the separate session cache, or the connection's outgoing queue. Clearing invalidates unfinished preparation but keeps it charged until the worker finishes. When capacity is unavailable, the client's existing retry path can resume the request. Network and persistent-cache formats are unchanged.
+
 `GeometryTransferCodec` sends compressed geometry, scale/render properties, animation/controller data, Molang functions, sound/particle references, and declared base/PBR textures. It does not send the original package or model-local audio bytes.
+
+The client reserves capacity before disk lookup or a network request. At most two reservations cover lookup, receipt, decoding, unconsumed results, and conversion through its client-side publication or disposal after GPU initialization. A full queue waits for capacity instead of clearing completed results; handing a model to the conversion worker does not free its reservation. Cancelled workers keep their reservation until completion, including across reloads and reconnects.
+
+The client records bounded demand (256 model IDs and 1,024 entity sources), shares a result between sources selecting the same model, and removes demand when its last source leaves or remains unseen for 30 seconds. Waiting requests retry within the same reservation after five seconds; retries do not extend the 30-second idle-transfer deadline, while incoming DATA progress does. Each reservation charges one maximum-sized compressed payload and one working copy, for a total compressed-byte budget of 256 MiB across two reservations; expanded Java objects and the process heap are separate from that budget.
 
 The client checks chunk counts, concurrent assemblies, sizes, timeouts, SHA-256, and expanded payload limits before accepting a bundle. Infinite source animation-duration declarations are encoded as zero; effective duration can come from retained keys, while network decoding rejects non-finite values.
 
@@ -176,7 +186,7 @@ Requests may include a remote-cache payload SHA-256. Replies are `DATA`, `UNCHAN
 
 ## Caches and lifecycle
 
-`CombatMeshCache` lazily converts models on a bounded worker pool. Its memory layer holds completed meshes, encoded fallback sources, and animation runtimes for the session; GPU resources follow that lifecycle. Parsed model payloads can also be persisted separately. Memory retention uses a configurable model-count target; eviction releases the corresponding resources. Failed conversion is reconsidered when its source changes.
+`CombatMeshCache` lazily converts models on a bounded worker pool. Its memory layer holds completed meshes, encoded fallback sources, and animation runtimes for the session; GPU resources follow that lifecycle. Parsed model payloads can also be persisted separately. Memory retention uses a configurable model-count target; eviction releases the corresponding resources. A failed local conversion with an unchanged source metadata stamp is not repeatedly submitted; a changed stamp or invalidation allows reconsideration. The existing retry condition is retained.
 
 Persistent data is separated under `config/ysm_epicfight_compat/cache`:
 
@@ -210,6 +220,8 @@ The maid adapter compensates EFTLM's `0.8` model scale with a mesh-local `1.25` 
 ParCool/SWEM adapters apply only to players, including remote players. Matching usable model clips and owner authorization are required. Native clocks and restart identity drive playback; SWEM riding takes precedence over stale ParCool state. These adapters change the displayed pose, not movement, hitboxes, the gameplay armature, or the horse renderer. Epic Fight combat actions and other higher-priority authored actions retain ownership.
 
 `ClientPreferences` owns client-local appearance and scheduling policy. `ServerPreferences` owns the separate common-file server cache settings. Configured's slider runs from 30 through 240 Hz with unlimited at the rightmost position, stored as `0`; exclusion editors add an editable selected-model row and omit empty rows when saving.
+
+`ClientPreferences` compares each rule table with an independent immutable snapshot and reuses its decoded map while the content is unchanged. Structural comparison still runs, so direct edits to the same Config/List remain visible on the next getter call. Setters, TOML reloads, invalid-input fallback, and optional-mod defaults retain their behavior; oversized tables/lists are rejected by the existing decoders without first copying their contents. Unloaded configuration is not retained as a loaded snapshot.
 
 `CombatOverlayPolicy` applies the configured YSM overlay visibility during battle mode. `YSMCompatibilityWarningState` records acknowledgment of official YSM's Epic Fight warning without suppressing unrelated warnings. `ClosingScreenClickPolicy` consumes otherwise unhandled clicks that close a screen before they reach gameplay input.
 
